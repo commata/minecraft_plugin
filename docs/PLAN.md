@@ -1,44 +1,49 @@
 # Paper 플러그인 개발 환경 설계 계획
 
-> 상태: 초안 (구현 전 설계 단계)
-> 대상: Ubuntu 미니PC의 Docker Paper 야생 서버 (`minecraft-paper`, 데이터 `/data`)
-> 개발 PC: Windows, IntelliJ IDEA, 로컬 경로 `C:\minecreaft`
+> 상태: 초안 (구현 전 설계 단계, MC 버전만 미확정)
+> 대상: Ubuntu 미니PC의 Docker Paper 야생 서버 (`minecraft-paper`, 호스트 `/home/deploy/services/minecraft/data` → 컨테이너 `/data`)
+> 개발 PC: Windows, IntelliJ IDEA, 로컬 경로 `C:\minecraft`
 
 이 문서는 **운영 중인 야생 서버를 절대 건드리지 않으면서** 플러그인을 개발·테스트·배포하는 구조를 정합니다.
 실제 코드 작성은 이 계획이 확정된 뒤 단계별로 진행합니다.
 
 ---
 
-## 0. 확인이 필요한 정보 (가정 포함)
+## 0. 확인된 환경 (2026-11-24 기준)
 
-아래 값은 서버/PC에서 직접 확인해야 합니다. 확인 전까지는 오른쪽 **가정값**으로 설계합니다.
-
-| 항목 | 확인 방법 | 가정값 |
+| 항목 | 값 | 상태 |
 | --- | --- | --- |
-| Paper / MC 버전 | `docker exec minecraft-paper rcon-cli version` | 1.21.x 최신 |
-| 서버 Java 버전 | `docker exec minecraft-paper java -version` | Java 21 |
-| 개발 PC JDK | PowerShell `java -version` | 미설치로 가정 → JDK 21 설치 |
-| Docker 이미지 | `docker inspect minecraft-paper --format '{{.Config.Image}}'` | `itzg/minecraft-server` |
-| `/data` 마운트 | 아래 명령 | 호스트 디렉터리 바인드 마운트 |
-| 기존 플러그인 목록 | `docker exec minecraft-paper rcon-cli plugins` | 없음 또는 소수 |
+| 개발 PC JDK | Temurin 21.0.8 (`java`, `javac`) | 확인됨 |
+| 서버 Java | Temurin 25.0.5.1 | 확인됨 |
+| Docker 이미지 | `itzg/minecraft-server:java25` | 확인됨 |
+| `/data` 마운트 | 바인드 마운트 `/home/deploy/services/minecraft/data` → `/data` | 확인됨 (영구 저장) |
+| 기존 플러그인 | Chunky, CoreProtect | 확인됨 |
+| **Minecraft / Paper 버전** | 서버 시작 로그에서 확인 필요 | **미확인** |
 
 ```bash
-# /data 가 어디에 저장되는지 (영구 저장 여부 확인)
-docker inspect minecraft-paper \
-  --format '{{range .Mounts}}{{println .Type .Source "->" .Destination}}{{end}}'
+# 서버 시작 로그에서 실제 MC/Paper 버전 확인 (운영에 영향 없음)
+docker logs minecraft-paper 2>&1 \
+  | grep -iE 'Starting minecraft server version|This server is running Paper|Minecraft version' \
+  | tail -n 15
 ```
 
-**버전 맞추기 원칙:** 플러그인의 `paper-api` 버전은 **서버 버전과 같거나 낮게** 잡습니다.
+**버전 맞추기 원칙:** 플러그인의 Paper API 버전은 **서버 버전과 같거나 낮게** 잡습니다.
 높은 API로 빌드한 플러그인은 낮은 서버에서 로드되지 않습니다.
-Java 버전은 서버가 요구하는 버전(MC 1.20.5 이상은 Java 21)에 맞춥니다.
-Mojang이 2026년부터 연도 기반 버전(26.x)으로 바뀌었으므로, 서버가 26.x라면 Paper 문서에서 해당 버전의 Java 요구사항과 API 좌표를 다시 확인합니다.
+서버 Java가 25인 것은 이미지 태그(`java25`) 때문이며, 그 자체로는 문제가 아닙니다. 빌드 대상 Java는 MC 버전으로 정합니다.
+
+| 실제 MC 버전 | 빌드 대상 Java / 개발 JDK | Gradle | Paper API 좌표 |
+| --- | --- | --- | --- |
+| 1.21.x | Java 21 (현재 PC 그대로) | 8.x 이상 | `io.papermc.paper:paper-api:1.21.x-R0.1-SNAPSHOT` |
+| 26.1 이상 | Java 25 (PC에 JDK 25 추가 설치) | 9.1 이상 | 새 표기 방식, Paper 문서 기준으로 확정 |
+
+Java 21로 빌드한 플러그인은 Java 25 서버에서 그대로 동작합니다. MC 버전이 확인되면 이 표에서 한 줄을 골라 `gradle.properties`에 고정합니다.
 
 ---
 
 ## 1. 전체 구조
 
 ```
-[Windows PC: C:\minecreaft]                 [Ubuntu 미니PC]
+[Windows PC: C:\minecraft]                 [Ubuntu 미니PC]
  IntelliJ + Gradle                          ┌─────────────────────────────┐
    │                                        │ minecraft-paper (운영, 야생) │ ← 최종 배포만
    ├─ ./gradlew runServer ─▶ 로컬 테스트 서버 │   /data/plugins/*.jar        │
@@ -72,7 +77,7 @@ Mojang이 2026년부터 연도 기반 버전(26.x)으로 바뀌었으므로, 서
 | **멀티 모듈 (채택)** | 공통 빌드 설정·공통 코드 공유, 한 번에 빌드 | 초기 설정이 조금 많음 |
 
 ```
-C:\minecreaft\minecraft_plugin\          ← 이 저장소를 clone
+C:\minecraft\minecraft_plugin\          ← 이 저장소를 clone
 ├── settings.gradle.kts                   ← 모듈 목록
 ├── build.gradle.kts                      ← 루트(거의 비어 있음)
 ├── gradle.properties                     ← 버전 값 모음
@@ -114,7 +119,7 @@ C:\minecreaft\minecraft_plugin\          ← 이 저장소를 clone
 | --- | --- | --- |
 | 빌드 스크립트 | Kotlin DSL (`*.gradle.kts`) | IntelliJ 자동완성, Paper 문서 예제와 동일 |
 | Gradle | Wrapper 사용 (최신 8.x 이상) | PC에 Gradle 설치 불필요, CI와 동일 버전 |
-| Java toolchain | `java.toolchain.languageVersion = 21` | 서버 Java와 일치, 자동 JDK 선택 |
+| Java toolchain | `java.toolchain.languageVersion` = 21 또는 25 (0장 표) | MC 버전 요구사항과 일치, 자동 JDK 선택 |
 | API | `io.papermc.paper:paper-api:<서버버전>-R0.1-SNAPSHOT` (`compileOnly`) | 서버가 제공하므로 JAR에 넣지 않음 |
 | 로컬 서버 | `xyz.jpenilla.run-paper` | `./gradlew runServer`로 테스트 서버 자동 다운로드·실행 |
 | JAR 묶기 | `com.gradleup.shadow` | `common` 포함 및 relocate |
@@ -122,7 +127,7 @@ C:\minecreaft\minecraft_plugin\          ← 이 저장소를 clone
 
 convention plugin(`build-logic`)이 하는 일:
 
-1. Java 21 toolchain, UTF-8 인코딩 설정 (Windows 한글 깨짐 방지)
+1. Java toolchain(MC 버전에 맞춰 21 또는 25), UTF-8 인코딩 설정 (Windows 한글 깨짐 방지)
 2. PaperMC 저장소 추가, `paper-api` compileOnly 추가
 3. `plugin.yml`의 `version`, `api-version` 자동 치환
 4. Shadow JAR을 기본 산출물로 지정 → `plugins/<이름>/build/libs/<이름>-<버전>.jar`
@@ -144,7 +149,7 @@ dependencies {
 
 ```properties
 mcVersion=1.21.x        # 서버 버전 확인 후 확정
-javaVersion=21
+javaVersion=21        # MC 26.1 이상이면 25
 group=kr.commata
 ```
 
@@ -202,11 +207,12 @@ docker exec minecraft-paper rcon-cli "save-all flush"
 # 2) 백업 (아래 6.2)
 ./backup.sh
 
-# 3) 같은 플러그인의 이전 버전 JAR 제거 후 새 JAR 설치
-#    /data 가 호스트 디렉터리에 바인드 마운트되어 있으면 docker cp 대신 직접 복사가 더 단순
-cp ~/plugin-staging/custom-items-0.1.0.jar <호스트의 /data 경로>/plugins/
-#    (named volume 이면)
-docker cp ~/plugin-staging/custom-items-0.1.0.jar minecraft-paper:/data/plugins/
+# 3) 같은 플러그인의 이전 버전 JAR만 old/ 로 옮긴 뒤 새 JAR 설치
+#    /data 는 바인드 마운트이므로 docker cp 없이 호스트 경로에 직접 복사
+MC_DATA=/home/deploy/services/minecraft/data
+mkdir -p ~/plugin-staging/old
+mv "$MC_DATA"/plugins/custom-items-*.jar ~/plugin-staging/old/ 2>/dev/null || true
+cp ~/plugin-staging/custom-items-0.1.0.jar "$MC_DATA/plugins/"
 
 # 4) 재시작 (stop 이 저장을 마치도록 대기 시간을 넉넉히)
 docker restart -t 60 minecraft-paper
@@ -219,6 +225,9 @@ docker logs --tail 100 minecraft-paper | grep -iE "custom-items|error|exception"
 지켜야 할 점:
 
 - **`/reload` 는 쓰지 않습니다.** 메모리 누수와 플러그인 오작동 원인이 됩니다. 항상 재시작합니다.
+- 스크립트는 **우리가 만든 플러그인 JAR 이름만** 다룹니다. 기존 `Chunky`, `CoreProtect` JAR과 데이터 폴더는 절대 이동·삭제하지 않습니다.
+- Chunky 사전 생성 작업이 돌고 있으면 재시작 전에 `chunky pause`로 멈추고, 재시작 후 `chunky continue`로 이어 갑니다.
+- 복사한 JAR의 소유자는 컨테이너가 쓰는 UID와 맞춥니다 (`ls -ln "$MC_DATA/plugins"`로 기존 JAR과 비교).
 - 같은 플러그인 JAR이 두 개(구버전+신버전) 있으면 충돌하므로 설치 전 이전 버전을 지웁니다. 지운 JAR은 `~/plugin-staging/old/`에 보관해 롤백에 씁니다.
 - 컨테이너를 **재생성**(`docker rm`)하기 전에는 반드시 `/data` 마운트가 영구 저장인지 확인합니다.
 - 플러그인은 `server.properties`, `whitelist.json`, `ops.json`, 게임룰을 **코드로 변경하지 않는다**를 개발 규칙으로 둡니다.
@@ -229,9 +238,11 @@ docker logs --tail 100 minecraft-paper | grep -iE "custom-items|error|exception"
 | --- | --- |
 | 월드 (`world`, `world_nether`, `world_the_end`) | `save-off` → `save-all flush` → `tar` → `save-on` |
 | 설정 (`server.properties`, `whitelist.json`, `ops.json`, `bukkit.yml`, `spigot.yml`, `config/`) | 함께 `tar` |
-| `plugins/` | 함께 `tar` (플러그인 데이터 포함) |
+| `plugins/` | 함께 `tar` (Chunky, CoreProtect 데이터 포함) |
 
+- 백업 원본 경로: `/home/deploy/services/minecraft/data`
 - 저장 위치: `~/mc-backups/YYYYMMDD-HHMM.tar.gz`, 최근 N개(예: 7개)만 유지
+- CoreProtect DB(`plugins/CoreProtect/database.db`)는 시간이 지나면 커집니다. 백업 용량이 문제가 되면 월드와 분리해서 주기를 다르게 잡습니다.
 - 정기 백업은 이후 `itzg/mc-backup` 사이드카 컨테이너 또는 cron으로 자동화
 - **복원 연습을 최소 한 번** 스테이징 서버에서 해 봅니다. 복원해 보지 않은 백업은 믿지 않습니다.
 
@@ -283,7 +294,7 @@ CD 방식 후보:
 - 우클릭(`PlayerInteractEvent`)으로 아이템에 연결된 스킬 발동
 - 구조: `Skill` 인터페이스 → `DashSkill`, `FireballSkill`, `HealSkill` 등 구현
 - 공통 기능: 쿨다운 관리(`common`), 액션바로 쿨다운 표시, 파티클·사운드
-- 야생 서버 보호 규칙: 블록 파괴 스킬 없음, PvP 피해는 설정으로 on/off, 스폰 보호 구역 존중
+- 야생 서버 보호 규칙: 블록 파괴 스킬 없음 (블록을 바꾸는 기능을 만들게 되면 CoreProtect API로 기록해 롤백 가능하게 함), PvP 피해는 설정으로 on/off, 스폰 보호 구역 존중
 
 ### 단계 3. 데이터 저장
 - 플레이어별 해금 스킬·숙련도 저장: 처음에는 플레이어 PDC 또는 YAML, 규모가 커지면 SQLite
@@ -300,21 +311,19 @@ CD 방식 후보:
 
 ## 9. Windows 개발 PC 준비 체크리스트
 
-- [ ] JDK 21 설치 (Eclipse Temurin 21 권장), `java -version` 확인
+- [x] JDK 21 설치 (Temurin 21.0.8 확인됨). MC 26.1 이상이면 JDK 25 추가 설치
 - [ ] IntelliJ IDEA + **Minecraft Development** 플러그인 설치 (선택이지만 편리)
 - [ ] Git 설치, `git config --global core.autocrlf input`
-- [ ] `C:\minecreaft`에서 `git clone https://github.com/commata/minecraft_plugin`
-- [ ] IntelliJ에서 `C:\minecreaft\minecraft_plugin` 열기 → Gradle 프로젝트로 인식
+- [ ] `C:\minecraft`에서 `git clone https://github.com/commata/minecraft_plugin`
+- [ ] IntelliJ에서 `C:\minecraft\minecraft_plugin` 열기 → Gradle 프로젝트로 인식
 - [ ] Settings → Build Tools → Gradle → Gradle JVM을 JDK 21로 지정
 - [ ] `ssh minipc` 로 비밀번호 없이 접속되도록 SSH 키 등록
-
-> 경로 참고: `C:\minecreaft`는 공백·한글이 없어 Gradle에 문제가 없습니다. 오타라면(`minecraft`) 지금 바꾸는 것이 나중보다 쉽습니다.
 
 ---
 
 ## 10. 다음 작업 순서
 
-1. 0장의 값(서버 버전, Java, 마운트 경로) 확인 → 이 문서의 가정값 갱신
+1. MC/Paper 버전 확인 → 0장 표에서 Java·Gradle·API 버전 확정
 2. 9장 PC 준비
 3. 단계 0 구현 PR (멀티 모듈 뼈대 + Hello 플러그인 + CI)
 4. 미니PC 스크립트(`backup.sh`, `install-plugin.sh`) 작성 및 백업·복원 1회 테스트
