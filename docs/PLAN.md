@@ -1,6 +1,6 @@
 # Paper 플러그인 개발 환경 설계 계획
 
-> 상태: 초안 (구현 전 설계 단계, MC 버전만 미확정)
+> 상태: 확정 (MC 26.3 / Java 25 기준, 구현 전 설계 단계)
 > 대상: Ubuntu 미니PC의 Docker Paper 야생 서버 (`minecraft-paper`, 호스트 `/home/deploy/services/minecraft/data` → 컨테이너 `/data`)
 > 개발 PC: Windows, IntelliJ IDEA, 로컬 경로 `C:\minecraft`
 
@@ -18,25 +18,30 @@
 | Docker 이미지 | `itzg/minecraft-server:java25` | 확인됨 |
 | `/data` 마운트 | 바인드 마운트 `/home/deploy/services/minecraft/data` → `/data` | 확인됨 (영구 저장) |
 | 기존 플러그인 | Chunky, CoreProtect | 확인됨 |
-| **Minecraft / Paper 버전** | 서버 시작 로그에서 확인 필요 | **미확인** |
+| Minecraft / Paper 버전 | MC **26.3**, Paper `26.3-258` (API `26.3.build.258-stable`) | 확인됨 |
+
+### 확정된 빌드 기준
+
+| 항목 | 값 | 비고 |
+| --- | --- | --- |
+| Paper API | `compileOnly("io.papermc.paper:paper-api:26.3.build.258-stable")` | 서버 빌드와 동일하게 고정. 서버를 올릴 때 같이 올림 |
+| Java toolchain | `JavaLanguageVersion.of(25)` | 26.1부터 Java 25 필수 (Paper 문서) |
+| 개발 PC JDK | **JDK 25 추가 설치 필요** (Temurin 25) | 기존 JDK 21은 남겨 둬도 됨 |
+| Gradle | Wrapper 9.x 최신 (작성 시점 9.9.2) | Java 25 지원 버전 |
+| run-paper | `xyz.jpenilla.run-paper` 3.1.0, `minecraftVersion("26.3")` | 로컬 테스트 서버 |
+| Shadow | `com.gradleup.shadow` 9.6.1 | `common` 포함·relocate |
+| `plugin.yml` `api-version` | `'26.3'` | 단계 0에서 로드 확인 |
+
+참고: 26.1부터 Paper API 버전 표기가 `1.21.x-R0.1-SNAPSHOT`에서 `26.x.build.<번호>-stable`로 바뀌었습니다.
+`26.3.build.+`처럼 열어 두면 서버보다 새 빌드로 컴파일될 수 있으므로, 이 프로젝트는 **서버와 같은 빌드 번호로 고정**합니다.
 
 ```bash
-# 서버 시작 로그에서 실제 MC/Paper 버전 확인 (운영에 영향 없음)
-docker logs minecraft-paper 2>&1 \
-  | grep -iE 'Starting minecraft server version|This server is running Paper|Minecraft version' \
-  | tail -n 15
+# 서버 버전 재확인 (서버 업데이트 후 API 버전을 맞출 때 사용)
+docker logs minecraft-paper 2>&1 | grep -i 'This server is running Paper' | tail -n 1
 ```
 
 **버전 맞추기 원칙:** 플러그인의 Paper API 버전은 **서버 버전과 같거나 낮게** 잡습니다.
 높은 API로 빌드한 플러그인은 낮은 서버에서 로드되지 않습니다.
-서버 Java가 25인 것은 이미지 태그(`java25`) 때문이며, 그 자체로는 문제가 아닙니다. 빌드 대상 Java는 MC 버전으로 정합니다.
-
-| 실제 MC 버전 | 빌드 대상 Java / 개발 JDK | Gradle | Paper API 좌표 |
-| --- | --- | --- | --- |
-| 1.21.x | Java 21 (현재 PC 그대로) | 8.x 이상 | `io.papermc.paper:paper-api:1.21.x-R0.1-SNAPSHOT` |
-| 26.1 이상 | Java 25 (PC에 JDK 25 추가 설치) | 9.1 이상 | 새 표기 방식, Paper 문서 기준으로 확정 |
-
-Java 21로 빌드한 플러그인은 Java 25 서버에서 그대로 동작합니다. MC 버전이 확인되면 이 표에서 한 줄을 골라 `gradle.properties`에 고정합니다.
 
 ---
 
@@ -118,16 +123,16 @@ C:\minecraft\minecraft_plugin\          ← 이 저장소를 clone
 | 구성 요소 | 선택 | 이유 |
 | --- | --- | --- |
 | 빌드 스크립트 | Kotlin DSL (`*.gradle.kts`) | IntelliJ 자동완성, Paper 문서 예제와 동일 |
-| Gradle | Wrapper 사용 (최신 8.x 이상) | PC에 Gradle 설치 불필요, CI와 동일 버전 |
-| Java toolchain | `java.toolchain.languageVersion` = 21 또는 25 (0장 표) | MC 버전 요구사항과 일치, 자동 JDK 선택 |
-| API | `io.papermc.paper:paper-api:<서버버전>-R0.1-SNAPSHOT` (`compileOnly`) | 서버가 제공하므로 JAR에 넣지 않음 |
+| Gradle | Wrapper 사용 (9.x 최신) | PC에 Gradle 설치 불필요, CI와 동일 버전 |
+| Java toolchain | `java.toolchain.languageVersion = 25` | MC 26.x 요구사항, 자동 JDK 선택 |
+| API | `io.papermc.paper:paper-api:26.3.build.258-stable` (`compileOnly`) | 서버가 제공하므로 JAR에 넣지 않음 |
 | 로컬 서버 | `xyz.jpenilla.run-paper` | `./gradlew runServer`로 테스트 서버 자동 다운로드·실행 |
 | JAR 묶기 | `com.gradleup.shadow` | `common` 포함 및 relocate |
 | plugin.yml 버전 | `processResources`로 `${version}` 치환 | 버전 한 곳에서 관리 |
 
 convention plugin(`build-logic`)이 하는 일:
 
-1. Java toolchain(MC 버전에 맞춰 21 또는 25), UTF-8 인코딩 설정 (Windows 한글 깨짐 방지)
+1. Java 25 toolchain, UTF-8 인코딩 설정 (Windows 한글 깨짐 방지)
 2. PaperMC 저장소 추가, `paper-api` compileOnly 추가
 3. `plugin.yml`의 `version`, `api-version` 자동 치환
 4. Shadow JAR을 기본 산출물로 지정 → `plugins/<이름>/build/libs/<이름>-<버전>.jar`
@@ -148,8 +153,9 @@ dependencies {
 버전 값은 `gradle.properties`에 모읍니다.
 
 ```properties
-mcVersion=1.21.x        # 서버 버전 확인 후 확정
-javaVersion=21        # MC 26.1 이상이면 25
+mcVersion=26.3
+paperApiVersion=26.3.build.258-stable
+javaVersion=25
 group=kr.commata
 ```
 
@@ -311,19 +317,19 @@ CD 방식 후보:
 
 ## 9. Windows 개발 PC 준비 체크리스트
 
-- [x] JDK 21 설치 (Temurin 21.0.8 확인됨). MC 26.1 이상이면 JDK 25 추가 설치
+- [ ] **JDK 25 설치** (Temurin 25). 현재 JDK 21.0.8만 있음
 - [ ] IntelliJ IDEA + **Minecraft Development** 플러그인 설치 (선택이지만 편리)
 - [ ] Git 설치, `git config --global core.autocrlf input`
 - [ ] `C:\minecraft`에서 `git clone https://github.com/commata/minecraft_plugin`
 - [ ] IntelliJ에서 `C:\minecraft\minecraft_plugin` 열기 → Gradle 프로젝트로 인식
-- [ ] Settings → Build Tools → Gradle → Gradle JVM을 JDK 21로 지정
+- [ ] Settings → Build Tools → Gradle → Gradle JVM과 Project SDK를 JDK 25로 지정
 - [ ] `ssh minipc` 로 비밀번호 없이 접속되도록 SSH 키 등록
 
 ---
 
 ## 10. 다음 작업 순서
 
-1. MC/Paper 버전 확인 → 0장 표에서 Java·Gradle·API 버전 확정
+1. Windows에 JDK 25 설치, 폴더 이름 `C:\minecraft`로 변경
 2. 9장 PC 준비
 3. 단계 0 구현 PR (멀티 모듈 뼈대 + Hello 플러그인 + CI)
 4. 미니PC 스크립트(`backup.sh`, `install-plugin.sh`) 작성 및 백업·복원 1회 테스트
