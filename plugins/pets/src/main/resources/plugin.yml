@@ -1,0 +1,6 @@
+name: Pets
+version: '${version}'
+main: kr.commata.pets.PetsPlugin
+api-version: '${apiVersion}'
+description: /callpet 으로 내가 길들인 펫을 내 옆으로 불러옵니다.
+author: commata

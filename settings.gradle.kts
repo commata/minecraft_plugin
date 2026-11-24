@@ -14,3 +14,4 @@ include(":common")
 // plugins/ 아래 폴더 하나 = 플러그인 하나
 include(":plugins:custom-items")
 include(":plugins:travel")
+include(":plugins:pets")

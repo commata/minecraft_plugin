@@ -16,6 +16,7 @@ Ubuntu 미니PC의 Docker Paper 서버(MC 26.3)에서 사용할 자체 개발 Pa
 | `common/` | 공통 코드 (메시지, 쿨다운). 각 플러그인 JAR에 포함됩니다 |
 | `plugins/custom-items/` | 커스텀 아이템·스킬 플러그인 (현재: 접속 환영 메시지, `/ci`) |
 | `plugins/travel/` | `/sethome`, `/home` 귀환 + `/tpa` 이동 요청 플러그인 (예전 `plugins/home`) |
+| `plugins/pets/` | `/callpet` 길들인 펫 불러오기 플러그인 |
 | `gradle.properties` | MC / Paper API / Java 버전 (여기서만 관리) |
 
 ## 자주 쓰는 명령 (Windows PowerShell)
@@ -27,6 +28,7 @@ Ubuntu 미니PC의 Docker Paper 서버(MC 26.3)에서 사용할 자체 개발 Pa
 # 로컬 테스트 서버 실행 (Paper 26.3 자동 다운로드, EULA 자동 동의)
 .\gradlew :plugins:custom-items:runServer
 .\gradlew :plugins:travel:runServer
+.\gradlew :plugins:pets:runServer
 ```
 
 - 테스트 서버 파일은 `plugins/custom-items/run/`에 생기며 Git에는 올라가지 않습니다.
@@ -50,6 +52,7 @@ Ubuntu 미니PC의 Docker Paper 서버(MC 26.3)에서 사용할 자체 개발 Pa
 | `/tpdeny [닉네임]` | 모두 | 받은 요청 거절 |
 | `/tpcancel` | 모두 | 보낸 요청 취소 |
 | `/tpatoggle` | 모두 | 요청 받기 켜기·끄기 |
+| `/callpet` | 모두 | 내가 길들인 늑대·고양이·앵무새·말·당나귀·노새·라마를 내 옆으로 순간이동 (쿨타임 없음, 다른 차원에서도 가능, 앉은 펫은 앉은 채로). 멀리 두고 온 펫도 마지막 위치의 청크를 불러와서 데려옴 |
 
 ### `/home` 규칙 (시간은 `plugins/travel/src/main/resources/config.yml`에서 변경)
 
