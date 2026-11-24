@@ -1,0 +1,17 @@
+# Bank 설정. 바꾼 뒤 /bank reload (OP) 로 적용합니다.
+# 잔액·거래 기록은 이 폴더의 bank.db 에 있습니다. bank.db 만 따로 지우거나 되돌리지 마세요
+# (이 폴더가 있는데 bank.db 가 없거나 손상되면 Bank 는 새로 만들지 않고 잠금 모드로 켜집니다).
+
+pay:
+  # /pay 최소 금액(원)
+  min-amount: 10
+
+baltop:
+  # /baltop 순위를 다시 계산하는 주기(초)
+  cache-seconds: 60
+
+# /bank log 등에 보여 줄 시각의 시간대
+time-zone: Asia/Seoul
+
+# 첫 설치 때 Bank 가 자동으로 기록합니다. 직접 고치지 마세요.
+installed: false

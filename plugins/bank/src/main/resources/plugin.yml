@@ -1,0 +1,14 @@
+name: Bank
+version: '${version}'
+main: kr.commata.bank.BankPlugin
+api-version: '${apiVersion}'
+description: 서버 화폐(원). VaultUnlocked 경제 제공자, /money /pay /baltop /bank
+author: commata
+# VaultUnlocked 2.20.3 의 plugin.yml 이름은 Vault (VaultUnlocked 별칭 없음)
+depend: [Vault]
+# 경제를 쓰는 플러그인보다 먼저 켜져야 그쪽이 활성화될 때 Bank 를 찾음
+loadbefore: [VJobs, EconomyShopGUI, EconomyHub]
+permissions:
+  bank.admin:
+    description: /bank give·take·set·log·refund·reload
+    default: op

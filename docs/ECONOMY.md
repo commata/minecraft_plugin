@@ -66,7 +66,7 @@
 | 역할 | VaultUnlocked에 **경제 제공자(Economy provider)** 로 등록. VJobs·EconomyShopGUI·자체 플러그인이 모두 이 잔액을 씀 |
 | 연동 | `depend: [Vault]`. VaultUnlocked 2.20.3의 `plugin.yml`은 이름이 `Vault`이고 `VaultUnlocked` 별칭이 없다(2026-11-25 확인). 구 Vault `net.milkbowl.vault.economy.Economy` 인터페이스만 구현(VJobs·EconomyShopGUI가 쓰는 쪽). 첫 연동 테스트(아래 1번)가 통과하면 MVP에 Vault 2 API는 넣지 않는다 |
 | 금액 | 잔액은 `long` 정수 원. 표시는 `12,340원`. 소수 처리 규칙은 아래 2.2 |
-| 저장 | `plugins/Bank/bank.db` (파일형 SQLite, `journal_mode=WAL`, `synchronous=FULL`). `accounts(uuid, name, balance, updated_at)`, `transactions(id, time_ms, type, from, to, amount, balance_after, source, boot_id, context, ref)`, `meta(key, value)` |
+| 저장 | `plugins/Bank/bank.db` (파일형 SQLite, `journal_mode=WAL`, `synchronous=FULL`). `accounts(uuid, name, balance, updated_at)`, `transactions(id, time_ms, type, from_uuid, to_uuid, amount, from_balance_after, to_balance_after, source, boot_id, context, ref)`, `boots(boot_id, started_ms, last_heartbeat_ms, ended_ms, crash_estimated_ms, status)`, `meta(key, value)`. `/pay`는 한 줄에 양쪽 잔액이 필요해서 `balance_after`를 `from_`/`to_` 두 칸으로 나눔. `boots`는 기동별 정상·비정상 종료 판정(2.4) |
 | 쓰기 방식 | **모든 잔액 변경은 "잔액 검사 → 변경 → 거래 기록"을 한 SQL 트랜잭션으로 처리하고, 커밋이 끝난 뒤에만 성공을 반환한다.** 메모리 캐시는 커밋 후에 갱신하는 조회용 사본. 커밋이 실패하면 Vault에 실패를 반환(상점은 상품을 주지 않음). `/pay`도 출금·입금·로그가 한 트랜잭션. Vault 호출이 다른 스레드에서 와도 되도록 DB 연결 하나를 락으로 보호 |
 | 명령 | `/money` (`/bal`, `/돈`): 내 잔액 · `/money <닉>`: 남의 잔액 · `/pay <닉> <금액>` · `/baltop [쪽]` (10명씩, 1분 캐시) |
 | 관리자 | `/bank give·take·set <닉> <금액>`, `/bank log <닉> [쪽]`, `/bank refund <거래번호>` (해당 출금을 한 번만 환불, 2.4), `/bank reload` (권한 `bank.admin`, 기본 OP) |
