@@ -6,6 +6,7 @@
   .\scripts\deploy.ps1 -Plugin custom-items -DryRun     # 무엇을 할지만 확인 (서버 영향 없음)
   .\scripts\deploy.ps1 -Plugin custom-items -UploadOnly # 빌드 + 업로드만, 설치는 나중에
   .\scripts\deploy.ps1 -Plugin custom-items             # 빌드 + 업로드 + 백업 + 설치 + 재시작
+  .\scripts\deploy.ps1 -Plugin travel -DryRun           # /home + /tpa. 서버의 예전 Home JAR 도 교체 대상으로 표시됨
 #>
 param(
     [string]$Plugin = "custom-items",
@@ -16,6 +17,13 @@ param(
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
+
+if ($Plugin -eq "home") {
+    throw "home 플러그인은 travel 로 합쳐졌습니다. -Plugin travel 로 배포하세요 (서버의 예전 Home JAR 은 자동으로 교체됩니다)."
+}
+if (-not (Test-Path "$root\plugins\$Plugin")) {
+    throw "플러그인 폴더가 없습니다: plugins\$Plugin"
+}
 
 function Invoke-Checked([string]$what, [scriptblock]$cmd) {
     & $cmd

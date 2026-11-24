@@ -8,7 +8,7 @@
 #   --delay <초>   재시작 전 접속자에게 알리고 기다리는 시간 (기본 30)
 #   --no-backup    백업 생략 (권장하지 않음)
 #
-# 순서: 검사 → 접속자 알림 → 저장 → 서버 정지 → 백업(--offline) → 같은 이름의 이전 JAR 을 보관 폴더로 이동
+# 순서: 검사 → 접속자 알림 → 저장 → 서버 정지 → 백업(--offline) → 같은 이름(또는 RENAMED_PLUGINS 의 예전 이름)의 이전 JAR 을 보관 폴더로 이동
 #       → 새 JAR 복사 → 서버 시작 → 플러그인 로드 확인. 문제가 있으면 rollback.sh 로 되돌립니다.
 # Chunky, CoreProtect 등 PROTECTED_PLUGINS 는 절대 건드리지 않습니다.
 set -euo pipefail
@@ -57,7 +57,15 @@ for existing in "$PLUGINS_DIR"/*.jar; do
         if [ "$ename" = "$n" ]; then
             OLD_JARS+=("$existing")
             log "교체될 이전 버전: $(basename "$existing") ($ename)"
+            continue
         fi
+        # 이름이 바뀐 플러그인 (예: Home → Travel): 예전 JAR 도 빼야 둘이 같이 로드되지 않음
+        while read -r oldname; do
+            if [ -n "$oldname" ] && [ "$ename" = "$oldname" ]; then
+                OLD_JARS+=("$existing")
+                log "교체될 이전 플러그인: $(basename "$existing") ($ename → $n 으로 이름 바뀜)"
+            fi
+        done < <(replaced_names_of "$n")
     done
 done
 [ ${#OLD_JARS[@]} -gt 0 ] || log "이전 버전 없음 (새로 설치)"

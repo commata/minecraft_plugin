@@ -1,0 +1,16 @@
+name: Travel
+version: '${version}'
+main: kr.commata.travel.TravelPlugin
+api-version: '${apiVersion}'
+description: /home 귀환과 /tpa 이동 요청 (시전 시간, 쿨타임, 전투 제한 공유). 예전 Home 플러그인을 대신합니다.
+author: commata
+permissions:
+  home.bypass.cooldown:
+    description: 귀환 성공 후 쿨타임 무시
+    default: op
+  tpa.bypass.cooldown:
+    description: /tpa 이동 성공 후 쿨타임 무시
+    default: op
+  home.reload:
+    description: /home reload 사용 (/home, /tpa 설정 모두 다시 불러옴)
+    default: op
