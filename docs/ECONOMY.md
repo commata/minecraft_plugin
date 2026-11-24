@@ -1,6 +1,6 @@
 # 야생 서버 경제·직업 시스템 기획서
 
-> 문서 버전: **v0.3** (2026-11-25, v0.2에 결정 사항 반영: 자체 Bank, 기준 수입 10,000원, 서버 매입 보류)
+> 문서 버전: **v0.4** (2026-11-25, v0.3 리뷰 반영: Vault 의존성 이름, 커밋 후 성공 반환, 정수 보상, 경험치 곡선, 운영 첫 기동 순서, Bank 복구 절차)
 > 방식: 화폐·직업·상점은 외부 플러그인, 경제 정책과 서버 전용 콘텐츠는 직접 기획·개발
 > 환경: Paper 26.3 (`26.3-258`) / Java 25 / 이 레포의 Gradle 멀티모듈
 > 운영 서버 전제: 화이트리스트 지인 서버, 난이도 easy, `keepInventory` 켜짐, Chunky·CoreProtect 보호
@@ -53,7 +53,7 @@
 확인한 기능 중 기획에 중요한 것:
 
 - **VJobs**: 플레이어가 설치한 블록을 청크 데이터에 기록(재시작 후에도 유지)해 재채굴 보상 없음, 심은 작물은 다 자란 뒤에만 보상, 스포너 몬스터는 보상 0 또는 비율 지정, 실크터치 캐기·설치 반복 보상 없음, AFK 감지, 같은 위치 반복 쿨타임, 크리에이티브 보상 없음, 월드별 비활성화, 경험치 곡선·프레스티지, 저장소 SQLite/MySQL. 최대 직업 수는 `jobs.limit.<n>` 권한.
-- **EconomyShopGUI 무료판**: Vault/VaultUnlocked 경제 사용, `/sellall`·`/sellgui`, 게임 안 편집, 권한 그룹별 할인·판매 배율, 계절 가격, 거래 기록 내보내기(`/eshop logs export`). 프리미엄은 GUI 편집기, 명령어 아이템, NBT 커스텀 아이템 등. **상품별 매입 끄기·판매 한도·변동 가격이 무료판에 있는지는 페이지에 안 나와 있어 테스트 서버에서 확인**한다.
+- **EconomyShopGUI 무료판**: Vault/VaultUnlocked 경제 사용, `/sellall`·`/sellgui`, 게임 안 편집, 권한 그룹별 할인·판매 배율, 계절 가격, 거래 기록 내보내기(`/eshop logs export`). 프리미엄은 GUI 편집기, 명령어 아이템, NBT 커스텀 아이템 등. 상품을 구매 전용으로 만들려면 `shops.yml`에서 `sell` 키를 빼거나 `sell: -1`로 둔다(공식 위키). 판매 관련 권한(`EconomyShopGUI.sellall`, `.sellallitem`, `.sellallhand`, `.sellgui` 등)은 **기본값이 true**라 따로 막아야 한다(6.4). 판매 한도(`sell-limit-*`)는 프리미엄 기능.
 
 ### 2.1 화폐는 자체 `Bank` 플러그인으로 (확정)
 
@@ -64,24 +64,47 @@
 | 항목 | 내용 |
 | --- | --- |
 | 역할 | VaultUnlocked에 **경제 제공자(Economy provider)** 로 등록. VJobs·EconomyShopGUI·자체 플러그인이 모두 이 잔액을 씀 |
-| 연동 | `depend: [VaultUnlocked]`. 구 Vault `Economy` 인터페이스 구현(VJobs·EconomyShopGUI가 쓰는 쪽). VaultUnlocked 2 API는 필요해지면 추가 |
-| 금액 | `long` 정수 원. 소수점 입력은 거부, 표시는 `12,340원` |
-| 저장 | `plugins/Bank/bank.db` (SQLite, WAL). `accounts(uuid, name, balance, updated_at)`, `transactions(id, time, type, from, to, amount, balance_after, source)` |
-| 쓰기 방식 | 잔액은 메모리 캐시가 기준, 변경마다 전용 단일 스레드가 DB에 기록. `/pay`는 보내는 쪽 출금·받는 쪽 입금·로그를 **한 SQL 트랜잭션**으로 처리(중간에 꺼져도 둘 다 반영되거나 둘 다 안 됨) |
+| 연동 | `depend: [Vault]`. VaultUnlocked 2.20.3의 `plugin.yml`은 이름이 `Vault`이고 `VaultUnlocked` 별칭이 없다(2026-11-25 확인). 구 Vault `net.milkbowl.vault.economy.Economy` 인터페이스만 구현(VJobs·EconomyShopGUI가 쓰는 쪽). 첫 연동 테스트(아래 1번)가 통과하면 MVP에 Vault 2 API는 넣지 않는다 |
+| 금액 | 잔액은 `long` 정수 원. 표시는 `12,340원`. 소수 처리 규칙은 아래 2.2 |
+| 저장 | `plugins/Bank/bank.db` (파일형 SQLite, `journal_mode=WAL`, `synchronous=FULL`). `accounts(uuid, name, balance, updated_at)`, `transactions(id, time, type, from, to, amount, balance_after, source)`, `meta(key, value)` |
+| 쓰기 방식 | **모든 잔액 변경은 "잔액 검사 → 변경 → 거래 기록"을 한 SQL 트랜잭션으로 처리하고, 커밋이 끝난 뒤에만 성공을 반환한다.** 메모리 캐시는 커밋 후에 갱신하는 조회용 사본. 커밋이 실패하면 Vault에 실패를 반환(상점은 상품을 주지 않음). `/pay`도 출금·입금·로그가 한 트랜잭션. Vault 호출이 다른 스레드에서 와도 되도록 DB 연결 하나를 락으로 보호 |
 | 명령 | `/money` (`/bal`, `/돈`): 내 잔액 · `/money <닉>`: 남의 잔액 · `/pay <닉> <금액>` · `/baltop [쪽]` (10명씩, 1분 캐시) |
 | 관리자 | `/bank give·take·set <닉> <금액>`, `/bank log <닉> [쪽]`, `/bank reload` (권한 `bank.admin`, 기본 OP) |
-| 송금 규칙 | 최소 10원, 정수만, 잔액 초과·자기 자신·음수·0 거부, 오프라인 대상 허용(서버에 한 번이라도 접속한 플레이어만) |
-| 로그 | 모든 입출금을 `transactions`에 기록(직업 보상은 건수가 많으니 1분 단위로 묶어서 1줄). `/bank log`로 조회 |
+| 송금 규칙 | 최소 10원, **정수만**(소수점 입력 거부), 잔액 초과·자기 자신·음수·0 거부, 오프라인 대상 허용(서버에 한 번이라도 접속한 플레이어만) |
+| 로그 | 모든 입출금을 거래마다 1줄씩 `transactions`에 기록. `/bank log`로 조회 |
+| 첫 설치 vs 분실 | 2.3 |
 | 백업 | `plugins/Bank/`가 `backup.sh` 대상에 이미 포함. 배포 중 백업은 서버 정지 상태라 DB가 일관됨 |
-| 테스트 | 송금·잔액 부족·동시 송금·재시작 후 유지는 SQLite 메모리 DB로 단위 테스트 |
+| 단위 테스트 | 송금·잔액 부족·동시 송금·소수 처리는 **임시 폴더의 파일형 SQLite**로 테스트(`:memory:` DB는 연결을 닫으면 사라져 재기동 검증이 안 됨). 연결을 닫고 다시 열어 잔액·로그 대조 |
 
-Bank 완료 체크리스트 (테스트 서버):
+성능: `synchronous=FULL`은 커밋마다 디스크 동기화를 해서 메인 스레드가 잠깐 멈출 수 있다. 직업 보상은 블록마다 들어오므로 테스트에서 커밋 시간(목표 p99 < 2ms)을 잰다. 느리면 **입금(직업 보상)만** 짧게 묶어 기록하는 방식을 검토하고, 출금·송금은 항상 커밋 후 성공을 유지한다(입금은 꺼져서 날아가도 대가로 받은 물건이 없지만, 출금은 상품이 이미 나간 뒤라 반드시 기록돼야 함).
 
-1. `/pay` 음수·0·소수점·잔액 초과·자기 자신·없는 닉네임 → 모두 거부
-2. 두 명이 동시에 서로 송금 / 송금 직후 강제 종료(`docker kill`) → 재시작 후 총액 보존
-3. VJobs 보상 입금, EconomyShopGUI 구매 출금이 같은 잔액에 반영
-4. 재시작 후 잔액 유지, `bank.db`가 없거나 깨지면 잔액을 0으로 덮어쓰지 않고 플러그인 비활성화 + 경고
+Bank 완료 체크리스트 (테스트 서버, 버전은 9.3에 고정한 JAR):
+
+1. **첫 연동 테스트**: 빈 테스트 서버에서 Vault·Bank·VJobs·EconomyShopGUI 로드 확인 → VJobs 보상 입금 → 같은 계정으로 상점 구매 → `/money`로 입금액−구매액 차이가 정확한지 확인
+2. `/pay` 음수·0·소수점·잔액 초과·자기 자신·없는 닉네임 → 모두 거부
+3. **강제 종료 대조**: 송금·구매 직후 `docker kill` → 재기동 후, 성공 메시지를 받은 거래마다 양쪽 잔액과 `transactions` 1줄이 모두 있는지 대조(총액만 보면 거래 전체가 사라진 경우를 놓침). 상점 구매는 상품을 받았으면 출금 기록도 있어야 함
+4. 첫 설치 시 빈 DB 생성, 이후 `bank.db` 삭제·손상 시 잠금 모드로 뜨는지(2.3)
 5. 서버 로그에 경고·스택트레이스 없음
+
+### 2.2 소수 금액 규칙
+
+구 Vault API는 금액을 `double`로 주고받으므로 소수가 들어올 수 있다. 잔액은 정수로만 유지한다.
+
+| 경로 | 규칙 |
+| --- | --- |
+| 직업 보상 | **MVP는 정수 고정 보상만 사용**(5장 표는 전부 정수). VJobs의 레벨별 수입 보너스는 0%로 꺼서 소수가 생기지 않게 함. 레벨 보너스는 2단계에서 다시 검토 |
+| Vault 입금(`depositPlayer`) | 그래도 소수가 들어오면 플레이어별 `fraction` 칸에 소수 잔여분을 누적하고, 1원이 모일 때마다 정수로 지급. (예: 8.04원 × 25회 = 201원) |
+| Vault 출금(`withdrawPlayer`)·잔액 확인(`has`) | 소수는 **올림**(상점이 덜 받는 일이 없도록). 8.5원 상품 = 9원 |
+| `/pay`, `/bank` | 정수만 허용, 소수 입력은 거부 |
+| 조회(`getBalance`) | 정수 잔액 반환(누적 소수 잔여분은 포함하지 않음) |
+
+### 2.3 첫 설치와 데이터 분실 구분
+
+- **첫 설치**: `plugins/Bank/` 폴더 자체가 없을 때만 빈 `bank.db`를 만들고, `meta`와 `config.yml`에 `installed: true`, 생성 시각을 기록한다.
+- **운영 중 분실·손상**: `installed: true`인데 `bank.db`가 없거나 `PRAGMA integrity_check`가 실패하면, 새 DB를 만들지 않고 **잠금 모드**로 뜬다. Vault 제공자는 등록하되 모든 입출금이 실패를 반환하고(상점 구매·직업 보상 정지), OP에게 접속 시 경고. 관리자가 백업에서 복원한 뒤 재시작해야 풀린다.
+- **복원 원칙**: Bank 데이터만 과거로 돌리지 않는다. 거래 뒤 Bank만 되돌리면 산 아이템과 돌려받은 돈이 함께 남는다. 복원은 **같은 백업 시점의 월드(플레이어 인벤토리 `playerdata` 포함) + `plugins/`를 함께** 되돌리는 DEPLOY.md의 전체 복원 절차로만 한다.
+- JAR 롤백(`rollback.sh`)은 잔액을 바꾸지 않는다. Bank 코드만 이전 버전으로 돌릴 뿐이라 DB 스키마는 하위 호환을 유지한다.
+- 첫 운영 배포 전에 운영 백업으로 만든 복제 서버에서: 구매 1건 → 그 직전 백업으로 전체 복원 → 잔액과 인벤토리가 함께 구매 전으로 돌아오는지 확인.
 
 ---
 
@@ -108,7 +131,7 @@ Bank 완료 체크리스트 (테스트 서버):
 
 | 항목 | 값 | 비고 |
 | --- | --- | --- |
-| 이름 / 표기 | 원 / `12,340원` | 소수점 없음(정수). 플러그인이 소수점을 쓰면 표시만 정수 |
+| 이름 / 표기 | 원 / `12,340원` | 잔액은 정수만. 소수가 들어오는 경우의 규칙은 2.2 |
 | 시작 자금 | 0원 | |
 | 송금 | 허용, 수수료 0%, 최소 10원 | 수수료는 인플레이션이 보이면 2~5% 검토 |
 | 마이너스 잔액 | 불허 | |
@@ -136,7 +159,7 @@ Bank 완료 체크리스트 (테스트 서버):
 | 동시 가입 | 최대 2개 (`jobs.limit.2`, 기본 그룹에 부여) |
 | 탈퇴·변경 | 가능. 탈퇴한 직업 레벨은 유지(재가입 시 복구)되는지 테스트에서 확인, 안 되면 변경 쿨타임 24시간 |
 | 최대 레벨 | 50 |
-| 레벨 보너스 | 레벨당 수입 +0.5% (Lv50 = +25%) |
+| 레벨 보너스 | **MVP는 0%** (정수 보상 유지, 2.2). 2단계에서 레벨당 +0.5% 검토 |
 | 능력치 특전 | 없음 (채굴 속도·공격력 등 비활성화) |
 | 프레스티지 | 비활성화 (운영 후 검토) |
 | 보상 지급 월드 | 오버월드·네더·엔드. 크리에이티브 보상 없음 |
@@ -210,8 +233,16 @@ AFK 낚시(낚싯대 고정)는 AFK 감지로 막는다. 테스트에서 AFK 낚
 
 ### 5.3 레벨 경험치
 
-- 보상 10원당 경험치 1. 레벨 n → n+1 필요 경험치 = `100 × n^1.5` (VJobs 곡선 설정 형식에 맞게 근사)
-- Lv10 ≈ 10시간, Lv30 ≈ 60시간, Lv50 ≈ 140시간 플레이(직업당). 레벨은 자랑거리 정도의 의미.
+- 보상 10원당 경험치 1 → 직업 1시간 ≈ 1,000 XP.
+- 레벨 n → n+1 필요 경험치 = `440 × n^0.6` (Lv1→2: 440, Lv10→11: 1,752, Lv30→31: 3,386, Lv49→50: 4,545)
+- 누적 소요 시간(Lv1 시작, 직업 1개에 시간당 10,000원 기준):
+
+| 도달 레벨 | 10 | 20 | 30 | 40 | 50 |
+| --- | --- | --- | --- | --- | --- |
+| 누적 시간 | 10.0h | 31.8h | 61.7h | 98.5h | 141.4h |
+
+- v0.3의 `100 × n^1.5`는 실제로 Lv30 189시간, Lv50 690시간이 걸려 목표와 맞지 않아 교체했다.
+- VJobs의 곡선 설정 형식이 이 식을 그대로 못 받으면, 표의 누적 시간에 맞도록 근사한다. 레벨은 MVP에서 보너스가 없어 자랑거리 정도의 의미.
 
 ---
 
@@ -314,7 +345,19 @@ MVP는 서버 매입(플레이어가 서버에 파는 것)이 없어서 차익�
 
 ### 6.4 서버 매입 (보류)
 
-MVP에서는 **서버 매입을 하지 않는다.** EconomyShopGUI의 모든 상품을 구매 전용으로 설정하고 `/sellall`·`/sellgui` 권한은 주지 않는다.
+MVP에서는 **서버 매입을 하지 않는다.** 두 겹으로 막는다.
+
+1. `shops.yml`의 모든 상품에 `sell` 키를 두지 않거나 `sell: -1` (공식 지원). 기본 상점 파일은 쓰지 않고 6.3 표로 새로 작성한 파일만 둔다.
+2. LuckPerms `default` 그룹에서 판매 명령 권한을 명시적으로 끈다. **이 권한들은 기본값이 true**라 아무것도 안 하면 열려 있다.
+   ```
+   lp group default permission set EconomyShopGUI.sellall false
+   lp group default permission set EconomyShopGUI.sellallitem false
+   lp group default permission set EconomyShopGUI.sellallhand false
+   lp group default permission set EconomyShopGUI.sellgui false
+   ```
+   (`EconomyShopGUI.shop.*`은 구매에도 쓰이므로 건드리지 않는다. 노드 이름은 대소문자를 구분하는 경우가 있어 위키 표기 그대로 쓴다.)
+
+검증: 일반 계정으로 ① 상점 GUI에서 판매 클릭 ② `/sellall` ③ `/sellall hand` ④ `/sellgui`를 각각 시도한 뒤 **아이템 수량과 잔액이 모두 그대로**인지 확인.
 
 - 다이아몬드는 유저 수 대비 아직 부족해서, 매입을 열면 상점으로 빠져나가 유통량이 더 줄어든다.
 - 추가할 때 1순위 후보: 다이아몬드(구매가가 없으므로 광부 보상 400원보다 낮게, 예: 200원). 6.1 규칙을 지키고 이 문서를 같이 수정한다.
@@ -342,7 +385,7 @@ MVP에서는 **서버 매입을 하지 않는다.** EconomyShopGUI의 모든 상
 
 ### 7.2 `/economy` (EconomyHub) 상세
 
-- 의존: `compileOnly` VaultUnlocked API, `plugin.yml`에 `depend: [VaultUnlocked]`, `softdepend: [VJobs, EconomyShopGUI]`
+- 의존: `compileOnly` Vault API, `plugin.yml`에 `depend: [Vault]`, `softdepend: [VJobs, EconomyShopGUI]`
 - GUI 27칸: 내 잔액(머리 아이템), 직업 현황(`/jobs` 열기), 상점(`/shop`), 송금 안내(채팅에 `/pay <닉> <금액>` 안내), 부자 순위(`/baltop`, Bank), 이용 가이드(책)
 - 외부 플러그인 내부 API에는 의존하지 않는다(버전이 바뀌어도 명령어만 유지되면 동작).
 - 아이템 이동 차단: 클릭·드래그·숫자키·Shift 클릭 모두 취소 (NeatSort 등 정렬 플러그인과 충돌 방지 위해 `InventoryHolder` 커스텀 홀더로 식별)
@@ -369,8 +412,10 @@ MVP에서는 **서버 매입을 하지 않는다.** EconomyShopGUI의 모든 상
 | 스포너 몹 | 보상 0% | |
 | 몹 농장 | 낮은 보상 + 1주차 모니터링 | 시간당 수입 측정 |
 | AFK 낚시 | AFK 감지 | 30분 방치 테스트 |
-| 상점 차익 | MVP는 매입 없음 | `/sell`·`/sellall`이 일반 계정에서 막히는지 |
+| 상점 차익 | MVP는 매입 없음(6.4 두 겹) | 6.4 검증 4가지: 아이템·잔액 그대로 |
 | 송금 음수·0·소수점·초과 | Bank | 2.1 체크리스트 + 단위 테스트 |
+| 거래 성공 후 기록 유실 | 커밋 후 성공 반환(2.1) | `docker kill` 후 거래별 대조 |
+| 소수 보상 유실·반올림 악용 | 정수 보상 + 2.2 규칙 | 단위 테스트 |
 | GUI 아이템 꺼내기·복제 | 각 플러그인 + EconomyHub 클릭 취소 | Shift/숫자키/드래그 |
 | 거래 중 로그아웃·강제 종료 | `/trade` 설계 | 3단계 |
 | 관리자 명령 우회 | LuckPerms 기본 그룹 권한 최소화 | 일반 계정으로 `/bank give` 등 시도 |
@@ -384,10 +429,11 @@ Bank는 다른 자체 플러그인처럼 `deploy.ps1 -Plugin bank`로, 외부 �
 
 ### 9.1 테스트 (로컬)
 
-1. `.\gradlew :plugins:bank:runServer`로 뜨는 테스트 서버(`plugins/bank/run/`)의 `plugins/`에 외부 JAR 4개(VaultUnlocked·VJobs·EconomyShopGUI·LuckPerms)를 넣고 실행 → 설정 파일 생성
-2. 레포 `server-config/economy/`의 설정을 덮어쓰고 재시작
-3. 8장 체크리스트 + 2.1 체크리스트 진행 (TestBot 계정 포함 2인)
+1. `.\gradlew :plugins:bank:runServer`로 뜨는 테스트 서버(`plugins/bank/run/`)의 `plugins/`에 9.3에 고정한 외부 JAR 4개(VaultUnlocked·VJobs·EconomyShopGUI·LuckPerms)를 넣고 실행 → 설정 파일 생성
+2. 5·6장 값으로 설정을 고치고 재시작, 6.4의 LuckPerms 명령 실행 → 2.1 첫 연동 테스트부터 진행
+3. 8장 체크리스트 + 2.1 체크리스트 진행 (TestBot 계정 포함 2인). 벌목꾼은 실제 수동 벌목량(목표 8,000원 = 원목 1,000개/시간)과 **직업 2개 겸업 시 합산 수입**을 따로 잰다
 4. Travel·Pets·CustomItems와 함께 켜서 로드 오류 없는지 확인
+5. 통과한 설정 폴더 전체(`plugins/VJobs/`, `plugins/EconomyShopGUI/`, `plugins/LuckPerms/`의 설정 파일, 데이터 파일 제외)를 레포 `server-config/economy/`에 커밋
 
 ### 9.2 운영
 
@@ -402,17 +448,33 @@ scp .\external\*.jar minipc-lan:~/plugin-staging/economy/
 # 미니PC
 ~/mc-scripts/install-plugin.sh --dry-run ~/plugin-staging/bank-*.jar ~/plugin-staging/economy/*.jar   # 새 플러그인 5개만 나오는지 확인
 ~/mc-scripts/install-plugin.sh ~/plugin-staging/bank-*.jar ~/plugin-staging/economy/*.jar             # 백업 + 설치 + 재시작
-# 첫 기동으로 설정 파일이 생긴 뒤, 레포의 설정을 복사하고 한 번 더 재시작
 ```
 
+**운영 첫 기동부터 검증된 설정으로 뜨게 한다.** 기본 설정으로 한 번 열면 그 사이 접속한 사람이 기본 상품을 팔 수 있다.
+
+1. 위 업로드와 함께 `server-config/economy/`를 미니PC `~/plugin-staging/economy-config/`로 올린다.
+2. `install-plugin.sh` 실행 **전에**(서버가 켜져 있어도 됨, 아직 로드 안 된 플러그인 폴더라 서버가 건드리지 않음) 설정을 `plugins/` 아래 각 폴더로 복사하고, 소유자를 기존 `plugins/` 폴더와 같게 맞춘다.
+   ```bash
+   cp -r ~/plugin-staging/economy-config/. /home/deploy/services/minecraft/data/plugins/
+   ```
+3. `install-plugin.sh`로 설치·재시작. 첫 기동이 곧 최종 설정이다. Bank는 이때 빈 DB를 만든다(2.3).
+4. LuckPerms 권한은 설정 파일이 아니라 LuckPerms DB(기본 H2)에 저장되므로, 첫 기동 직후 서버 콘솔에서 6.4의 `lp` 명령 4줄을 실행하고 6.4 검증을 한다. 그 몇 분 사이에도 1겹(`shops.yml`에 판매가 없음)이 이미 적용돼 있어 팔 수 있는 상품이 없다. 그래도 접속자가 없을 때(`-Delay 0` 상황) 진행한다.
+
 - 설정 복사는 `/reload` 없이 재시작으로 반영(기존 원칙 유지).
-- 되돌리기: `~/mc-scripts/rollback.sh`(JAR 원복). 경제 데이터만 초기화하려면 백업에서 해당 플러그인 폴더만 복원.
+- 되돌리기: `~/mc-scripts/rollback.sh`는 JAR만 원복하고 잔액은 그대로다. 잔액을 과거로 돌려야 하면 Bank 폴더만이 아니라 같은 시점의 전체 백업을 복원한다(2.3).
 - 오픈 공지: 노션에 명령어표(`/jobs`, `/shop`, `/money`, `/pay`, `/baltop`, 이후 `/economy`).
 
 ### 9.3 설정 파일 관리
 
 - `server-config/economy/<플러그인>/`에 실제 운영 설정을 커밋. 가격 변경은 PR로 남긴다(이 문서 6장과 같이 수정).
-- 외부 플러그인 버전은 `server-config/economy/VERSIONS.md`에 기록. 서버 업데이트 시 26.x 지원 여부를 먼저 확인.
+- 외부 플러그인 버전은 `server-config/economy/VERSIONS.md`에 **JAR 파일명·버전·SHA-256**으로 고정하고, 테스트한 그 JAR만 운영에 올린다. 서버 업데이트 시 26.x 지원 여부를 먼저 확인.
+
+| 플러그인 | 고정 버전 | plugin.yml `name` |
+| --- | --- | --- |
+| VaultUnlocked | 2.20.3 | `Vault` |
+| VJobs | 2.2.0-RELEASE | 테스트 때 확인 |
+| EconomyShopGUI (무료) | 테스트 때 받은 최신 | 테스트 때 확인 |
+| LuckPerms | 테스트 때 받은 최신(Bukkit) | `LuckPerms` |
 
 ---
 
@@ -451,4 +513,6 @@ scp .\external\*.jar minipc-lan:~/plugin-staging/economy/
 | 기준 수입 | 직업 1시간 ≈ 10,000원 (모든 보상·가격을 이 기준으로 산정) |
 | `/economy` | 1.5단계 |
 
-남은 확인 사항(테스트 서버에서): VJobs 보상·경험치 설정 형식, 탈퇴 시 레벨 유지 여부, 피스톤 이동 광석 추적, EconomyShopGUI 무료판에서 매입 끄기 방법, LuckPerms 26.3 동작.
+리뷰 반영(v0.4): Bank·EconomyHub 의존성 `Vault`, 커밋 후 성공 반환, MVP 정수 보상(레벨 보너스 0%), 경험치 곡선 `440 × n^0.6`, 검증된 설정으로 운영 첫 기동, 첫 설치/분실 구분과 전체 복원 원칙.
+
+남은 확인 사항(테스트 서버에서): VJobs 보상·경험치 설정 형식과 레벨 보너스 0% 설정 키, 탈퇴 시 레벨 유지 여부, 피스톤 이동 광석 추적, SQLite `synchronous=FULL` 커밋 시간, LuckPerms 26.3 동작.
