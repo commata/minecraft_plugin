@@ -1,6 +1,6 @@
 # 야생 서버 경제·직업 시스템 기획서
 
-> 문서 버전: **v0.4** (2026-11-25, v0.3 리뷰 반영: Vault 의존성 이름, 커밋 후 성공 반환, 정수 보상, 경험치 곡선, 운영 첫 기동 순서, Bank 복구 절차)
+> 문서 버전: **v0.5** (2026-11-25, v0.4 리뷰 반영: 구매 유실 대조·환불 절차, `jobs.limit.2` 운영 적용과 오픈 전 접속 제한, 소수 금액 거부, 정지 상태 기준 백업)
 > 방식: 화폐·직업·상점은 외부 플러그인, 경제 정책과 서버 전용 콘텐츠는 직접 기획·개발
 > 환경: Paper 26.3 (`26.3-258`) / Java 25 / 이 레포의 Gradle 멀티모듈
 > 운영 서버 전제: 화이트리스트 지인 서버, 난이도 easy, `keepInventory` 켜짐, Chunky·CoreProtect 보호
@@ -66,10 +66,10 @@
 | 역할 | VaultUnlocked에 **경제 제공자(Economy provider)** 로 등록. VJobs·EconomyShopGUI·자체 플러그인이 모두 이 잔액을 씀 |
 | 연동 | `depend: [Vault]`. VaultUnlocked 2.20.3의 `plugin.yml`은 이름이 `Vault`이고 `VaultUnlocked` 별칭이 없다(2026-11-25 확인). 구 Vault `net.milkbowl.vault.economy.Economy` 인터페이스만 구현(VJobs·EconomyShopGUI가 쓰는 쪽). 첫 연동 테스트(아래 1번)가 통과하면 MVP에 Vault 2 API는 넣지 않는다 |
 | 금액 | 잔액은 `long` 정수 원. 표시는 `12,340원`. 소수 처리 규칙은 아래 2.2 |
-| 저장 | `plugins/Bank/bank.db` (파일형 SQLite, `journal_mode=WAL`, `synchronous=FULL`). `accounts(uuid, name, balance, updated_at)`, `transactions(id, time, type, from, to, amount, balance_after, source)`, `meta(key, value)` |
+| 저장 | `plugins/Bank/bank.db` (파일형 SQLite, `journal_mode=WAL`, `synchronous=FULL`). `accounts(uuid, name, balance, updated_at)`, `transactions(id, time, type, from, to, amount, balance_after, source, ref)`, `meta(key, value)` |
 | 쓰기 방식 | **모든 잔액 변경은 "잔액 검사 → 변경 → 거래 기록"을 한 SQL 트랜잭션으로 처리하고, 커밋이 끝난 뒤에만 성공을 반환한다.** 메모리 캐시는 커밋 후에 갱신하는 조회용 사본. 커밋이 실패하면 Vault에 실패를 반환(상점은 상품을 주지 않음). `/pay`도 출금·입금·로그가 한 트랜잭션. Vault 호출이 다른 스레드에서 와도 되도록 DB 연결 하나를 락으로 보호 |
 | 명령 | `/money` (`/bal`, `/돈`): 내 잔액 · `/money <닉>`: 남의 잔액 · `/pay <닉> <금액>` · `/baltop [쪽]` (10명씩, 1분 캐시) |
-| 관리자 | `/bank give·take·set <닉> <금액>`, `/bank log <닉> [쪽]`, `/bank reload` (권한 `bank.admin`, 기본 OP) |
+| 관리자 | `/bank give·take·set <닉> <금액>`, `/bank log <닉> [쪽]`, `/bank refund <거래번호>` (해당 출금을 한 번만 환불, 2.4), `/bank reload` (권한 `bank.admin`, 기본 OP) |
 | 송금 규칙 | 최소 10원, **정수만**(소수점 입력 거부), 잔액 초과·자기 자신·음수·0 거부, 오프라인 대상 허용(서버에 한 번이라도 접속한 플레이어만) |
 | 로그 | 모든 입출금을 거래마다 1줄씩 `transactions`에 기록. `/bank log`로 조회 |
 | 첫 설치 vs 분실 | 2.3 |
@@ -82,21 +82,25 @@ Bank 완료 체크리스트 (테스트 서버, 버전은 9.3에 고정한 JAR):
 
 1. **첫 연동 테스트**: 빈 테스트 서버에서 Vault·Bank·VJobs·EconomyShopGUI 로드 확인 → VJobs 보상 입금 → 같은 계정으로 상점 구매 → `/money`로 입금액−구매액 차이가 정확한지 확인
 2. `/pay` 음수·0·소수점·잔액 초과·자기 자신·없는 닉네임 → 모두 거부
-3. **강제 종료 대조**: 송금·구매 직후 `docker kill` → 재기동 후, 성공 메시지를 받은 거래마다 양쪽 잔액과 `transactions` 1줄이 모두 있는지 대조(총액만 보면 거래 전체가 사라진 경우를 놓침). 상점 구매는 상품을 받았으면 출금 기록도 있어야 함
+3. **강제 종료 대조**: 송금·구매 직후 `docker kill` → 재기동 후 거래마다 대조한다(총액만 보면 거래 전체가 사라진 경우를 놓침).
+   - `/pay`: 성공 메시지를 받은 송금마다 양쪽 잔액과 `transactions` 1줄이 모두 있는지
+   - 상점: **잔액·Bank 구매 기록·EconomyShopGUI 구매 로그·인벤토리 네 가지를 함께** 대조하고 두 방향을 모두 본다. ① 상품은 있는데 출금 기록이 없음(돈 복사) → 버그, 배포 불가 ② 출금은 됐는데 상품이 없음(돈만 빠짐) → 출금 커밋 후 상품 지급 전, 또는 지급 후 인벤토리 저장 전에 꺼지면 생길 수 있음. 재현되면 2.4 환불 절차로 처리
 4. 첫 설치 시 빈 DB 생성, 이후 `bank.db` 삭제·손상 시 잠금 모드로 뜨는지(2.3)
 5. 서버 로그에 경고·스택트레이스 없음
 
 ### 2.2 소수 금액 규칙
 
-구 Vault API는 금액을 `double`로 주고받으므로 소수가 들어올 수 있다. 잔액은 정수로만 유지한다.
+구 Vault API는 금액을 `double`로 주고받는다. 잔액은 정수로만 유지하고, **MVP에서는 소수 금액을 아예 받지 않는다.**
 
 | 경로 | 규칙 |
 | --- | --- |
-| 직업 보상 | **MVP는 정수 고정 보상만 사용**(5장 표는 전부 정수). VJobs의 레벨별 수입 보너스는 0%로 꺼서 소수가 생기지 않게 함. 레벨 보너스는 2단계에서 다시 검토 |
-| Vault 입금(`depositPlayer`) | 그래도 소수가 들어오면 플레이어별 `fraction` 칸에 소수 잔여분을 누적하고, 1원이 모일 때마다 정수로 지급. (예: 8.04원 × 25회 = 201원) |
-| Vault 출금(`withdrawPlayer`)·잔액 확인(`has`) | 소수는 **올림**(상점이 덜 받는 일이 없도록). 8.5원 상품 = 9원 |
+| 직업 보상 | 정수 고정 보상만(5장 표는 전부 정수). VJobs 레벨별 수입 보너스·보상 배율 0% |
+| 상점 | 6.3 가격은 전부 정수. EconomyShopGUI의 할인(`discounts`)·판매 배율(`sell-multipliers`)·계절 가격은 쓰지 않음 |
+| Vault 입금·출금·`has` | 정수가 아닌 금액이 오면 **실패(`EconomyResponse` FAILURE, 사유 "정수 금액만 가능")를 반환**하고 잔액은 그대로. 반올림·올림·잔여분 누적은 하지 않음(표시 가격과 실제 차감액이 달라지고 환불 금액도 어긋나기 때문) |
 | `/pay`, `/bank` | 정수만 허용, 소수 입력은 거부 |
-| 조회(`getBalance`) | 정수 잔액 반환(누적 소수 잔여분은 포함하지 않음) |
+| 로그 | 거부한 소수 요청은 호출한 플러그인 이름과 함께 경고 1줄 → 테스트에서 소수가 들어오는 경로를 찾아 설정으로 끔 |
+
+2단계에서 레벨 보너스를 다시 켜려면 이 규칙부터 바꾼다. 그때 잔여분 누적을 넣는다면 누적값 저장과 거래 기록을 같은 트랜잭션에 두고, 8.04원 입금 25회를 중간 재기동을 포함해 201원이 되는지 테스트한다.
 
 ### 2.3 첫 설치와 데이터 분실 구분
 
@@ -104,7 +108,18 @@ Bank 완료 체크리스트 (테스트 서버, 버전은 9.3에 고정한 JAR):
 - **운영 중 분실·손상**: `installed: true`인데 `bank.db`가 없거나 `PRAGMA integrity_check`가 실패하면, 새 DB를 만들지 않고 **잠금 모드**로 뜬다. Vault 제공자는 등록하되 모든 입출금이 실패를 반환하고(상점 구매·직업 보상 정지), OP에게 접속 시 경고. 관리자가 백업에서 복원한 뒤 재시작해야 풀린다.
 - **복원 원칙**: Bank 데이터만 과거로 돌리지 않는다. 거래 뒤 Bank만 되돌리면 산 아이템과 돌려받은 돈이 함께 남는다. 복원은 **같은 백업 시점의 월드(플레이어 인벤토리 `playerdata` 포함) + `plugins/`를 함께** 되돌리는 DEPLOY.md의 전체 복원 절차로만 한다.
 - JAR 롤백(`rollback.sh`)은 잔액을 바꾸지 않는다. Bank 코드만 이전 버전으로 돌릴 뿐이라 DB 스키마는 하위 호환을 유지한다.
-- 첫 운영 배포 전에 운영 백업으로 만든 복제 서버에서: 구매 1건 → 그 직전 백업으로 전체 복원 → 잔액과 인벤토리가 함께 구매 전으로 돌아오는지 확인.
+- **경제 복원에 쓰는 백업은 서버 정지 상태에서 만든 것만** 쓴다(`install-plugin.sh`가 만드는 백업, 또는 서버를 멈추고 `backup.sh --offline`). 서버가 켜진 채 만드는 `backup.sh`는 월드를 저장하고 묶는 동안에도 Bank 거래가 계속되므로, 같은 파일 안에서도 인벤토리와 잔액 시점이 어긋날 수 있다.
+- 첫 설치 때 `install-plugin.sh`가 자동으로 만드는 백업은 **Bank 설치 전**이라 `bank.db`가 없다. 그래서 설치·권한 검증이 끝난 뒤 오픈 전에 **기준 백업**을 정지 상태로 한 번 남긴다(9.2의 6번).
+- 첫 운영 배포 전, 운영 백업으로 만든 복제 서버에서: 구매 1건 → 그 직전의 정지 상태 백업으로 전체 복원 → 잔액과 인벤토리가 함께 구매 전으로 돌아오는지 확인.
+
+### 2.4 구매 유실 환불 절차 (MVP 운영)
+
+출금이 커밋된 뒤 상품 지급이나 인벤토리 저장 전에 서버가 꺼지면 "돈만 빠진" 구매가 생길 수 있다. MVP는 코드로 막지 않고 운영 절차로 처리한다.
+
+1. 플레이어 신고(시각, 상품) → `/bank log <닉>`에서 해당 출금의 거래번호 확인(`source`가 EconomyShopGUI)
+2. EconomyShopGUI 로그(`/eshop logs export`)와 플레이어 인벤토리로 상품이 실제로 없는지 확인
+3. `/bank refund <거래번호>` 실행. Bank는 원래 거래번호를 참조하는 `REFUND` 거래를 남기고, **같은 거래번호는 두 번 환불되지 않는다**(`transactions.ref`에 유일 제약)
+4. 상품을 다시 주지 않고 환불만 한다. 환불 내역은 노션에 한 줄 기록
 
 ---
 
@@ -156,7 +171,7 @@ Bank 완료 체크리스트 (테스트 서버, 버전은 9.3에 고정한 JAR):
 | 항목 | 값 |
 | --- | --- |
 | 초기 직업 | 광부, 벌목꾼, 농부, 사냥꾼, 낚시꾼 (5개) |
-| 동시 가입 | 최대 2개 (`jobs.limit.2`, 기본 그룹에 부여) |
+| 동시 가입 | 최대 2개 (`jobs.limit.2`를 LuckPerms `default` 그룹에 부여, 운영 적용은 9.2의 4번) |
 | 탈퇴·변경 | 가능. 탈퇴한 직업 레벨은 유지(재가입 시 복구)되는지 테스트에서 확인, 안 되면 변경 쿨타임 24시간 |
 | 최대 레벨 | 50 |
 | 레벨 보너스 | **MVP는 0%** (정수 보상 유지, 2.2). 2단계에서 레벨당 +0.5% 검토 |
@@ -349,12 +364,7 @@ MVP에서는 **서버 매입을 하지 않는다.** 두 겹으로 막는다.
 
 1. `shops.yml`의 모든 상품에 `sell` 키를 두지 않거나 `sell: -1` (공식 지원). 기본 상점 파일은 쓰지 않고 6.3 표로 새로 작성한 파일만 둔다.
 2. LuckPerms `default` 그룹에서 판매 명령 권한을 명시적으로 끈다. **이 권한들은 기본값이 true**라 아무것도 안 하면 열려 있다.
-   ```
-   lp group default permission set EconomyShopGUI.sellall false
-   lp group default permission set EconomyShopGUI.sellallitem false
-   lp group default permission set EconomyShopGUI.sellallhand false
-   lp group default permission set EconomyShopGUI.sellgui false
-   ```
+   `EconomyShopGUI.sellall`, `EconomyShopGUI.sellallitem`, `EconomyShopGUI.sellallhand`, `EconomyShopGUI.sellgui`를 `false`로 설정한다(명령은 9.2의 4번).
    (`EconomyShopGUI.shop.*`은 구매에도 쓰이므로 건드리지 않는다. 노드 이름은 대소문자를 구분하는 경우가 있어 위키 표기 그대로 쓴다.)
 
 검증: 일반 계정으로 ① 상점 GUI에서 판매 클릭 ② `/sellall` ③ `/sellall hand` ④ `/sellgui`를 각각 시도한 뒤 **아이템 수량과 잔액이 모두 그대로**인지 확인.
@@ -415,7 +425,9 @@ MVP에서는 **서버 매입을 하지 않는다.** 두 겹으로 막는다.
 | 상점 차익 | MVP는 매입 없음(6.4 두 겹) | 6.4 검증 4가지: 아이템·잔액 그대로 |
 | 송금 음수·0·소수점·초과 | Bank | 2.1 체크리스트 + 단위 테스트 |
 | 거래 성공 후 기록 유실 | 커밋 후 성공 반환(2.1) | `docker kill` 후 거래별 대조 |
-| 소수 보상 유실·반올림 악용 | 정수 보상 + 2.2 규칙 | 단위 테스트 |
+| 소수 금액 | 정수 보상·정수 가격 + 소수 요청 거부(2.2) | 단위 테스트 + 테스트 서버 경고 로그 0건 |
+| 구매 후 상품 유실 | 2.4 환불 절차(거래번호당 1회) | 강제 종료 대조(2.1 3번) |
+| 직업 3개 이상 가입 | `jobs.limit.2` | 세 번째 가입 거부 |
 | GUI 아이템 꺼내기·복제 | 각 플러그인 + EconomyHub 클릭 취소 | Shift/숫자키/드래그 |
 | 거래 중 로그아웃·강제 종료 | `/trade` 설계 | 3단계 |
 | 관리자 명령 우회 | LuckPerms 기본 그룹 권한 최소화 | 일반 계정으로 `/bank give` 등 시도 |
@@ -457,8 +469,30 @@ scp .\external\*.jar minipc-lan:~/plugin-staging/economy/
    ```bash
    cp -r ~/plugin-staging/economy-config/. /home/deploy/services/minecraft/data/plugins/
    ```
+
+**오픈 전 접속 제한.** `-Delay 0`은 재시작 공지 대기만 생략할 뿐 접속을 막지 않는다. 설치부터 검증까지는 접속을 따로 막는다.
+
+- 미리 디스코드 등으로 "점검 중 접속 금지"를 공지한다. **OP 계정은 화이트리스트를 무시하고 들어올 수 있으므로** 공지가 실제 차단 수단이다.
+- 비OP 계정은 화이트리스트를 임시로 줄여서 막는다. 서버 콘솔에서 `whitelist list`로 명단을 기록해 두고, 관리자 본인만 남긴 뒤(`whitelist remove <닉>`) 9.2의 7번에서 다시 추가한다. itzg 이미지가 `WHITELIST` 환경 변수로 명단을 관리하고 있다면 재시작 때 원래 명단으로 덮어쓸 수 있으니, 3번 재시작 직후 `whitelist list`로 다시 확인한다.
+
 3. `install-plugin.sh`로 설치·재시작. 첫 기동이 곧 최종 설정이다. Bank는 이때 빈 DB를 만든다(2.3).
-4. LuckPerms 권한은 설정 파일이 아니라 LuckPerms DB(기본 H2)에 저장되므로, 첫 기동 직후 서버 콘솔에서 6.4의 `lp` 명령 4줄을 실행하고 6.4 검증을 한다. 그 몇 분 사이에도 1겹(`shops.yml`에 판매가 없음)이 이미 적용돼 있어 팔 수 있는 상품이 없다. 그래도 접속자가 없을 때(`-Delay 0` 상황) 진행한다.
+4. LuckPerms 권한은 설정 파일이 아니라 LuckPerms DB(기본 H2)에 저장되고, 이 DB는 테스트 서버에서 복사해 오지 않는다. 첫 기동 직후 서버 콘솔에서 다음을 실행한다. 이 몇 분 동안에도 1겹(`shops.yml`에 판매가 없음)이 이미 적용돼 있어 팔 수 있는 상품은 없다.
+   ```
+   lp group default permission set jobs.limit.2 true
+   lp group default permission set EconomyShopGUI.sellall false
+   lp group default permission set EconomyShopGUI.sellallitem false
+   lp group default permission set EconomyShopGUI.sellallhand false
+   lp group default permission set EconomyShopGUI.sellgui false
+   ```
+5. 일반 권한으로 검증한다. 관리자 계정을 잠시 `deop <닉>` 하고 진행한 뒤 콘솔에서 `op <닉>`으로 되돌린다(운영 서버는 정품 인증이라 TestBot 계정은 못 씀).
+   - 직업 두 번째 가입 성공, 세 번째 가입 거부
+   - 6.4 판매 검증 4가지(아이템·잔액 그대로)
+   - 2.1 첫 연동 테스트(직업 보상 → 구매 → `/money` 차액)
+6. **기준 백업**: 서버를 멈추고 `backup.sh --offline`으로 정지 상태 백업을 남긴 뒤 다시 켠다(`bank.db`와 권한이 들어간 첫 백업, 2.3).
+   ```bash
+   docker stop -t 90 minecraft-paper && ~/mc-scripts/backup.sh --offline && docker start minecraft-paper
+   ```
+7. 화이트리스트 명단을 원래대로 되돌리고(`whitelist add <닉>`) 오픈 공지를 한다.
 
 - 설정 복사는 `/reload` 없이 재시작으로 반영(기존 원칙 유지).
 - 되돌리기: `~/mc-scripts/rollback.sh`는 JAR만 원복하고 잔액은 그대로다. 잔액을 과거로 돌려야 하면 Bank 폴더만이 아니라 같은 시점의 전체 백업을 복원한다(2.3).
@@ -512,6 +546,8 @@ scp .\external\*.jar minipc-lan:~/plugin-staging/economy/
 | 동시 직업 수 | 2개 |
 | 기준 수입 | 직업 1시간 ≈ 10,000원 (모든 보상·가격을 이 기준으로 산정) |
 | `/economy` | 1.5단계 |
+
+리뷰 반영(v0.5): 상점 강제 종료 대조를 잔액·기록·인벤토리 양방향으로, 구매 유실은 `/bank refund` 1회 환불, 운영에서 `jobs.limit.2` 적용과 오픈 전 접속 제한, 소수 금액은 거부, 경제 복원은 정지 상태 백업만 + 오픈 전 기준 백업.
 
 리뷰 반영(v0.4): Bank·EconomyHub 의존성 `Vault`, 커밋 후 성공 반환, MVP 정수 보상(레벨 보너스 0%), 경험치 곡선 `440 × n^0.6`, 검증된 설정으로 운영 첫 기동, 첫 설치/분실 구분과 전체 복원 원칙.
 
