@@ -30,10 +30,12 @@ public final class CastManager {
 
     private static final class Cast {
         final Countdown countdown;
+        final UUID world;
         BukkitTask task;
 
-        Cast(int seconds) {
+        Cast(int seconds, UUID world) {
             this.countdown = new Countdown(seconds);
+            this.world = world;
         }
     }
 
@@ -60,10 +62,7 @@ public final class CastManager {
             HomeMessages.error(player, "이미 귀환 중입니다.");
             return;
         }
-        if (!HomePlugin.isOverworld(player.getWorld())) {
-            HomeMessages.error(player, "오버월드에서만 귀환할 수 있습니다.");
-            return;
-        }
+        // 집은 오버월드에만 정할 수 있지만, /home 은 네더·엔드 등 어느 차원에서든 사용할 수 있음
         Optional<HomeLocation> home = store.home(player);
         if (home.isEmpty()) {
             HomeMessages.error(player, "저장된 집이 없습니다. 먼저 /sethome 으로 집을 정해 주세요.");
@@ -92,7 +91,7 @@ public final class CastManager {
             return;
         }
 
-        Cast cast = new Cast(seconds);
+        Cast cast = new Cast(seconds, player.getWorld().getUID());
         casts.put(player.getUniqueId(), cast);
         HomeMessages.info(player, seconds + "초 후 집으로 이동합니다.");
         HomeMessages.hint(player, "걷기 또는 점프 중에도 귀환이 진행됩니다.");
@@ -145,8 +144,8 @@ public final class CastManager {
             cancelSilently(id, cast);
             return;
         }
-        if (!HomePlugin.isOverworld(player.getWorld())) {
-            cancel(player, CancelReason.MOVED_AWAY);
+        if (!player.getWorld().getUID().equals(cast.world)) {
+            cancel(player, CancelReason.MOVED_AWAY); // 시전 중 포털 등으로 차원이 바뀜
             return;
         }
         if (cast.countdown.tick()) {
