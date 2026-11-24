@@ -17,7 +17,7 @@ public final class HomeCommand implements BasicCommand {
     private final TravelPlugin plugin;
     private final HomeService homes;
 
-    public HomeCommand(TravelPlugin plugin, CastManager casts) {
+    public HomeCommand(TravelPlugin plugin, HomeService homes) {
         this.plugin = plugin;
         this.homes = homes;
     }
