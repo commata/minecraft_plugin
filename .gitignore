@@ -18,3 +18,4 @@ Thumbs.db
 # 비밀 정보
 *.env
 deploy.local.*
+.kotlin/

@@ -1,0 +1,10 @@
+name: CustomItems
+version: '${version}'
+main: kr.commata.customitems.CustomItemsPlugin
+api-version: '${apiVersion}'
+description: 커스텀 아이템과 스킬
+author: commata
+permissions:
+  customitems.reload:
+    description: /ci reload 사용
+    default: op

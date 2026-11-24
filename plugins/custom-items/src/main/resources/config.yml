@@ -1,0 +1,3 @@
+# 접속 시 보내는 메시지 (MiniMessage 형식, <player> = 플레이어 이름)
+# 빈 문자열("")로 두면 보내지 않습니다.
+join-message: "<green>서버에 오신 것을 환영합니다!</green>"
