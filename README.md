@@ -63,3 +63,12 @@ Ubuntu 미니PC의 Docker Paper 서버(MC 26.3)에서 사용할 자체 개발 Pa
 - 집 위치가 막혔거나(블록이 생김) 바닥이 사라졌거나 용암 등 위험하면 이동하지 않습니다.
 - 남은 시간은 화면 아래 액션바에 `귀환까지 7초 → 6초 → …`로 표시되고, 메시지는 본인에게만 보입니다.
 - 집, 쿨타임, 전투 제한은 플레이어 데이터(PDC)에 저장되어 재접속·서버 재시작 후에도 유지됩니다.
+
+## 운영 서버 배포
+
+백업·배포·되돌리기 방법은 [docs/DEPLOY.md](docs/DEPLOY.md)를 참고하세요.
+
+```powershell
+.\scripts\deploy.ps1 -Plugin custom-items -DryRun   # 확인만
+.\scripts\deploy.ps1 -Plugin custom-items           # 실제 배포
+```
