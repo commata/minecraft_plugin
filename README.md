@@ -39,3 +39,12 @@ Ubuntu 미니PC의 Docker Paper 서버(MC 26.3)에서 사용할 자체 개발 Pa
 | --- | --- | --- |
 | `/ci version` | 모두 | 플러그인·서버 버전 표시 |
 | `/ci reload` | `customitems.reload` (기본 OP) | `config.yml` 다시 불러오기 |
+
+## 운영 서버 배포
+
+백업·배포·되돌리기 방법은 [docs/DEPLOY.md](docs/DEPLOY.md)를 참고하세요.
+
+```powershell
+.\scripts\deploy.ps1 -Plugin custom-items -DryRun   # 확인만
+.\scripts\deploy.ps1 -Plugin custom-items           # 실제 배포
+```
