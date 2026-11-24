@@ -14,6 +14,10 @@ START_TIMEOUT="${START_TIMEOUT:-300}"                        # 서버가 뜰 때
 # 이 스크립트들이 절대 교체·삭제하지 않는 플러그인 (plugin.yml 의 name 기준)
 PROTECTED_PLUGINS="${PROTECTED_PLUGINS:-Chunky CoreProtect}"
 
+# 이름이 바뀐 플러그인: "새이름:예전이름" (공백으로 여러 개). 새 이름의 플러그인을 설치하면
+# 예전 이름의 JAR 도 교체 대상으로 보고 보관 폴더로 옮깁니다 (둘 다 로드되는 것 방지, rollback.sh 로 되돌릴 수 있음).
+RENAMED_PLUGINS="${RENAMED_PLUGINS:-Travel:Home}"
+
 log()  { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*" >&2; }
 warn() { printf '[%s] 경고: %s\n' "$(date '+%H:%M:%S')" "$*" >&2; }
 die()  { printf '[%s] 오류: %s\n' "$(date '+%H:%M:%S')" "$*" >&2; exit 1; }
@@ -58,4 +62,13 @@ require_cmds() {
     for c in "$@"; do
         command -v "$c" >/dev/null 2>&1 || die "'$c' 명령이 없습니다. 설치 후 다시 실행하세요."
     done
+}
+
+# 새 플러그인 이름이 대신하는 예전 이름들 (RENAMED_PLUGINS 기준)
+replaced_names_of() {
+    local pair
+    for pair in $RENAMED_PLUGINS; do
+        [ "${pair%%:*}" = "$1" ] && echo "${pair#*:}"
+    done
+    return 0
 }
