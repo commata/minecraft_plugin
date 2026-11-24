@@ -28,7 +28,8 @@ Ubuntu 미니PC의 Docker Paper 서버(MC 26.3)에서 사용할 자체 개발 Pa
 ```
 
 - 테스트 서버 파일은 `plugins/custom-items/run/`에 생기며 Git에는 올라가지 않습니다.
-- Minecraft에서 `localhost`로 접속합니다. 서버 콘솔에서 `op <내 닉네임>`을 입력하면 OP가 됩니다.
+- Minecraft에서 `localhost`로 접속합니다. 테스트 서버도 화이트리스트가 기본으로 켜져 있으므로, 처음 한 번 서버 콘솔에서
+  `whitelist add <내 닉네임>`, `op <내 닉네임>`을 입력합니다. (`You are not whitelisted` 오류의 원인)
 - IntelliJ Gradle 창에서 `runServer`를 **Debug**로 실행하면 브레이크포인트가 동작합니다.
 - 배포용 JAR: `plugins/custom-items/build/libs/custom-items-<버전>.jar` (`-plain.jar`은 사용하지 않음)
 
