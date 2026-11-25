@@ -39,7 +39,7 @@ VJobs만으로는 막을 수 없는 두 가지를 `plugins/economy-hub`(플러�
 
 - 직업 쿨타임은 **탈퇴 후 1시간만**: VJobs는 가입 때도 쿨타임을 걸어서, 탈퇴 기록이 없거나 1시간이 지난 플레이어에게 `jobs.cooldown.instant`를 붙여 줌. 쿨타임 길이는 `VJobs/config.yml`의 `job-switch-cooldown.default-seconds` 하나만 보고, EconomyHub 설정에는 따로 없음 (예전 `job-cooldown.after-leave-minutes`가 남아 있으면 기동 때 경고. `plugins/EconomyHub/config.yml`을 지우고 재기동하면 새 기본값으로 다시 만들어짐)
 - 피스톤으로 움직인 블록과 용암·물로 생긴 돌·조약돌·현무암은 캐도 직업 보상 0원
-- 직업을 탈퇴했다가 다시 가입해도 그 레벨에서 쌓던 XP 유지 (VJobs는 레벨만 보관하고 XP를 0으로 만듦)
+- 직업을 탈퇴했다가 다시 가입해도 그 레벨에서 쌓던 XP 유지 (VJobs는 레벨만 보관하고 XP를 0으로 만듦). 기록은 `plugins/EconomyHub/job-xp.tsv`, VJobs DB에 저장된 게 확인되면 지워짐. 서버가 켜져 있을 때 고치지 말 것. 백업·복원 때 VJobs DB와 같이 다룸
 
 로컬 테스트 서버에 넣기:
 
@@ -48,7 +48,7 @@ VJobs만으로는 막을 수 없는 두 가지를 `plugins/economy-hub`(플러�
 Copy-Item plugins\economy-hub\build\libs\economy-hub-*.jar plugins\bank\run\plugins\ -Exclude *-plain.jar
 ```
 
-확인할 로그: `EconomyHub 0.1.0 활성화 (탈퇴 후 쿨타임 60분, 보상 제외 켜짐, 탈퇴 후 XP 유지 켜짐)`. 게임 안에서 `/economyhub status <닉>`.
+확인할 로그: `EconomyHub 0.1.0 활성화 (탈퇴 후 쿨타임 60분, 보상 제외 켜짐, 탈퇴 후 XP 유지 켜짐 (기록 0건))`. 게임 안에서 `/economyhub status <닉>`.
 
 ## 적용 (운영, ECONOMY.md 9.2)
 

@@ -125,6 +125,64 @@ public final class VJobsHook {
         }
     }
 
+    /** VJobs 가 실제로 쓰는 탈퇴 설정 (ConfigManager 값, /jobs reload 반영). */
+    public record LeaveSettings(double levelLossPercent, boolean keepProgress) { }
+
+    /**
+     * VJobsPlugin.getConfigManager().getLeavePenaltyPercent() / isLeaveKeepArchive(). 공개 API 에 없어 내부 클래스를 읽음
+     * (VJobs 2.2.0 JAR 확인, VERSIONS.md 에 고정한 버전). 읽지 못하면 null.
+     */
+    public LeaveSettings leaveSettings() {
+        try {
+            Object config = vjobs.getClass().getMethod("getConfigManager").invoke(vjobs);
+            double loss = ((Number) config.getClass().getMethod("getLeavePenaltyPercent").invoke(config)).doubleValue();
+            boolean keep = (Boolean) config.getClass().getMethod("isLeaveKeepArchive").invoke(config);
+            return new LeaveSettings(loss, keep);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * VJobs DB 에 저장된 레벨·XP (VJobsPlugin.getJobManager().getRepository().load(uuid).getProgress(job)).
+     * 메모리가 아니라 DB 를 새로 읽으므로 비동기 스레드에서 부릅니다. 가입 중이 아니거나 읽지 못하면 null.
+     * (load 는 SQL 오류를 로그만 남기고 빈 데이터를 돌려주므로 오류도 null 로 보임 → 기록을 지우지 않는 쪽)
+     */
+    public Progress storedProgress(UUID uuid, String jobId) {
+        try {
+            Object manager = vjobs.getClass().getMethod("getJobManager").invoke(vjobs);
+            Object repository = manager.getClass().getMethod("getRepository").invoke(manager);
+            Object data = repository.getClass().getMethod("load", UUID.class).invoke(repository, uuid);
+            if (data == null) {
+                return null;
+            }
+            Object progress = data.getClass().getMethod("getProgress", String.class).invoke(data, jobId);
+            if (progress == null) {
+                return null;
+            }
+            int lv = ((Number) progress.getClass().getMethod("getLevel").invoke(progress)).intValue();
+            double xp = ((Number) progress.getClass().getMethod("getXp").invoke(progress)).doubleValue();
+            return new Progress(lv, xp);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** storedProgress 를 쓸 수 있는지 (메서드가 있는지만 확인, DB 는 읽지 않음). 못 쓰면 이유. */
+    public String storedProgressProblem() {
+        try {
+            Class<?> manager = vjobs.getClass().getMethod("getJobManager").getReturnType();
+            Class<?> repository = manager.getMethod("getRepository").getReturnType();
+            Class<?> data = repository.getMethod("load", UUID.class).getReturnType();
+            Class<?> progress = data.getMethod("getProgress", String.class).getReturnType();
+            progress.getMethod("getLevel");
+            progress.getMethod("getXp");
+            return null;
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+            return "VJobs 저장소를 읽을 수 없음 (" + e + ")";
+        }
+    }
+
     private Class<?> api(String name) throws ClassNotFoundException {
         return Class.forName(name, true, vjobs.getClass().getClassLoader());
     }

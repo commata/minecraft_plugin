@@ -36,6 +36,7 @@ public final class EconomyHubPlugin extends JavaPlugin {
     private boolean leaveHooked;
     private boolean payoutHooked;
     private boolean xpHooked;
+    private JobXpKeeper xpKeeper;
 
     @Override
     public void onEnable() {
@@ -61,7 +62,7 @@ public final class EconomyHubPlugin extends JavaPlugin {
         getLogger().info("EconomyHub " + getPluginMeta().getVersion() + " 활성화 (탈퇴 후 쿨타임 "
                 + (leaveHooked ? cooldownGuard.cooldownMs() / 60_000L + "분" : "꺼짐") + ", 보상 제외 "
                 + (payoutHooked && settings.guardEnabled() ? "켜짐" : "꺼짐") + ", 탈퇴 후 XP 유지 "
-                + (xpHooked ? "켜짐" : "꺼짐") + ")");
+                + xpState() + ")");
     }
 
     /** VJobs config.yml 의 job-switch-cooldown.default-seconds. 탈퇴 후 대기 시간은 이 값 하나만 씁니다. */
@@ -71,13 +72,18 @@ public final class EconomyHubPlugin extends JavaPlugin {
 
     private void hookVJobs(Plugin vjobs) {
         VJobsHook hook = new VJobsHook(this, vjobs);
-        JobXpKeeper xpKeeper = new JobXpKeeper(this, vjobs, hook);
+        JobXpKeeper keeper = JobXpKeeper.create(this, hook);
 
+        // XP 기록은 HIGHEST: 탈퇴 직전(VJobs 가 아직 데이터를 바꾸기 전)이고, 파일 저장에 실패하면 탈퇴를 취소할 수 있음
+        String xpLeaveError = hook.listen(VJobsHook.LEAVE_EVENT, EventPriority.HIGHEST, event -> {
+            Player player = VJobsHook.player(event);
+            if (player != null) {
+                keeper.onLeave(player, hook.jobId(event), event);
+            }
+        });
         String leaveError = hook.listen(VJobsHook.LEAVE_EVENT, EventPriority.MONITOR, event -> {
             Player player = VJobsHook.player(event);
             if (player != null) {
-                // 탈퇴 직전(VJobs 가 아직 데이터를 바꾸기 전)이라 현재 레벨·XP 를 읽을 수 있음
-                xpKeeper.onLeave(player, hook.jobId(event));
                 cooldownGuard.onJobLeave(player);
             }
         });
@@ -94,13 +100,15 @@ public final class EconomyHubPlugin extends JavaPlugin {
         String joinError = hook.listen(VJobsHook.JOIN_EVENT, EventPriority.MONITOR, event -> {
             Player player = VJobsHook.player(event);
             if (player != null) {
-                xpKeeper.onJoin(player, hook.jobId(event));
+                keeper.onJoin(player, hook.jobId(event));
             }
         });
-        if (joinError == null && leaveError == null) {
+        if (joinError == null && xpLeaveError == null) {
             xpHooked = true;
+            xpKeeper = keeper;
+            keeper.start();
         } else {
-            getLogger().warning("직업 가입·탈퇴 이벤트 연결 실패, 탈퇴 후 XP 유지 꺼짐: " + (joinError != null ? joinError : leaveError));
+            getLogger().warning("직업 가입·탈퇴 이벤트 연결 실패, 탈퇴 후 XP 유지 꺼짐: " + (joinError != null ? joinError : xpLeaveError));
         }
 
         String payoutError = hook.listen(VJobsHook.PAYOUT_EVENT, EventPriority.HIGH, event -> {
@@ -142,6 +150,18 @@ public final class EconomyHubPlugin extends JavaPlugin {
 
     boolean leaveHooked() {
         return leaveHooked;
+    }
+
+    /** 탈퇴 후 XP 유지의 실제 상태. VJobs 설정을 매번 다시 읽음. */
+    String xpState() {
+        if (xpKeeper == null) {
+            return xpHooked ? "꺼짐" : "꺼짐 (VJobs 이벤트 연결 안 됨)";
+        }
+        return xpKeeper.state();
+    }
+
+    JobXpKeeper xpKeeper() {
+        return xpKeeper;
     }
 
     boolean payoutHooked() {

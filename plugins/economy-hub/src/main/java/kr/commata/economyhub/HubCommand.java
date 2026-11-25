@@ -4,6 +4,7 @@ import io.papermc.paper.command.brigadier.BasicCommand;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.command.CommandSender;
@@ -31,14 +32,23 @@ final class HubCommand implements BasicCommand {
                             ? plugin.cooldownGuard().cooldownMs() / 60_000L + "분 (VJobs job-switch-cooldown.default-seconds)"
                             : "꺼짐")
                     + " · 보상 제외: " + (plugin.payoutHooked() ? "켜짐" : "꺼짐")
-                    + " · 이번 기동에서 취소한 보상 " + plugin.cancelledPayouts() + "건", NamedTextColor.YELLOW));
+                    + " · 이번 기동에서 취소한 보상 " + plugin.cancelledPayouts() + "건"
+                    + " · 탈퇴 후 XP 유지: " + plugin.xpState(), NamedTextColor.YELLOW));
             if (args.length >= 2) {
                 Player target = plugin.getServer().getPlayerExact(args[1]);
-                if (!plugin.leaveHooked()) {
-                    return;
-                }
                 if (target == null) {
                     sender.sendMessage(Component.text("접속 중인 플레이어가 아닙니다: " + args[1], NamedTextColor.RED));
+                    return;
+                }
+                if (plugin.xpKeeper() != null) {
+                    StringBuilder records = new StringBuilder();
+                    plugin.xpKeeper().records(target.getUniqueId()).forEach((job, saved) -> records.append(' ').append(job)
+                            .append(" Lv").append(saved.level()).append(" XP ").append(String.format(Locale.ROOT, "%.1f", saved.xp()))
+                            .append(saved.restored() ? "(복구함, VJobs 저장 확인 대기)" : "(재가입 대기)"));
+                    sender.sendMessage(Component.text(target.getName() + " XP 기록:" + (records.isEmpty() ? " 없음" : records),
+                            NamedTextColor.YELLOW));
+                }
+                if (!plugin.leaveHooked()) {
                     return;
                 }
                 long remaining = plugin.cooldownGuard().remainingMs(target);
