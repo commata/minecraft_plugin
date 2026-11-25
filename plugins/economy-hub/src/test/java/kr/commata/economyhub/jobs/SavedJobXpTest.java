@@ -63,6 +63,21 @@ class SavedJobXpTest {
     }
 
     @Test
+    void leavingBeforeRestoreKeepsTheLargerSavedXp() {
+        // 재접속 직후 VJobs DB 에서 XP 0 을 읽은 상태로 복구 전에 다시 탈퇴
+        SavedJobXp unconfirmed = new SavedJobXp(3, 123.5).asRestored();
+        assertEquals(new SavedJobXp(3, 123.5), SavedJobXp.onLeave(unconfirmed, 3, 0.0));
+        assertEquals(new SavedJobXp(3, 123.5), SavedJobXp.onLeave(unconfirmed, 3, 50.0));
+        // 더 쌓았으면 지금 값, 레벨이 올랐으면 지금 값
+        assertEquals(new SavedJobXp(3, 140.0), SavedJobXp.onLeave(unconfirmed, 3, 140.0));
+        assertEquals(new SavedJobXp(4, 10.0), SavedJobXp.onLeave(unconfirmed, 4, 10.0));
+        assertNull(SavedJobXp.onLeave(unconfirmed, 4, 0.0));
+        // 기록 없음
+        assertEquals(new SavedJobXp(3, 51.25), SavedJobXp.onLeave(null, 3, 51.25));
+        assertNull(SavedJobXp.onLeave(null, 3, 0.0));
+    }
+
+    @Test
     void rejectsBrokenValues() {
         assertNull(SavedJobXp.decode(null));
         assertNull(SavedJobXp.decode(""));

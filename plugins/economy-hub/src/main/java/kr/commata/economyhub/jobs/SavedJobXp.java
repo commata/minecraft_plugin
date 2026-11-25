@@ -60,6 +60,19 @@ public record SavedJobXp(int level, double xp, boolean restored) {
         return xp - currentXp;
     }
 
+    /**
+     * 탈퇴할 때 남길 기록. 같은 레벨의 기존 기록이 지금 XP 보다 크면 그대로 둠: 재접속 직후 복구가 돌기 전(VJobs DB 에서 XP 0 을
+     * 읽은 상태)에 다시 탈퇴해도 저장해 둔 XP 를 잃지 않게. 남기는 기록은 항상 "재가입 대기"(restored=false).
+     *
+     * @return 남길 기록, 지울 거면 null
+     */
+    public static SavedJobXp onLeave(SavedJobXp existing, int level, double xp) {
+        if (existing != null && existing.level == level && existing.xp > xp + EPSILON) {
+            return new SavedJobXp(level, existing.xp, false);
+        }
+        return xp > EPSILON ? new SavedJobXp(level, xp, false) : null;
+    }
+
     /** VJobs DB 에 저장된 값이 이 기록 이상인지 (같은 레벨에 XP 이상, 또는 더 높은 레벨). */
     public boolean coveredBy(int storedLevel, double storedXp) {
         return storedLevel > level || (storedLevel == level && storedXp >= xp - EPSILON);
