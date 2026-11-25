@@ -1,0 +1,20 @@
+# ECONOMY.md 6.3 '음식' 구매가 (1개 기준, 정수). 판매(sell) 키는 일부러 없음: 서버 매입은 Market /판매 로만 (6.4). 페이지당 45개.
+pages:
+  page1:
+    gui-rows: 6
+    items:
+      bread:
+        material: BREAD
+        buy: 30
+      baked_potato:
+        material: BAKED_POTATO
+        buy: 20
+      cooked_beef:
+        material: COOKED_BEEF
+        buy: 50
+      cooked_porkchop:
+        material: COOKED_PORKCHOP
+        buy: 50
+      golden_carrot:
+        material: GOLDEN_CARROT
+        buy: 250

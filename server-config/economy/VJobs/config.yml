@@ -1,0 +1,688 @@
+# =====================================================================
+#  VJobs 설정 - 야생 서버 경제 (docs/ECONOMY.md v0.8, 5장)
+#  원본: server-config/economy/VJobs/config.yml (레포). 서버에서 직접 고치지 말고 PR로 바꾼 뒤 복사.
+#  /vjobs admin editor 는 쓰지 않는다 (파일 전체를 다시 써서 주석이 사라짐).
+#  모든 섹션을 남겨 둔 이유: 섹션이 없으면 VJobs가 JAR 안의 기본값(18개 직업, 배율 등)을 읽음.
+# =====================================================================
+
+# Used by updates to add new options to this file. Do not change it.
+version: 3
+
+# Looks for new VJobs versions on Modrinth. A release build only follows releases, a beta
+# build follows betas too. auto-download puts the new jar into the server's update folder,
+# it is installed on the next restart. New config options arrive on their own after that.
+updates:
+  check: true
+  check-interval-hours: 6
+  notify-admins: true            # tell players with jobs.admin on join
+  auto-download: false
+
+storage:
+  type: sqlite               # sqlite or mysql
+  filename: local.db
+  mysql:
+    host: localhost
+    port: 3306
+    database: vjobs
+    user: root
+    password: ""
+    ssl: false
+    pool-size: 10
+
+autosave:
+  interval-minutes: 5
+
+locale:
+  default: ko                # messages_ko.yml (server-config/economy/VJobs/)
+  use-client-locale: false
+
+messages:
+  prefix: "&8[&6직업&8] &r"
+
+# How payouts are shown. Payouts within "aggregate-ticks" are summed up into one
+# line ("+12.50 $ | +8 XP") instead of one message per block.
+#  payout-display: ACTIONBAR, BOSSBAR, CHAT or NONE
+#  The boss bar also shows the progress towards the next level.
+notifications:
+  payout-display: ACTIONBAR
+  aggregate-ticks: 30
+  bossbar-color: GREEN
+  bossbar-seconds: 3
+
+# Chat integration: shows the player's job title in front of their message.
+# Off by default so dedicated chat plugins keep control of the format.
+# Placeholders: %player% %message% %job% %title% %title_full% %level% %prestige% %prefix%
+chat:
+  enabled: false
+  format: "&8[&6%title%&8] &r%player%&7: &f%message%"
+
+signs:
+  refresh-seconds: 60        # how often [VJobs] toplist signs are redrawn
+
+# ECONOMY.md 5.1: 동시 가입 최대 2개. LuckPerms jobs.limit.2 없이도 기본값으로 2개.
+jobs-limit:
+  default: 2
+
+# Cooldown before a player may take on a new job after last joining/leaving a job.
+# default-seconds applies if the player has NONE of the cooldown permissions listed below
+# (e.g. 86400 = only 1x per day). If a player has one or more of the permissions, the
+# SHORTEST matching value applies.
+# ECONOMY.md 5.1: 1시간. VJobs는 첫 직업 가입에도 쿨타임을 걸어서 24시간이면 오픈 날 두 번째 직업을 못 고름.
+job-switch-cooldown:
+  default-seconds: 3600
+  permissions:
+    jobs.cooldown.hour: 3600
+    jobs.cooldown.instant: 0
+
+# ECONOMY.md 5.1: 탈퇴해도 레벨 유지(재가입 시 복구).
+leave-penalty:
+  level-loss-percent: 0.0
+  keep-progress: true   # VJobs 는 레벨만 보관하고 XP 를 0 으로 만듦 → EconomyHub 가 XP 를 저장·복구 (ECONOMY.md 5.1, 7.2)
+
+# Caps how much money a single player can earn from jobs per interval.
+# XP is never capped, only the payout.
+income-limit:
+  enabled: false
+  interval-seconds: 3600
+  max-money: 5000.0
+
+# Anti-exploit measures.
+#  block-cooldown-seconds     same spot only pays again after this many seconds
+#  deny-player-placed-blocks  breaking a block you placed yourself pays nothing
+#                             (crops you planted still pay once they are grown)
+#  persist-placed-blocks      remember placed blocks in the chunk data, so a restart
+#                             doesn't turn them into paying blocks again
+#  player-placed-track-limit  only used when persist-placed-blocks is false
+#  spawner-mob-multiplier     share of the payout for mobs from monster spawners
+#                             (0.0 = nothing, 0.25 = a quarter, 1.0 = full)
+#  deny-creative              creative and spectator mode never pay
+#  deny-tamed-animals         killing tamed animals pays nothing
+#  afk                        no payouts after this long without looking around,
+#                             typing or clicking (stops water and piston farms)
+#  silk-touch                 breaking these blocks with silk touch pays nothing,
+#                             so the mine-place-mine loop is worthless
+#  worldguard-flag            honour the WorldGuard region flag "vjobs-payout"
+anti-exploit:
+  block-cooldown-seconds: 10
+  deny-player-placed-blocks: true
+  persist-placed-blocks: true
+  player-placed-track-limit: 50000
+  spawner-mob-multiplier: 0.0
+  deny-creative: true
+  deny-tamed-animals: true
+  disabled-worlds: []
+  afk:
+    enabled: true
+    timeout-seconds: 300
+  silk-touch:
+    pays: false
+    blocks: ["*_ORE", ANCIENT_DEBRIS]
+  worldguard-flag: true
+
+# ECONOMY.md 5.3: 레벨 n -> n+1 필요 경험치 = 440 * n^0.6.
+# VJobs는 레벨 L에서 다음 레벨로 갈 때 이 식을 level = L+1로 계산하므로 (level - 1)을 씀.
+# Lv1->2: 440, Lv10->11: 1,752, Lv49->50: 4,545
+xp-curve:
+  xp-base: 440
+  xp-exponent: 0.6
+  max-level: 50
+  formula: "base * (level - 1) ^ exponent"
+
+# Payout formulas. Variables: money, xp (values from the job entry), multiplier
+# (world/permission/boost/prestige combined), level, prestige.
+# Example for a level-scaled income: "money * multiplier * (1 + level / 100)"
+formulas:
+  money: "money * multiplier"
+  xp: "xp * multiplier"
+
+# ECONOMY.md 5.1: 프레스티지 비활성화
+prestige:
+  enabled: false
+  from-level: 50
+  max-tier: 0
+  bonus-per-tier-percent: 0.0
+
+sounds:
+  levelup:
+    enabled: true
+    sound: ENTITY_PLAYER_LEVELUP
+    volume: 1.0
+    pitch: 1.0
+
+# ECONOMY.md 1장 5번: 돈 공급은 직업 보상 하나. 퀘스트 보상(추가 공급원)은 끔.
+
+# quests rolled from the pool below, limited to jobs they actually hold.
+# A quest is weekly with "period: weekly". Rewards are paid automatically.
+quests:
+  enabled: false
+  per-day: 3
+  per-week: 2
+  reset-hour: 0                  # hour (UTC) at which the day rolls over
+  weekly-reset-day: MONDAY
+  pool:
+    miner_ores:
+      job: miner
+      action: BREAK
+      display-name: "Ore rush"
+      icon: IRON_ORE
+      targets: [IRON_ORE, DEEPSLATE_IRON_ORE, GOLD_ORE, DEEPSLATE_GOLD_ORE, DIAMOND_ORE, DEEPSLATE_DIAMOND_ORE]
+      min-amount: 32
+      max-amount: 96
+      reward-money: 250.0
+      reward-xp: 150
+    miner_stone:
+      job: miner
+      action: BREAK
+      display-name: "Tunnel builder"
+      icon: STONE
+      targets: [STONE, DEEPSLATE, COBBLESTONE]
+      min-amount: 256
+      max-amount: 512
+      reward-money: 150.0
+      reward-xp: 100
+    farmer_harvest:
+      job: farmer
+      action: HARVEST
+      display-name: "Rich harvest"
+      icon: WHEAT
+      targets: [WHEAT, CARROTS, POTATOES, BEETROOTS]
+      min-amount: 64
+      max-amount: 192
+      reward-money: 200.0
+      reward-xp: 120
+    farmer_breed:
+      job: farmer
+      action: BREED
+      display-name: "Full stable"
+      icon: WHEAT_SEEDS
+      targets: []
+      min-amount: 10
+      max-amount: 25
+      reward-money: 180.0
+      reward-xp: 110
+    lumberjack_logs:
+      job: lumberjack
+      action: BREAK
+      display-name: "Clear cut"
+      icon: OAK_LOG
+      targets: []
+      min-amount: 96
+      max-amount: 256
+      reward-money: 200.0
+      reward-xp: 120
+    hunter_mobs:
+      job: hunter
+      action: KILL
+      display-name: "Monster hunt"
+      icon: IRON_SWORD
+      targets: []
+      min-amount: 25
+      max-amount: 75
+      reward-money: 250.0
+      reward-xp: 160
+    fisherman_catch:
+      job: fisherman
+      action: FISH
+      display-name: "Good catch"
+      icon: FISHING_ROD
+      targets: []
+      min-amount: 15
+      max-amount: 40
+      reward-money: 200.0
+      reward-xp: 130
+    builder_place:
+      job: builder
+      action: PLACE
+      display-name: "Big build"
+      icon: BRICKS
+      targets: []
+      min-amount: 256
+      max-amount: 640
+      reward-money: 180.0
+      reward-xp: 110
+    digger_dig:
+      job: digger
+      action: BREAK
+      display-name: "Excavation"
+      icon: DIAMOND_SHOVEL
+      targets: []
+      min-amount: 256
+      max-amount: 512
+      reward-money: 160.0
+      reward-xp: 100
+    brewer_potions:
+      job: brewer
+      action: BREW
+      display-name: "Potion order"
+      icon: BREWING_STAND
+      targets: []
+      min-amount: 8
+      max-amount: 24
+      reward-money: 220.0
+      reward-xp: 140
+    enchanter_books:
+      job: enchanter
+      action: ENCHANT
+      display-name: "Arcane studies"
+      icon: ENCHANTING_TABLE
+      targets: []
+      min-amount: 30
+      max-amount: 90
+      reward-money: 240.0
+      reward-xp: 150
+    weaponsmith_craft:
+      job: weaponsmith
+      action: CRAFT
+      display-name: "Armoury order"
+      icon: DIAMOND_SWORD
+      targets: []
+      min-amount: 10
+      max-amount: 30
+      reward-money: 260.0
+      reward-xp: 160
+    crafter_smelt:
+      job: crafter
+      action: SMELT
+      display-name: "Furnace shift"
+      icon: FURNACE
+      targets: []
+      min-amount: 64
+      max-amount: 192
+      reward-money: 200.0
+      reward-xp: 120
+    explorer_chunks:
+      job: explorer
+      action: EXPLORE
+      display-name: "Uncharted land"
+      icon: MAP
+      targets: []
+      min-amount: 50
+      max-amount: 150
+      reward-money: 300.0
+      reward-xp: 180
+    weekly_miner_diamonds:
+      period: weekly
+      job: miner
+      action: BREAK
+      display-name: "Diamond week"
+      icon: DIAMOND_ORE
+      targets: [DIAMOND_ORE, DEEPSLATE_DIAMOND_ORE]
+      min-amount: 40
+      max-amount: 80
+      reward-money: 1500.0
+      reward-xp: 900
+    weekly_farmer_harvest:
+      period: weekly
+      job: farmer
+      action: HARVEST
+      display-name: "Granary"
+      icon: HAY_BLOCK
+      targets: []
+      min-amount: 1500
+      max-amount: 3000
+      reward-money: 1200.0
+      reward-xp: 800
+    weekly_hunter_mobs:
+      period: weekly
+      job: hunter
+      action: KILL
+      display-name: "Purge the night"
+      icon: NETHERITE_SWORD
+      targets: []
+      min-amount: 400
+      max-amount: 800
+      reward-money: 1400.0
+      reward-xp: 850
+    weekly_lumberjack_logs:
+      period: weekly
+      job: lumberjack
+      action: BREAK
+      display-name: "Sawmill order"
+      icon: SPRUCE_LOG
+      targets: []
+      min-amount: 1500
+      max-amount: 3000
+      reward-money: 1200.0
+      reward-xp: 800
+    weekly_explorer_travel:
+      period: weekly
+      job: explorer
+      action: TRAVEL
+      display-name: "Long road"
+      icon: LEATHER_BOOTS
+      targets: []
+      min-amount: 100
+      max-amount: 200
+      reward-money: 1000.0
+      reward-xp: 700
+    weekly_archaeologist_brush:
+      period: weekly
+      job: archaeologist
+      action: BRUSH
+      display-name: "Field season"
+      icon: BRUSH
+      targets: []
+      min-amount: 40
+      max-amount: 80
+      reward-money: 1500.0
+      reward-xp: 900
+
+explore:
+  enabled: false
+  max-stored-chunks: 20000       # per player; beyond this nothing new is written to the database
+  elytra-multiplier: 0.1         # share of the payout for a new chunk found while gliding
+  max-chunks-per-minute: 30      # new chunks above this per player and minute pay nothing, 0 = no limit
+
+# AUTO_SMELT perk: these drops are replaced by their smelted result. Silk touch keeps the ore.
+auto-smelt:
+  xp-per-item: 0.7               # experience like a furnace, 0 = none
+  items:
+    RAW_IRON: IRON_INGOT
+    RAW_GOLD: GOLD_INGOT
+    RAW_COPPER: COPPER_INGOT
+    ANCIENT_DEBRIS: NETHERITE_SCRAP
+
+# TRAVEL and ELYTRA pay per "blocks-per-payout" blocks covered. TRAVEL keys are
+# WALK, SPRINT, SWIM, BOAT, MINECART or the ridden entity (HORSE, PIG, STRIDER, ...).
+travel:
+  enabled: false
+  blocks-per-payout: 100
+
+# /vjobs ping [target] for players with a STRUCTURE_PING perk (the explorer by default).
+# It shows the direction and a rough distance to the nearest structure, never coordinates.
+# A perk level unlocks every target whose "level" is at or below it. The search is spread
+# over many ticks, so a ping never stalls the server. Strongholds and end cities
+# are left out on purpose: the eye of ender hunt and the elytra should stay a challenge.
+structure-ping:
+  radius: 1500                   # blocks around the player that are searched
+  cooldown-minutes: 30           # after a ping that found something
+  empty-cooldown-seconds: 60     # after a ping that found nothing new
+  price: 0.0                     # money per ping (Vault, PlayerPoints, CoinsEngine), 0 = free
+  compass: true                  # also point the player's compass at the structure
+  skip-explored: true            # ignore structures in chunks the player has already explored
+  targets:
+    village: { level: 1, structures: [village_plains, village_desert, village_savanna, village_snowy, village_taiga] }
+    temple: { level: 1, structures: [desert_pyramid, jungle_pyramid] }
+    shipwreck: { level: 2, structures: [shipwreck, shipwreck_beached] }
+    ocean_ruin: { level: 2, structures: [ocean_ruin_cold, ocean_ruin_warm] }
+    ruined_portal: { level: 2, structures: [ruined_portal, ruined_portal_desert, ruined_portal_jungle, ruined_portal_swamp, ruined_portal_mountain, ruined_portal_ocean] }
+    outpost: { level: 2, structures: [pillager_outpost] }
+    witch_hut: { level: 2, structures: [swamp_hut] }
+    igloo: { level: 2, structures: [igloo] }
+    monument: { level: 3, structures: [monument] }
+    mansion: { level: 3, structures: [mansion] }
+    trail_ruins: { level: 3, structures: [trail_ruins] }
+    trial_chambers: { level: 4, structures: [trial_chambers] }
+    fortress: { level: 4, structures: [fortress] }
+    bastion: { level: 4, structures: [bastion_remnant] }
+    ancient_city: { level: 5, structures: [ancient_city] }
+
+# ECONOMY.md 2.2: 보상은 정수만. 배율이 1이 아니면 소수 금액이 생겨 Bank가 입금을 거부하므로 전부 비움.
+multipliers:
+  worlds: {}
+  permissions: {}
+  boost:
+    active: false
+    multiplier: 1.0
+    jobs: []
+    until-unix-millis: 0
+  items: {}
+
+# ECONOMY.md 2.2: 감소 보상(diminishing-returns)은 소수 금액을 만들므로 끔.
+
+# Economy and balance.
+#  default-backend   where payouts go: vault, playerpoints, coinsengine,
+#                    coinsengine:<currency>, command, or an id another plugin
+#                    registered through the API. A job can override it with "economy:".
+#  command           used by the "command" backend for currencies without an API
+#  tax               a share of every payout goes into a fund instead of the player;
+#                    with fund-account set it is paid into that Vault account,
+#                    otherwise it is kept for /vjobs admin fund
+#  daily-limit       money cap per job and day; permissions multiply the cap
+#  diminishing-returns  after "free-actions" paid actions of one job inside the
+#                    window, every further "step" actions pay "reduction-per-step" less
+#  dynamic-prices    actions the whole server does a lot pay less, rare ones more.
+#                    expected-per-hour is what counts as normal for one action key.
+economy:
+  default-backend: vault
+  coinsengine-currency: coins
+  command:
+    give: "eco give %player% %amount%"
+    format: "%amount%"
+  tax:
+    enabled: false
+    percent: 5.0
+    fund-account: ""
+  daily-limit:
+    enabled: false
+    default: 10000.0
+    jobs:
+      miner: 8000.0
+    permissions:
+      jobs.dailylimit.vip: 1.5
+      jobs.dailylimit.mvp: 2.0
+  diminishing-returns:
+    enabled: false
+    window-seconds: 300
+    free-actions: 400
+    step: 100
+    reduction-per-step: 0.1
+    minimum-factor: 0.25
+  dynamic-prices:
+    enabled: false
+    half-life-minutes: 60
+    expected-per-hour: 2000
+    elasticity: 0.35
+    min-factor: 0.5
+    max-factor: 1.5
+
+# Prefix for chat (%prefix%) and PlaceholderAPI (%jobs_prefix%, %jobs_prefix_<job>%).
+# Placeholders: %job% %title% %level% %prestige% %stars%
+titles:
+  prefix: "&8[&6%title% &e%stars%&8]"
+  prefix-no-prestige: "&8[&6%title%&8]"
+
+# ECONOMY.md 5.1: 능력치 특전 없음 (DOUBLE_DROP·MONEY_BONUS 등은 매입·정수 보상과 충돌)
+perks:
+  enabled: false
+  points-per-level: 0
+  points-per-prestige: 0
+  jobs: {}
+
+# 예약 부스트 없음 (2.2 정수 보상)
+boost-events: {}
+
+# 대회 보상·예약 없음 (추가 돈 공급원 금지)
+contests:
+  metric: MONEY
+  announce-interval-minutes: 15
+  rewards: {}
+  schedule: {}
+
+# Shared goals for towns, lands or clans. Every online member gets the reward when
+# the group reaches the amount. provider: auto, towny, lands, simpleclans, or an id
+# registered through the API. period: daily or weekly.
+team-goals:
+  enabled: false
+  provider: auto
+  period: weekly
+  goals:
+    city_mine:
+      job: miner
+      action: BREAK
+      targets: []
+      amount: 20000
+      display-name: "City mine"
+      reward: { money: 500.0, commands: [] }
+
+# How often leaderboards (signs, menus, %jobs_top_...% placeholders) are read from the database.
+leaderboards:
+  cache-seconds: 60
+
+# %jobs_progress_bar_<job>%
+placeholders:
+  progress-bar-length: 10
+  progress-bar-full: "&a|"
+  progress-bar-empty: "&7|"
+
+# Posts to a Discord channel through a webhook (Channel settings > Integrations).
+discord:
+  enabled: false
+  webhook-url: ""
+  username: "VJobs"
+  milestone-levels: [25, 50, 75, 100]
+  on-prestige: true
+  on-contest: true
+  messages:
+    level: "**%player%** reached level %level% as %job%."
+    prestige: "**%player%** reached prestige %prestige% as %job%."
+    contest: "The %job% contest is over. Winner: **%player%**"
+
+# /vjobs admin import jobsreborn: Jobs Reborn job names that are called differently here
+import:
+  table-prefix: "jobs_"
+  job-mapping:
+    woodcutter: lumberjack
+
+# 레벨 보상 없음 (추가 돈 공급원 금지)
+level-rewards: {}
+
+# ECONOMY.md 5.2 보상표. 경험치 = 보상 10원당 1 (5.3). 표에 없는 블록·몹은 0원.
+# 설치한 블록, 실크터치 광석, 스포너 몹, 크리에이티브는 anti-exploit 설정으로 0원.
+jobs:
+  miner:
+    display-name: "광부"
+    description: "광석과 돌을 캐서 돈을 법니다. 네더랙·엔드 돌은 0원."
+    icon: DIAMOND_PICKAXE
+    titles:
+      "10": { short: "견습", name: "견습 광부" }
+      "25": { short: "광부", name: "숙련 광부" }
+      "50": { short: "장인", name: "장인 광부" }
+    actions:
+      break:
+        COAL_ORE: { money: 30, xp: 3 }
+        DEEPSLATE_COAL_ORE: { money: 30, xp: 3 }
+        COPPER_ORE: { money: 15, xp: 1.5 }
+        DEEPSLATE_COPPER_ORE: { money: 15, xp: 1.5 }
+        IRON_ORE: { money: 60, xp: 6 }
+        DEEPSLATE_IRON_ORE: { money: 60, xp: 6 }
+        GOLD_ORE: { money: 100, xp: 10 }
+        DEEPSLATE_GOLD_ORE: { money: 100, xp: 10 }
+        NETHER_GOLD_ORE: { money: 10, xp: 1 }
+        REDSTONE_ORE: { money: 30, xp: 3 }
+        DEEPSLATE_REDSTONE_ORE: { money: 30, xp: 3 }
+        LAPIS_ORE: { money: 60, xp: 6 }
+        DEEPSLATE_LAPIS_ORE: { money: 60, xp: 6 }
+        NETHER_QUARTZ_ORE: { money: 20, xp: 2 }
+        DIAMOND_ORE: { money: 400, xp: 40 }
+        DEEPSLATE_DIAMOND_ORE: { money: 400, xp: 40 }
+        EMERALD_ORE: { money: 500, xp: 50 }
+        DEEPSLATE_EMERALD_ORE: { money: 500, xp: 50 }
+        ANCIENT_DEBRIS: { money: 1200, xp: 120 }
+        STONE: { money: 1, xp: 0.1 }
+        DEEPSLATE: { money: 1, xp: 0.1 }
+        TUFF: { money: 1, xp: 0.1 }
+
+  lumberjack:
+    display-name: "벌목꾼"
+    description: "나무를 베어 돈을 법니다. 나뭇잎은 0원."
+    icon: IRON_AXE
+    titles:
+      "10": { short: "견습", name: "견습 벌목꾼" }
+      "25": { short: "벌목꾼", name: "숙련 벌목꾼" }
+      "50": { short: "장인", name: "장인 벌목꾼" }
+    actions:
+      break:
+        OAK_LOG: { money: 8, xp: 0.8 }
+        SPRUCE_LOG: { money: 8, xp: 0.8 }
+        BIRCH_LOG: { money: 8, xp: 0.8 }
+        JUNGLE_LOG: { money: 8, xp: 0.8 }
+        ACACIA_LOG: { money: 8, xp: 0.8 }
+        DARK_OAK_LOG: { money: 8, xp: 0.8 }
+        MANGROVE_LOG: { money: 8, xp: 0.8 }
+        CHERRY_LOG: { money: 8, xp: 0.8 }
+        PALE_OAK_LOG: { money: 8, xp: 0.8 }
+        CRIMSON_STEM: { money: 8, xp: 0.8 }
+        WARPED_STEM: { money: 8, xp: 0.8 }
+        BROWN_MUSHROOM_BLOCK: { money: 2, xp: 0.2 }
+        RED_MUSHROOM_BLOCK: { money: 2, xp: 0.2 }
+        MUSHROOM_STEM: { money: 2, xp: 0.2 }
+
+  farmer:
+    display-name: "농부"
+    description: "다 자란 작물을 수확해 돈을 법니다. 피스톤·주민 수확과 동물 번식은 0원."
+    icon: WHEAT
+    titles:
+      "10": { short: "견습", name: "견습 농부" }
+      "25": { short: "농부", name: "숙련 농부" }
+      "50": { short: "장인", name: "장인 농부" }
+    actions:
+      harvest:
+        WHEAT: { money: 5, xp: 0.5 }
+        CARROTS: { money: 5, xp: 0.5 }
+        POTATOES: { money: 5, xp: 0.5 }
+        BEETROOTS: { money: 5, xp: 0.5 }
+        PUMPKIN: { money: 8, xp: 0.8 }
+        MELON: { money: 8, xp: 0.8 }
+        COCOA: { money: 5, xp: 0.5 }
+        NETHER_WART: { money: 5, xp: 0.5 }
+      # 사탕수수·대나무는 Ageable 이라 harvest 로 두면 "다 자란 나이"일 때만 지급되는데, 줄기 위쪽 블록은
+      # 나이가 0인 경우가 많아 0원이 됨. break 로 두면 자란 위쪽 줄기는 지급, 직접 심은 맨 아래 블록은 0원.
+      break:
+        SUGAR_CANE: { money: 1, xp: 0.1 }
+        BAMBOO: { money: 1, xp: 0.1 }
+      collect:
+        SWEET_BERRIES: { money: 3, xp: 0.3 }
+
+  hunter:
+    display-name: "사냥꾼"
+    description: "몬스터를 잡아 돈을 법니다. 스포너 몹·동물·슬라임은 0원."
+    icon: IRON_SWORD
+    titles:
+      "10": { short: "견습", name: "견습 사냥꾼" }
+      "25": { short: "사냥꾼", name: "숙련 사냥꾼" }
+      "50": { short: "장인", name: "장인 사냥꾼" }
+    actions:
+      kill:
+        ZOMBIE: { money: 30, xp: 3 }
+        SKELETON: { money: 30, xp: 3 }
+        SPIDER: { money: 30, xp: 3 }
+        CREEPER: { money: 30, xp: 3 }
+        DROWNED: { money: 30, xp: 3 }
+        HUSK: { money: 30, xp: 3 }
+        STRAY: { money: 30, xp: 3 }
+        ENDERMAN: { money: 15, xp: 1.5 }
+        WITCH: { money: 30, xp: 3 }
+        PILLAGER: { money: 30, xp: 3 }
+        VINDICATOR: { money: 30, xp: 3 }
+        BLAZE: { money: 60, xp: 6 }
+        GHAST: { money: 60, xp: 6 }
+        WITHER_SKELETON: { money: 100, xp: 10 }
+        PIGLIN_BRUTE: { money: 150, xp: 15 }
+        GUARDIAN: { money: 10, xp: 1 }
+        ELDER_GUARDIAN: { money: 1000, xp: 100 }
+        WARDEN: { money: 2000, xp: 200 }
+        WITHER: { money: 3000, xp: 300 }
+        ENDER_DRAGON: { money: 3000, xp: 300 }
+
+  fisherman:
+    display-name: "낚시꾼"
+    description: "낚시로 돈을 법니다. 물고기 40원, 보물 150원, 쓰레기 10원."
+    icon: FISHING_ROD
+    titles:
+      "10": { short: "견습", name: "견습 낚시꾼" }
+      "25": { short: "낚시꾼", name: "숙련 낚시꾼" }
+      "50": { short: "장인", name: "장인 낚시꾼" }
+    actions:
+      fish:
+        COD: { money: 40, xp: 4 }
+        SALMON: { money: 40, xp: 4 }
+        PUFFERFISH: { money: 40, xp: 4 }
+        TROPICAL_FISH: { money: 40, xp: 4 }
+        ENCHANTED_BOOK: { money: 150, xp: 15 }
+        BOW: { money: 150, xp: 15 }
+        SADDLE: { money: 150, xp: 15 }
+        NAME_TAG: { money: 150, xp: 15 }
+        NAUTILUS_SHELL: { money: 150, xp: 15 }
+        # 낚싯대는 쓰레기(손상)와 보물(인챈트)이 같은 FISHING_ROD 키라 구분할 수 없어 쓰레기 값으로 통일 (ANY = 10원)
+        ANY: { money: 10, xp: 1 }

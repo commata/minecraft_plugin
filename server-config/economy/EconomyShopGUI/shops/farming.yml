@@ -1,0 +1,68 @@
+# ECONOMY.md 6.3 '농업' 구매가 (1개 기준, 정수). 판매(sell) 키는 일부러 없음: 서버 매입은 Market /판매 로만 (6.4). 페이지당 45개.
+pages:
+  page1:
+    gui-rows: 6
+    items:
+      wheat_seeds:
+        material: WHEAT_SEEDS
+        buy: 10
+      beetroot_seeds:
+        material: BEETROOT_SEEDS
+        buy: 10
+      carrot:
+        material: CARROT
+        buy: 20
+      potato:
+        material: POTATO
+        buy: 20
+      melon_seeds:
+        material: MELON_SEEDS
+        buy: 50
+      pumpkin_seeds:
+        material: PUMPKIN_SEEDS
+        buy: 50
+      sugar_cane:
+        material: SUGAR_CANE
+        buy: 30
+      cactus:
+        material: CACTUS
+        buy: 30
+      cocoa_beans:
+        material: COCOA_BEANS
+        buy: 30
+      sweet_berries:
+        material: SWEET_BERRIES
+        buy: 30
+      nether_wart:
+        material: NETHER_WART
+        buy: 80
+      oak_sapling:
+        material: OAK_SAPLING
+        buy: 50
+      spruce_sapling:
+        material: SPRUCE_SAPLING
+        buy: 50
+      birch_sapling:
+        material: BIRCH_SAPLING
+        buy: 50
+      jungle_sapling:
+        material: JUNGLE_SAPLING
+        buy: 50
+      acacia_sapling:
+        material: ACACIA_SAPLING
+        buy: 50
+      dark_oak_sapling:
+        material: DARK_OAK_SAPLING
+        buy: 50
+      cherry_sapling:
+        material: CHERRY_SAPLING
+        buy: 100
+      mangrove_propagule:
+        material: MANGROVE_PROPAGULE
+        buy: 100
+      bamboo:
+        material: BAMBOO
+        buy: 20
+      bone_meal:
+        material: BONE_MEAL
+        buy: 50
