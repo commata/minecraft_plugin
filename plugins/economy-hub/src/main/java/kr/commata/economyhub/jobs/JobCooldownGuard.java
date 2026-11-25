@@ -3,6 +3,7 @@ package kr.commata.economyhub.jobs;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.LongSupplier;
 import org.bukkit.NamespacedKey;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -29,16 +30,17 @@ public final class JobCooldownGuard implements Listener {
     private final Plugin plugin;
     private final NamespacedKey lastLeaveKey;
     private final Map<UUID, PermissionAttachment> attachments = new HashMap<>();
-    private volatile long cooldownMs;
+    private final LongSupplier cooldownMs;
 
-    public JobCooldownGuard(Plugin plugin, long cooldownMs) {
+    /** @param cooldownMs VJobs 설정에서 매번 읽어 오는 탈퇴 후 대기 시간. EconomyHub 는 따로 값을 두지 않습니다. */
+    public JobCooldownGuard(Plugin plugin, LongSupplier cooldownMs) {
         this.plugin = plugin;
         this.lastLeaveKey = new NamespacedKey(plugin, "last_job_leave");
         this.cooldownMs = cooldownMs;
     }
 
-    public void setCooldownMs(long cooldownMs) {
-        this.cooldownMs = cooldownMs;
+    public long cooldownMs() {
+        return cooldownMs.getAsLong();
     }
 
     /** VJobs JobLeaveEvent(MONITOR, 취소되지 않은 것만)에서 호출. */
@@ -53,11 +55,11 @@ public final class JobCooldownGuard implements Listener {
     }
 
     public long remainingMs(Player player) {
-        return CooldownPolicy.remainingMs(lastLeaveMs(player), System.currentTimeMillis(), cooldownMs);
+        return CooldownPolicy.remainingMs(lastLeaveMs(player), System.currentTimeMillis(), cooldownMs());
     }
 
     public void refresh(Player player) {
-        boolean exempt = CooldownPolicy.exempt(lastLeaveMs(player), System.currentTimeMillis(), cooldownMs);
+        boolean exempt = CooldownPolicy.exempt(lastLeaveMs(player), System.currentTimeMillis(), cooldownMs());
         PermissionAttachment attachment = attachments.get(player.getUniqueId());
         if (exempt) {
             if (attachment == null) {

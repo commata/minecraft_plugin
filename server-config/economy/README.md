@@ -27,7 +27,7 @@ Copy-Item "$cfg\EconomyShopGUI\*" "$run\EconomyShopGUI\" -Recurse -Force
 
 VJobs만으로는 막을 수 없는 두 가지를 `plugins/economy-hub`(플러그인 이름 `EconomyHub`)가 맡는다 (ECONOMY.md 7.2).
 
-- 직업 쿨타임은 **탈퇴 후 1시간만**: VJobs는 가입 때도 쿨타임을 걸어서, 탈퇴 기록이 없거나 1시간이 지난 플레이어에게 `jobs.cooldown.instant`를 붙여 줌
+- 직업 쿨타임은 **탈퇴 후 1시간만**: VJobs는 가입 때도 쿨타임을 걸어서, 탈퇴 기록이 없거나 1시간이 지난 플레이어에게 `jobs.cooldown.instant`를 붙여 줌. 쿨타임 길이는 `VJobs/config.yml`의 `job-switch-cooldown.default-seconds` 하나만 보고, EconomyHub 설정에는 따로 없음 (예전 `job-cooldown.after-leave-minutes`가 남아 있으면 기동 때 경고. `plugins/EconomyHub/config.yml`을 지우고 재기동하면 새 기본값으로 다시 만들어짐)
 - 피스톤으로 움직인 블록과 용암·물로 생긴 돌·조약돌·현무암은 캐도 직업 보상 0원
 
 로컬 테스트 서버에 넣기:

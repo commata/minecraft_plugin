@@ -460,8 +460,8 @@ v0.8부터 서버 매입은 자체 `Market`의 `/판매`로만 연다(14장). **
 - GUI 27칸: 내 잔액(머리 아이템), 직업 현황(`/jobs` 열기), 상점(`/shop`), 송금 안내(채팅에 `/pay <닉> <금액>` 안내), 부자 순위(`/baltop`, Bank), 이용 가이드(책)
 - 외부 플러그인 내부 API에는 의존하지 않는다(버전이 바뀌어도 명령어만 유지되면 동작).
 - **1b에 먼저 배포하는 직업 보호 기능** (GUI보다 먼저, VJobs API는 리플렉션으로 호출해 VJobs JAR 없이 컴파일)
-- **직업 쿨타임 면제** (5.1): `JobLeaveEvent`(MONITOR, ignoreCancelled)에서 탈퇴 시각을 플레이어 PDC(`economyhub:last_job_leave`)에 저장. 접속·탈퇴·1분 주기로 확인해, 마지막 탈퇴 후 1시간이 지났거나 탈퇴 기록이 없으면 `PermissionAttachment`로 `jobs.cooldown.instant=true`, 1시간 안이면 떼어 냄. VJobs 쿨타임은 `jobs.cooldown.instant`가 있으면 0초. 테스트: 첫 직업 → 바로 두 번째 가입 성공, 하나 탈퇴 → 1시간 안 재가입 거부 → 1시간 뒤 성공, 재접속·재시작 후에도 유지
-- **피스톤 이동·유체 생성 블록 보상 제외** (8장): VJobs 2.2.0의 설치 블록 기록은 좌표 기준이고 피스톤 이벤트를 처리하지 않아(JAR 확인), 설치한 원목·광석·호박을 피스톤으로 밀면 자연 블록으로 보고 다시 지급한다(원목 설치 → 밀기 → 베기 반복으로 무한 수입). 돌 생성기(용암 + 물)로 만든 돌도 설치 기록이 없어 1원씩 지급된다. EconomyHub가 `BlockPistonExtendEvent`/`RetractEvent`로 움직인 블록의 도착 좌표와 `BlockFormEvent`로 생긴 돌·조약돌·현무암 등의 좌표를 청크 PDC에 표시해 두고, 표시된 블록을 캘 때 `JobPayoutEvent`(BREAK·HARVEST)를 취소한다. 표시는 그 블록을 캐면 지운다. Market(14.2)도 같은 표시를 읽어 판매 가능량에서 뺀다
+- **직업 쿨타임 면제** (5.1): `JobLeaveEvent`(MONITOR, ignoreCancelled)에서 탈퇴 시각을 플레이어 PDC(`economyhub:last_job_leave`)에 저장. 접속·탈퇴·30초 주기로 확인해, 마지막 탈퇴 후 쿨타임이 지났거나 탈퇴 기록이 없으면 `PermissionAttachment`로 `jobs.cooldown.instant=true`, 쿨타임 안이면 떼어 냄. VJobs 쿨타임은 `jobs.cooldown.instant`가 있으면 0초. **쿨타임 길이는 VJobs `config.yml`의 `job-switch-cooldown.default-seconds` 한 곳에서만 정한다**(2차 리뷰 반영). EconomyHub는 확인할 때마다 이 값을 읽고 자기 설정에 따로 두지 않아서, 두 값이 어긋나 짧은 쪽이 적용되는 일이 없다. 테스트: 첫 직업 → 바로 두 번째 가입 성공, 하나 탈퇴 → 1시간 안 재가입 거부 → 1시간 뒤 성공, 재접속·재시작 후에도 유지
+- **피스톤 이동·유체 생성 블록 보상 제외** (8장): VJobs 2.2.0의 설치 블록 기록은 좌표 기준이고 피스톤 이벤트를 처리하지 않아(JAR 확인), 설치한 원목·광석·호박을 피스톤으로 밀면 자연 블록으로 보고 다시 지급한다(원목 설치 → 밀기 → 베기 반복으로 무한 수입). 돌 생성기(용암 + 물)로 만든 돌도 설치 기록이 없어 1원씩 지급된다. EconomyHub가 `BlockPistonExtendEvent`/`RetractEvent`로 움직인 블록의 도착 좌표(이벤트 방향으로 한 칸, 끈끈이 피스톤이 당길 때도 실제로 움직인 블록의 도착 좌표만)와 `BlockFormEvent`로 생긴 돌·조약돌·현무암 등의 좌표를 청크 PDC에 표시해 두고, 표시된 블록을 캘 때 `JobPayoutEvent`(BREAK·HARVEST)를 취소한다. 표시는 그 블록을 캐면 지운다. 저장은 청크 구역(16×16×16)마다 4,096비트 비트맵(`economyhub:u<구역 y>`, `long[64]`)이라 개수 상한이 없고, 실제로 남아 있는 표시를 모두 보존한다(2차 리뷰 반영: 개수 상한을 넘으면 오래된 표시부터 지우던 방식은 남아 있는 블록을 다시 보상 대상으로 만들었음). Market(14.2)도 같은 표시를 읽어 판매 가능량에서 뺀다
 - 아이템 이동 차단: 클릭·드래그·숫자키·Shift 클릭 모두 취소 (NeatSort 등 정렬 플러그인과 충돌 방지 위해 `InventoryHolder` 커스텀 홀더로 식별)
 
 ### 7.3 `/trade` 요구사항 (2단계)
@@ -480,7 +480,7 @@ v0.8부터 서버 매입은 자체 `Market`의 `/판매`로만 연다(14장). **
 | --- | --- | --- |
 | 광석 설치 후 재채굴 | VJobs 설치 블록 추적 | 광석 설치 → 채굴 → 0원, 재시작 후 재확인 |
 | 실크터치 캐기·설치 반복 | VJobs 기본 | |
-| 피스톤으로 옮긴 광석·원목·호박·수박 | VJobs는 못 막음(JAR 확인). EconomyHub가 이동한 블록 보상 취소(7.2) | 설치 → 피스톤으로 밀기 → 채굴 시 0원 |
+| 피스톤으로 옮긴 광석·원목·호박·수박 | VJobs는 못 막음(JAR 확인). EconomyHub가 이동한 블록 보상 취소(7.2) | 설치 → 피스톤으로 밀기 → 채굴 시 0원. 끈끈이 피스톤으로 당긴 뒤 반대편 자연 원목·광석은 정상 지급 |
 | 돌 생성기(용암 + 물) | VJobs는 못 막음. EconomyHub가 유체로 생긴 블록 보상 취소(7.2) | 생성기 돌 채굴 시 0원, 자연 돌은 1원 |
 | 직업 연속 가입 | EconomyHub 쿨타임 면제(5.1) | 일반 계정: 첫 직업 → 바로 두 번째 성공, 탈퇴 직후 재가입 거부, 1시간 뒤 성공 |
 | 피스톤으로 민 광석·원목·호박·수박 (v0.8 매입) | `Market` 설치 기록이 피스톤 이동 좌표를 따라가거나, 피스톤으로 움직인 블록은 판매 가능량 기록에서 제외 | 설치 → 피스톤 이동 → 채굴 시 판매 가능량 0 |
@@ -751,8 +751,14 @@ scp .\external\*.jar minipc-lan:~/plugin-staging/economy/
   2. 뽑기면 서버에서 결과 확정(`SecureRandom`, 천장 반영)
   3. 한 SQL 트랜잭션: `orders(tx_id, status=PENDING, 품목/결과, 금액)` + 한도·천장 **예약** 차감
   4. Bank 출금(`extRef=tx_id`) → 실패하면 `ABORTED`로 바꾸고 예약을 되돌림
-  5. `CHARGED`로 갱신 → 아이템 지급 → `DELIVERED`. 결과 화면은 연출일 뿐
-- 기동 때 복구: 이전 기동의 `PENDING`은 Bank `findByExtRef(tx_id)`로 확인해 출금이 있으면 `CHARGED`, 없으면 `ABORTED`(예약 반환). 비정상 종료된 기동의 `CHARGED`(지급 미확인)는 관리자 목록(`/market pending`)에 올리고, 관리자가 인벤토리를 보고 `/market resolve <tx_id> deliver|refund` 중 하나를 **한 번만** 처리한다(refund는 Bank `/bank refund`와 같은 1회 제약, `source=Market` 허용, 2.4).
+  5. `CHARGED`로 갱신 → 아이템 지급 + 플레이어 PDC `market:applied_tx`에 `tx_id` 추가 → `player.saveData()`(플레이어 파일 즉시 저장) → `DELIVERED`. 결과 화면은 연출일 뿐
+  - 3~5단계는 메인 스레드 한 틱 안에서 끝낸다(자동 저장이 중간에 끼지 않음). 같은 플레이어의 거래는 한 번에 하나만.
+- **인벤토리 저장 구간까지 복구** (2차 리뷰 반영): 아이템은 플레이어 파일에 저장돼야 확정이다. `DELIVERED`를 먼저 쓰고 저장 전에 서버가 꺼지면 돈만 빠지고 아이템이 사라진다. 그래서 `DELIVERED`는 `saveData()`가 끝난 뒤에만 쓰고, "아이템이 저장됐는지"는 DB가 아니라 **아이템과 같은 파일에 저장되는 PDC 표시**(`market:applied_tx`, 최근 32개)로 판단한다.
+- 복구 (자동, 관리자 개입 없음):
+  - 기동 때: 이전 기동의 `PENDING`은 Bank `findByExtRef(tx_id)`로 확인해 출금이 있으면 `CHARGED`, 없으면 `ABORTED`(예약 반환)
+  - 플레이어 접속 때(인벤토리를 읽은 직후, 복구가 끝날 때까지 그 플레이어의 Market은 잠금): 그 플레이어의 `CHARGED`마다 PDC에 `tx_id`가 있으면 저장까지 끝난 것이므로 `DELIVERED`만 기록, 없으면 아이템을 다시 지급 → PDC 추가 → `saveData()` → `DELIVERED`. 빈칸이 모자라면 `CHARGED`로 두고 알린 뒤 다음 접속이나 `/market claim`에서 다시 시도
+  - `/market pending`(관리자)은 아직 `CHARGED`인 거래를 보여 주는 확인용 목록이다. 환불이 필요할 때만 `/market resolve <tx_id> refund`를 한 번 쓴다(Bank `/bank refund`와 같은 1회 제약, `source=Market` 허용, 2.4)
+  - 테스트: 구매 직후 `saveData()` 전·후 각각에서 서버 프로세스를 강제 종료 → 재기동·재접속 후 아이템이 정확히 1번만 있고 돈은 1번만 빠졌는지
 - 정수 가격만(2.2). 확률은 설정 파일 `config.yml`의 등급별 `weight`(정수, 합 10,000 = 100.00%)로 두고, 로드 시 합이 10,000이 아니거나 등급 안 책 목록이 비면 **뽑기를 잠근다**.
 - 아이템 이동 차단은 EconomyHub와 같은 커스텀 `InventoryHolder` 방식(7.2).
 
@@ -831,11 +837,16 @@ scp .\external\*.jar minipc-lan:~/plugin-staging/economy/
    2. 기본 묶음 수 = min(남은 인벤토리 ÷ 단위, `base_amount` ÷ 단위, 남은 한도 ÷ 묶음당 기본가)
    3. 한 번에 둘 다 팔리면 `sales`에 `price_type`별로 1줄씩(총 2줄) 기록
 4. 한 SQL 트랜잭션: `sales`에 `tx_id`(UUID)·품목·수량·금액을 `PENDING`으로 기록 + 판매 가능량·하루 한도 **예약** 차감 (13.6과 같은 선기록)
-5. 인벤토리에서 아이템 제거 → Bank 입금(`extRef=tx_id`) → `DONE`
-6. 아이템 제거 전 실패는 `ABORTED` + 예약 반환. 입금이 실패하면 아이템을 돌려주고 `ABORTED`
-7. 정수 가격만(2.2). 싼 품목은 **묶음 단위 가격**(예: 감자 16개당 기본 4원, 보너스 8원)으로 두고 묶음 단위로만 판다
+5. 인벤토리에서 아이템 제거 + 플레이어 PDC `market:applied_tx`에 `tx_id` 추가 → `player.saveData()` → `ITEMS_TAKEN`
+6. Bank 입금(`extRef=tx_id`) → `DONE`. 4~6단계는 메인 스레드 한 틱 안에서 끝낸다
+7. 아이템 제거 전 실패는 `ABORTED` + 예약 반환. 입금이 실패하면(Bank 잠금 등) `ITEMS_TAKEN`으로 두고 같은 `tx_id`로 다시 입금한다(아이템을 돌려주지 않음, 중복 입금 없음)
+8. 정수 가격만(2.2). 싼 품목은 **묶음 단위 가격**(예: 감자 16개당 기본 4원, 보너스 8원)으로 두고 묶음 단위로만 판다
 
-기동 때 복구: 이전 기동의 `PENDING`은 Bank `findByExtRef(tx_id)`로 확인해 입금이 있으면 `DONE`(예약이 이미 차감돼 있어 판매 가능량·한도가 정확함), 없으면 관리자 목록에 올려 "아이템이 빠졌는지"를 보고 `/market resolve <tx_id> pay|return`을 한 번만 처리한다(pay는 같은 `tx_id`로 입금해 중복이 없음).
+**인벤토리 저장 구간까지 복구** (2차 리뷰 반영): 아이템 제거도 플레이어 파일에 저장돼야 확정이다. `DONE`을 먼저 쓰고 저장 전에 서버가 꺼지면 아이템은 인벤토리로 돌아오고 돈은 남아 복제가 된다. 그래서 입금과 `DONE`은 `saveData()` 뒤에만 하고, 복구는 자동으로 한다(13.6과 같은 PDC 표시):
+
+- 기동 때: 이전 기동의 `ITEMS_TAKEN`은 같은 `tx_id`로 Bank 입금(이미 있으면 처음 결과를 돌려받음) → `DONE`. 플레이어가 접속하지 않아도 됨
+- 플레이어 접속 때(복구가 끝날 때까지 그 플레이어의 Market은 잠금): 그 플레이어의 `PENDING`마다 PDC에 `tx_id`가 있으면 아이템 제거가 저장된 것이므로 `ITEMS_TAKEN` → 입금 → `DONE`. 없으면 아이템이 그대로 저장돼 있으므로 `ABORTED` + 예약 반환(입금하지 않음)
+- 테스트: 판매 직후 `saveData()` 전·후와 입금 전·후에서 각각 강제 종료 → 재기동·재접속 후 "아이템 있음 + 돈 없음" 또는 "아이템 없음 + 돈 1번" 중 하나만 나오는지
 
 ### 14.4 1단계 매입가 (2026-11-25 확정)
 

@@ -73,27 +73,25 @@ public final class PayoutGuard implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onExtend(BlockPistonExtendEvent event) {
-        move(event.getBlocks(), event.getDirection(), false);
+        move(event.getBlocks(), event.getDirection());
     }
 
+    /** Paper 26.3 은 당길 때도 getDirection() 이 블록이 움직이는 방향이라(PistonBaseBlock), 밀 때와 똑같이 도착 좌표만 표시. */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onRetract(BlockPistonRetractEvent event) {
-        // 당기는 방향 표기가 버전마다 헷갈리지 않게 양쪽 이웃을 모두 표시 (조금 넓게 막는 쪽이 안전)
-        move(event.getBlocks(), event.getDirection(), true);
+        move(event.getBlocks(), event.getDirection());
     }
 
-    private void move(List<Block> blocks, BlockFace direction, boolean bothWays) {
+    private void move(List<Block> blocks, BlockFace direction) {
         if (!enabled || blocks.isEmpty()) {
             return;
         }
+        // 출발 좌표의 표시를 먼저 지우고 도착 좌표에 표시 (블록 줄에서 출발·도착이 겹쳐도 최종 상태가 맞음)
         for (Block block : blocks) {
             marks.unmark(block);
         }
         for (Block block : blocks) {
             marks.mark(block.getRelative(direction));
-            if (bothWays) {
-                marks.mark(block.getRelative(direction.getOppositeFace()));
-            }
         }
     }
 

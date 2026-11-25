@@ -3,58 +3,56 @@ package kr.commata.economyhub.guard;
 import java.util.Arrays;
 
 /**
- * 청크 안 블록 좌표 하나를 int 하나로 묶고, 그 목록(int[])을 다루는 순수 함수 모음.
- * Bukkit 에 의존하지 않아 단위 테스트로 검증합니다.
+ * 청크 구역(16×16×16) 하나의 표시 비트맵. 블록 4,096개 = long 64개, 블록마다 1비트라 상한 없이 실제로 남아 있는 표시를
+ * 모두 보존합니다. Bukkit 에 의존하지 않아 단위 테스트로 검증합니다.
  */
 public final class Marks {
+
+    /** 구역 하나의 long 개수 (4096 비트) */
+    public static final int WORDS = 64;
 
     private Marks() {
     }
 
-    /** x·z 는 청크 안 좌표(0~15)만 쓰고, y 는 -2048~2047 범위. */
-    public static int pack(int x, int y, int z) {
-        return (x & 15) | ((z & 15) << 4) | (((y + 2048) & 0xFFF) << 8);
+    /** 블록 y 가 속한 구역 번호 (음수 y 도 올바르게 내림). */
+    public static int section(int y) {
+        return y >> 4;
     }
 
-    public static boolean contains(int[] marks, int mark) {
-        if (marks == null) {
+    /** 구역 안 비트 위치 0~4095. x·y·z 는 월드 좌표를 그대로 넣어도 됨. */
+    public static int index(int x, int y, int z) {
+        return ((y & 15) << 8) | ((z & 15) << 4) | (x & 15);
+    }
+
+    public static boolean get(long[] bits, int index) {
+        if (bits == null || bits.length != WORDS) {
             return false;
         }
-        for (int m : marks) {
-            if (m == mark) {
-                return true;
-            }
-        }
-        return false;
+        return (bits[index >>> 6] & (1L << (index & 63))) != 0;
     }
 
-    /** 이미 있으면 그대로, 없으면 뒤에 붙임. 상한을 넘으면 가장 오래된(앞쪽) 것부터 버림. */
-    public static int[] add(int[] marks, int mark, int max) {
-        if (contains(marks, mark)) {
-            return marks;
+    /** 표시. 이미 표시돼 있으면 같은 배열을 그대로 돌려줌(저장을 건너뛸 수 있게). */
+    public static long[] set(long[] bits, int index) {
+        if (get(bits, index)) {
+            return bits;
         }
-        int[] base = marks == null ? new int[0] : marks;
-        int[] grown = Arrays.copyOf(base, base.length + 1);
-        grown[base.length] = mark;
-        int limit = Math.max(1, max);
-        if (grown.length > limit) {
-            return Arrays.copyOfRange(grown, grown.length - limit, grown.length);
-        }
-        return grown;
-    }
-
-    /** 없으면 같은 배열을 그대로 돌려줌(호출하는 쪽이 저장을 건너뛸 수 있게). */
-    public static int[] remove(int[] marks, int mark) {
-        if (!contains(marks, mark)) {
-            return marks;
-        }
-        int[] out = new int[marks.length - 1];
-        int i = 0;
-        for (int m : marks) {
-            if (m != mark) {
-                out[i++] = m;
-            }
-        }
+        long[] out = bits == null || bits.length != WORDS ? new long[WORDS] : Arrays.copyOf(bits, WORDS);
+        out[index >>> 6] |= 1L << (index & 63);
         return out;
+    }
+
+    /** 표시 지움. 표시가 없으면 같은 배열을 그대로, 다 지워지면 null 을 돌려줌(PDC 키 삭제). */
+    public static long[] clear(long[] bits, int index) {
+        if (!get(bits, index)) {
+            return bits;
+        }
+        long[] out = Arrays.copyOf(bits, WORDS);
+        out[index >>> 6] &= ~(1L << (index & 63));
+        for (long word : out) {
+            if (word != 0) {
+                return out;
+            }
+        }
+        return null;
     }
 }

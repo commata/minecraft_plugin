@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 import kr.commata.economyhub.guard.PayoutGuard;
 import kr.commata.economyhub.guard.UntrustedBlocks;
 import kr.commata.economyhub.jobs.JobCooldownGuard;
@@ -39,27 +40,33 @@ public final class EconomyHubPlugin extends JavaPlugin {
         saveDefaultConfig();
         Settings settings = Settings.read(getConfig(), this);
 
-        marks = new UntrustedBlocks(this, settings.maxMarksPerChunk());
+        marks = new UntrustedBlocks(this);
         payoutGuard = new PayoutGuard(marks, settings.guardEnabled(), settings.formedBlocks());
-        cooldownGuard = new JobCooldownGuard(this, settings.cooldownMs());
         getServer().getPluginManager().registerEvents(payoutGuard, this);
 
         Plugin vjobs = getServer().getPluginManager().getPlugin("VJobs");
         if (vjobs == null || !vjobs.isEnabled()) {
             getLogger().warning("VJobs 가 없거나 꺼져 있어 직업 보호 기능을 쓰지 않습니다.");
         } else {
-            hookVJobs(vjobs, settings);
+            // 쿨타임 길이는 VJobs 설정 한 곳에서만 관리 (/jobs reload 로 바꿔도 매번 다시 읽음)
+            cooldownGuard = new JobCooldownGuard(this, vjobsCooldownMs(vjobs));
+            hookVJobs(vjobs);
         }
 
         getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event ->
                 event.registrar().register("economyhub", "EconomyHub 상태 확인·설정 다시 읽기",
                         List.of("ehub"), new HubCommand(this)));
         getLogger().info("EconomyHub " + getPluginMeta().getVersion() + " 활성화 (탈퇴 후 쿨타임 "
-                + (leaveHooked ? settings.cooldownMinutes() + "분" : "꺼짐") + ", 보상 제외 "
+                + (leaveHooked ? cooldownGuard.cooldownMs() / 60_000L + "분" : "꺼짐") + ", 보상 제외 "
                 + (payoutHooked && settings.guardEnabled() ? "켜짐" : "꺼짐") + ")");
     }
 
-    private void hookVJobs(Plugin vjobs, Settings settings) {
+    /** VJobs config.yml 의 job-switch-cooldown.default-seconds. 탈퇴 후 대기 시간은 이 값 하나만 씁니다. */
+    static LongSupplier vjobsCooldownMs(Plugin vjobs) {
+        return () -> Math.max(0L, vjobs.getConfig().getLong("job-switch-cooldown.default-seconds", 3600L)) * 1000L;
+    }
+
+    private void hookVJobs(Plugin vjobs) {
         VJobsHook hook = new VJobsHook(this, vjobs);
 
         String leaveError = hook.listen(VJobsHook.LEAVE_EVENT, EventPriority.MONITOR, event -> {
@@ -92,12 +99,6 @@ public final class EconomyHubPlugin extends JavaPlugin {
             getLogger().warning("직업 보상 이벤트 연결 실패, 피스톤·유체 블록 보상 제외 꺼짐: " + payoutError);
         }
 
-        long vjobsSeconds = vjobs.getConfig().getLong("job-switch-cooldown.default-seconds", -1);
-        if (vjobsSeconds >= 0 && vjobsSeconds != settings.cooldownMs() / 1000) {
-            getLogger().warning("VJobs job-switch-cooldown.default-seconds(" + vjobsSeconds
-                    + ")와 EconomyHub job-cooldown.after-leave-minutes(" + settings.cooldownMinutes()
-                    + "분)가 다릅니다. 실제 탈퇴 후 대기 시간은 둘 중 긴 쪽이 됩니다.");
-        }
     }
 
     @Override
@@ -111,9 +112,7 @@ public final class EconomyHubPlugin extends JavaPlugin {
     void reload() {
         reloadConfig();
         Settings settings = Settings.read(getConfig(), this);
-        marks.setMaxPerChunk(settings.maxMarksPerChunk());
         payoutGuard.configure(settings.guardEnabled(), settings.formedBlocks());
-        cooldownGuard.setCooldownMs(settings.cooldownMs());
         if (leaveHooked) {
             cooldownGuard.refreshAll();
         }
@@ -135,14 +134,13 @@ public final class EconomyHubPlugin extends JavaPlugin {
         return cancelledPayouts.get();
     }
 
-    record Settings(long cooldownMinutes, boolean guardEnabled, Set<Material> formedBlocks, int maxMarksPerChunk) {
-
-        long cooldownMs() {
-            return cooldownMinutes * 60_000L;
-        }
+    record Settings(boolean guardEnabled, Set<Material> formedBlocks) {
 
         static Settings read(FileConfiguration config, JavaPlugin plugin) {
-            long minutes = Math.max(0, config.getLong("job-cooldown.after-leave-minutes", 60));
+            if (config.contains("job-cooldown") || config.contains("payout-guard.max-marks-per-chunk")) {
+                plugin.getLogger().warning("config.yml 의 job-cooldown, payout-guard.max-marks-per-chunk 는 더 이상 쓰지 않습니다."
+                        + " 탈퇴 후 쿨타임은 VJobs config.yml 의 job-switch-cooldown.default-seconds 에서 바꾸세요.");
+            }
             boolean enabled = config.getBoolean("payout-guard.enabled", true);
             Set<Material> formed = EnumSet.noneOf(Material.class);
             for (String name : config.getStringList("payout-guard.formed-blocks")) {
@@ -153,8 +151,7 @@ public final class EconomyHubPlugin extends JavaPlugin {
                     formed.add(material);
                 }
             }
-            int max = Math.max(16, config.getInt("payout-guard.max-marks-per-chunk", 4096));
-            return new Settings(minutes, enabled, formed, max);
+            return new Settings(enabled, formed);
         }
     }
 }

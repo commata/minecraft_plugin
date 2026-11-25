@@ -1,9 +1,8 @@
 package kr.commata.economyhub.guard;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -14,46 +13,55 @@ import org.junit.jupiter.api.Test;
 class MarksTest {
 
     @Test
-    void packIsUniqueInsideChunkAcrossWorldHeight() {
+    void indexIsUniqueInsideSection() {
         Set<Integer> seen = new HashSet<>();
-        for (int y = -64; y < 320; y++) {
+        for (int y = 0; y < 16; y++) {
             for (int x = 0; x < 16; x++) {
                 for (int z = 0; z < 16; z++) {
-                    assertTrue(seen.add(Marks.pack(x, y, z)), "중복 " + x + "," + y + "," + z);
+                    int i = Marks.index(x, y, z);
+                    assertTrue(i >= 0 && i < 4096);
+                    assertTrue(seen.add(i));
                 }
             }
         }
     }
 
     @Test
-    void packUsesChunkLocalCoordinatesForNegativeWorldCoordinates() {
-        // 월드 x=-1 은 청크 안 x=15
-        assertEquals(Marks.pack(15, 10, 15), Marks.pack(-1, 10, -1));
-        assertNotEquals(Marks.pack(0, -64, 0), Marks.pack(0, 0, 0));
+    void sectionAndIndexHandleNegativeCoordinates() {
+        assertEquals(-1, Marks.section(-1));
+        assertEquals(-4, Marks.section(-64));
+        assertEquals(19, Marks.section(319));
+        // 월드 x=-1 은 청크 안 x=15, y=-1 은 구역 -1 의 y=15
+        assertEquals(Marks.index(15, 15, 15), Marks.index(-1, -1, -1));
     }
 
     @Test
-    void addRemoveContains() {
-        int a = Marks.pack(1, 2, 3);
-        int b = Marks.pack(4, 5, 6);
-        int[] marks = Marks.add(null, a, 10);
-        marks = Marks.add(marks, b, 10);
-        assertTrue(Marks.contains(marks, a));
-        assertTrue(Marks.contains(marks, b));
-        assertSame(marks, Marks.add(marks, a, 10), "이미 있으면 같은 배열");
-        int[] removed = Marks.remove(marks, a);
-        assertFalse(Marks.contains(removed, a));
-        assertTrue(Marks.contains(removed, b));
-        assertSame(removed, Marks.remove(removed, a), "없으면 같은 배열");
-        assertFalse(Marks.contains(null, a));
-    }
-
-    @Test
-    void addDropsOldestOverLimit() {
-        int[] marks = null;
-        for (int i = 0; i < 5; i++) {
-            marks = Marks.add(marks, i, 3);
+    void everyBlockOfAFullSectionStaysMarked() {
+        // 이전 방식(개수 상한 4,096 + 오래된 것 버림)의 회귀: 4,096개를 다 채워도 첫 표시가 남아야 함
+        long[] bits = null;
+        for (int i = 0; i < 4096; i++) {
+            bits = Marks.set(bits, i);
         }
-        assertArrayEquals(new int[] {2, 3, 4}, marks);
+        for (int i = 0; i < 4096; i++) {
+            assertTrue(Marks.get(bits, i), "표시 사라짐 " + i);
+        }
+    }
+
+    @Test
+    void setClearGet() {
+        int a = Marks.index(1, 2, 3);
+        int b = Marks.index(4, 5, 6);
+        long[] bits = Marks.set(null, a);
+        bits = Marks.set(bits, b);
+        assertTrue(Marks.get(bits, a));
+        assertTrue(Marks.get(bits, b));
+        assertSame(bits, Marks.set(bits, a), "이미 있으면 같은 배열");
+        long[] cleared = Marks.clear(bits, a);
+        assertFalse(Marks.get(cleared, a));
+        assertTrue(Marks.get(cleared, b));
+        assertTrue(Marks.get(bits, a), "원래 배열은 그대로");
+        assertSame(cleared, Marks.clear(cleared, a), "없으면 같은 배열");
+        assertNull(Marks.clear(cleared, b), "다 지우면 null");
+        assertFalse(Marks.get(null, a));
     }
 }
