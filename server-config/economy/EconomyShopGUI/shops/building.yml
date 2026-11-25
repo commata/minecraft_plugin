@@ -1,0 +1,239 @@
+# ECONOMY.md 6.3 '건축' 구매가 (1개 기준, 정수). 판매(sell) 키는 일부러 없음: 서버 매입은 Market /판매 로만 (6.4).
+pages:
+  page1:
+    items:
+      stone:
+        material: STONE
+        buy: 5
+      cobblestone:
+        material: COBBLESTONE
+        buy: 5
+      cobbled_deepslate:
+        material: COBBLED_DEEPSLATE
+        buy: 5
+      stone_bricks:
+        material: STONE_BRICKS
+        buy: 15
+      smooth_stone:
+        material: SMOOTH_STONE
+        buy: 15
+      deepslate_bricks:
+        material: DEEPSLATE_BRICKS
+        buy: 15
+      deepslate_tiles:
+        material: DEEPSLATE_TILES
+        buy: 15
+      sand:
+        material: SAND
+        buy: 10
+      gravel:
+        material: GRAVEL
+        buy: 10
+      red_sand:
+        material: RED_SAND
+        buy: 15
+      glass:
+        material: GLASS
+        buy: 20
+      white_stained_glass:
+        material: WHITE_STAINED_GLASS
+        buy: 35
+      orange_stained_glass:
+        material: ORANGE_STAINED_GLASS
+        buy: 35
+      magenta_stained_glass:
+        material: MAGENTA_STAINED_GLASS
+        buy: 35
+      light_blue_stained_glass:
+        material: LIGHT_BLUE_STAINED_GLASS
+        buy: 35
+      yellow_stained_glass:
+        material: YELLOW_STAINED_GLASS
+        buy: 35
+      lime_stained_glass:
+        material: LIME_STAINED_GLASS
+        buy: 35
+      pink_stained_glass:
+        material: PINK_STAINED_GLASS
+        buy: 35
+      gray_stained_glass:
+        material: GRAY_STAINED_GLASS
+        buy: 35
+      light_gray_stained_glass:
+        material: LIGHT_GRAY_STAINED_GLASS
+        buy: 35
+      cyan_stained_glass:
+        material: CYAN_STAINED_GLASS
+        buy: 35
+      purple_stained_glass:
+        material: PURPLE_STAINED_GLASS
+        buy: 35
+      blue_stained_glass:
+        material: BLUE_STAINED_GLASS
+        buy: 35
+      brown_stained_glass:
+        material: BROWN_STAINED_GLASS
+        buy: 35
+      green_stained_glass:
+        material: GREEN_STAINED_GLASS
+        buy: 35
+      red_stained_glass:
+        material: RED_STAINED_GLASS
+        buy: 35
+      black_stained_glass:
+        material: BLACK_STAINED_GLASS
+        buy: 35
+      bricks:
+        material: BRICKS
+        buy: 25
+  page2:
+    items:
+      mud_bricks:
+        material: MUD_BRICKS
+        buy: 20
+      tuff:
+        material: TUFF
+        buy: 20
+      calcite:
+        material: CALCITE
+        buy: 20
+      terracotta:
+        material: TERRACOTTA
+        buy: 30
+      white_terracotta:
+        material: WHITE_TERRACOTTA
+        buy: 30
+      orange_terracotta:
+        material: ORANGE_TERRACOTTA
+        buy: 30
+      magenta_terracotta:
+        material: MAGENTA_TERRACOTTA
+        buy: 30
+      light_blue_terracotta:
+        material: LIGHT_BLUE_TERRACOTTA
+        buy: 30
+      yellow_terracotta:
+        material: YELLOW_TERRACOTTA
+        buy: 30
+      lime_terracotta:
+        material: LIME_TERRACOTTA
+        buy: 30
+      pink_terracotta:
+        material: PINK_TERRACOTTA
+        buy: 30
+      gray_terracotta:
+        material: GRAY_TERRACOTTA
+        buy: 30
+      light_gray_terracotta:
+        material: LIGHT_GRAY_TERRACOTTA
+        buy: 30
+      cyan_terracotta:
+        material: CYAN_TERRACOTTA
+        buy: 30
+      purple_terracotta:
+        material: PURPLE_TERRACOTTA
+        buy: 30
+      blue_terracotta:
+        material: BLUE_TERRACOTTA
+        buy: 30
+      brown_terracotta:
+        material: BROWN_TERRACOTTA
+        buy: 30
+      green_terracotta:
+        material: GREEN_TERRACOTTA
+        buy: 30
+      red_terracotta:
+        material: RED_TERRACOTTA
+        buy: 30
+      black_terracotta:
+        material: BLACK_TERRACOTTA
+        buy: 30
+      white_concrete_powder:
+        material: WHITE_CONCRETE_POWDER
+        buy: 20
+      orange_concrete_powder:
+        material: ORANGE_CONCRETE_POWDER
+        buy: 20
+      magenta_concrete_powder:
+        material: MAGENTA_CONCRETE_POWDER
+        buy: 20
+      light_blue_concrete_powder:
+        material: LIGHT_BLUE_CONCRETE_POWDER
+        buy: 20
+      yellow_concrete_powder:
+        material: YELLOW_CONCRETE_POWDER
+        buy: 20
+      lime_concrete_powder:
+        material: LIME_CONCRETE_POWDER
+        buy: 20
+      pink_concrete_powder:
+        material: PINK_CONCRETE_POWDER
+        buy: 20
+      gray_concrete_powder:
+        material: GRAY_CONCRETE_POWDER
+        buy: 20
+  page3:
+    items:
+      light_gray_concrete_powder:
+        material: LIGHT_GRAY_CONCRETE_POWDER
+        buy: 20
+      cyan_concrete_powder:
+        material: CYAN_CONCRETE_POWDER
+        buy: 20
+      purple_concrete_powder:
+        material: PURPLE_CONCRETE_POWDER
+        buy: 20
+      blue_concrete_powder:
+        material: BLUE_CONCRETE_POWDER
+        buy: 20
+      brown_concrete_powder:
+        material: BROWN_CONCRETE_POWDER
+        buy: 20
+      green_concrete_powder:
+        material: GREEN_CONCRETE_POWDER
+        buy: 20
+      red_concrete_powder:
+        material: RED_CONCRETE_POWDER
+        buy: 20
+      black_concrete_powder:
+        material: BLACK_CONCRETE_POWDER
+        buy: 20
+      clay:
+        material: CLAY
+        buy: 20
+      moss_block:
+        material: MOSS_BLOCK
+        buy: 40
+      quartz_block:
+        material: QUARTZ_BLOCK
+        buy: 80
+      prismarine:
+        material: PRISMARINE
+        buy: 60
+      prismarine_bricks:
+        material: PRISMARINE_BRICKS
+        buy: 60
+      dark_prismarine:
+        material: DARK_PRISMARINE
+        buy: 60
+      sea_lantern:
+        material: SEA_LANTERN
+        buy: 180
+      glowstone:
+        material: GLOWSTONE
+        buy: 90
+      end_stone_bricks:
+        material: END_STONE_BRICKS
+        buy: 40
+      purpur_block:
+        material: PURPUR_BLOCK
+        buy: 80
+      amethyst_block:
+        material: AMETHYST_BLOCK
+        buy: 90
+      shroomlight:
+        material: SHROOMLIGHT
+        buy: 120
+      polished_blackstone_bricks:
+        material: POLISHED_BLACKSTONE_BRICKS
+        buy: 25

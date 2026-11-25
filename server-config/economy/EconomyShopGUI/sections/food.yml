@@ -1,0 +1,24 @@
+# ECONOMY.md 6.3 '음식' 표. 메인 메뉴 20번 칸.
+enable: true
+title: '&8<---- &6&l음식 &8---->'
+slot: 20
+hidden: false
+sub-section: false
+item:
+  displayname: '&6&l음식'
+  material: BREAD
+fill-item:
+  material: GRAY_STAINED_GLASS_PANE
+  displayname: ' '
+# 구매 전용: 좌클릭 구매만, 판매 클릭은 없음 (ECONOMY.md 6.4)
+click-mappings:
+  BUY: LEFT
+  SELL: NONE
+  SELL_ALL: NONE
+item-layout:
+  - '0 0 0 0 0 0 0 0 0'
+  - '0 1 1 1 1 1 1 1 0'
+  - '0 1 1 1 1 1 1 1 0'
+  - '0 1 1 1 1 1 1 1 0'
+  - '0 1 1 1 1 1 1 1 0'
+  - '0 0 0 0 0 0 0 0 0'

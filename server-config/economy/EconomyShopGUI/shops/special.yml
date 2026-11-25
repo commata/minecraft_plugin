@@ -1,0 +1,22 @@
+# ECONOMY.md 6.3 '특수' 구매가 (1개 기준, 정수). 판매(sell) 키는 일부러 없음: 서버 매입은 Market /판매 로만 (6.4).
+pages:
+  page1:
+    items:
+      name_tag:
+        material: NAME_TAG
+        buy: 1500
+      saddle:
+        material: SADDLE
+        buy: 1200
+      lead:
+        material: LEAD
+        buy: 300
+      bucket:
+        material: BUCKET
+        buy: 500
+      map:
+        material: MAP
+        buy: 150
+      firework_rocket:
+        material: FIREWORK_ROCKET
+        buy: 30

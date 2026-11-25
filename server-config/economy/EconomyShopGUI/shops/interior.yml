@@ -1,0 +1,366 @@
+# ECONOMY.md 6.3 '인테리어' 구매가 (1개 기준, 정수). 판매(sell) 키는 일부러 없음: 서버 매입은 Market /판매 로만 (6.4).
+pages:
+  page1:
+    items:
+      white_wool:
+        material: WHITE_WOOL
+        buy: 40
+      orange_wool:
+        material: ORANGE_WOOL
+        buy: 40
+      magenta_wool:
+        material: MAGENTA_WOOL
+        buy: 40
+      light_blue_wool:
+        material: LIGHT_BLUE_WOOL
+        buy: 40
+      yellow_wool:
+        material: YELLOW_WOOL
+        buy: 40
+      lime_wool:
+        material: LIME_WOOL
+        buy: 40
+      pink_wool:
+        material: PINK_WOOL
+        buy: 40
+      gray_wool:
+        material: GRAY_WOOL
+        buy: 40
+      light_gray_wool:
+        material: LIGHT_GRAY_WOOL
+        buy: 40
+      cyan_wool:
+        material: CYAN_WOOL
+        buy: 40
+      purple_wool:
+        material: PURPLE_WOOL
+        buy: 40
+      blue_wool:
+        material: BLUE_WOOL
+        buy: 40
+      brown_wool:
+        material: BROWN_WOOL
+        buy: 40
+      green_wool:
+        material: GREEN_WOOL
+        buy: 40
+      red_wool:
+        material: RED_WOOL
+        buy: 40
+      black_wool:
+        material: BLACK_WOOL
+        buy: 40
+      white_carpet:
+        material: WHITE_CARPET
+        buy: 20
+      orange_carpet:
+        material: ORANGE_CARPET
+        buy: 20
+      magenta_carpet:
+        material: MAGENTA_CARPET
+        buy: 20
+      light_blue_carpet:
+        material: LIGHT_BLUE_CARPET
+        buy: 20
+      yellow_carpet:
+        material: YELLOW_CARPET
+        buy: 20
+      lime_carpet:
+        material: LIME_CARPET
+        buy: 20
+      pink_carpet:
+        material: PINK_CARPET
+        buy: 20
+      gray_carpet:
+        material: GRAY_CARPET
+        buy: 20
+      light_gray_carpet:
+        material: LIGHT_GRAY_CARPET
+        buy: 20
+      cyan_carpet:
+        material: CYAN_CARPET
+        buy: 20
+      purple_carpet:
+        material: PURPLE_CARPET
+        buy: 20
+      blue_carpet:
+        material: BLUE_CARPET
+        buy: 20
+  page2:
+    items:
+      brown_carpet:
+        material: BROWN_CARPET
+        buy: 20
+      green_carpet:
+        material: GREEN_CARPET
+        buy: 20
+      red_carpet:
+        material: RED_CARPET
+        buy: 20
+      black_carpet:
+        material: BLACK_CARPET
+        buy: 20
+      white_concrete:
+        material: WHITE_CONCRETE
+        buy: 40
+      orange_concrete:
+        material: ORANGE_CONCRETE
+        buy: 40
+      magenta_concrete:
+        material: MAGENTA_CONCRETE
+        buy: 40
+      light_blue_concrete:
+        material: LIGHT_BLUE_CONCRETE
+        buy: 40
+      yellow_concrete:
+        material: YELLOW_CONCRETE
+        buy: 40
+      lime_concrete:
+        material: LIME_CONCRETE
+        buy: 40
+      pink_concrete:
+        material: PINK_CONCRETE
+        buy: 40
+      gray_concrete:
+        material: GRAY_CONCRETE
+        buy: 40
+      light_gray_concrete:
+        material: LIGHT_GRAY_CONCRETE
+        buy: 40
+      cyan_concrete:
+        material: CYAN_CONCRETE
+        buy: 40
+      purple_concrete:
+        material: PURPLE_CONCRETE
+        buy: 40
+      blue_concrete:
+        material: BLUE_CONCRETE
+        buy: 40
+      brown_concrete:
+        material: BROWN_CONCRETE
+        buy: 40
+      green_concrete:
+        material: GREEN_CONCRETE
+        buy: 40
+      red_concrete:
+        material: RED_CONCRETE
+        buy: 40
+      black_concrete:
+        material: BLACK_CONCRETE
+        buy: 40
+      white_glazed_terracotta:
+        material: WHITE_GLAZED_TERRACOTTA
+        buy: 60
+      orange_glazed_terracotta:
+        material: ORANGE_GLAZED_TERRACOTTA
+        buy: 60
+      magenta_glazed_terracotta:
+        material: MAGENTA_GLAZED_TERRACOTTA
+        buy: 60
+      light_blue_glazed_terracotta:
+        material: LIGHT_BLUE_GLAZED_TERRACOTTA
+        buy: 60
+      yellow_glazed_terracotta:
+        material: YELLOW_GLAZED_TERRACOTTA
+        buy: 60
+      lime_glazed_terracotta:
+        material: LIME_GLAZED_TERRACOTTA
+        buy: 60
+      pink_glazed_terracotta:
+        material: PINK_GLAZED_TERRACOTTA
+        buy: 60
+      gray_glazed_terracotta:
+        material: GRAY_GLAZED_TERRACOTTA
+        buy: 60
+  page3:
+    items:
+      light_gray_glazed_terracotta:
+        material: LIGHT_GRAY_GLAZED_TERRACOTTA
+        buy: 60
+      cyan_glazed_terracotta:
+        material: CYAN_GLAZED_TERRACOTTA
+        buy: 60
+      purple_glazed_terracotta:
+        material: PURPLE_GLAZED_TERRACOTTA
+        buy: 60
+      blue_glazed_terracotta:
+        material: BLUE_GLAZED_TERRACOTTA
+        buy: 60
+      brown_glazed_terracotta:
+        material: BROWN_GLAZED_TERRACOTTA
+        buy: 60
+      green_glazed_terracotta:
+        material: GREEN_GLAZED_TERRACOTTA
+        buy: 60
+      red_glazed_terracotta:
+        material: RED_GLAZED_TERRACOTTA
+        buy: 60
+      black_glazed_terracotta:
+        material: BLACK_GLAZED_TERRACOTTA
+        buy: 60
+      glass_pane:
+        material: GLASS_PANE
+        buy: 15
+      white_stained_glass_pane:
+        material: WHITE_STAINED_GLASS_PANE
+        buy: 20
+      orange_stained_glass_pane:
+        material: ORANGE_STAINED_GLASS_PANE
+        buy: 20
+      magenta_stained_glass_pane:
+        material: MAGENTA_STAINED_GLASS_PANE
+        buy: 20
+      light_blue_stained_glass_pane:
+        material: LIGHT_BLUE_STAINED_GLASS_PANE
+        buy: 20
+      yellow_stained_glass_pane:
+        material: YELLOW_STAINED_GLASS_PANE
+        buy: 20
+      lime_stained_glass_pane:
+        material: LIME_STAINED_GLASS_PANE
+        buy: 20
+      pink_stained_glass_pane:
+        material: PINK_STAINED_GLASS_PANE
+        buy: 20
+      gray_stained_glass_pane:
+        material: GRAY_STAINED_GLASS_PANE
+        buy: 20
+      light_gray_stained_glass_pane:
+        material: LIGHT_GRAY_STAINED_GLASS_PANE
+        buy: 20
+      cyan_stained_glass_pane:
+        material: CYAN_STAINED_GLASS_PANE
+        buy: 20
+      purple_stained_glass_pane:
+        material: PURPLE_STAINED_GLASS_PANE
+        buy: 20
+      blue_stained_glass_pane:
+        material: BLUE_STAINED_GLASS_PANE
+        buy: 20
+      brown_stained_glass_pane:
+        material: BROWN_STAINED_GLASS_PANE
+        buy: 20
+      green_stained_glass_pane:
+        material: GREEN_STAINED_GLASS_PANE
+        buy: 20
+      red_stained_glass_pane:
+        material: RED_STAINED_GLASS_PANE
+        buy: 20
+      black_stained_glass_pane:
+        material: BLACK_STAINED_GLASS_PANE
+        buy: 20
+      bookshelf:
+        material: BOOKSHELF
+        buy: 200
+      chiseled_bookshelf:
+        material: CHISELED_BOOKSHELF
+        buy: 250
+      cut_copper:
+        material: CUT_COPPER
+        buy: 120
+  page4:
+    items:
+      exposed_cut_copper:
+        material: EXPOSED_CUT_COPPER
+        buy: 150
+      weathered_cut_copper:
+        material: WEATHERED_CUT_COPPER
+        buy: 175
+      oxidized_cut_copper:
+        material: OXIDIZED_CUT_COPPER
+        buy: 200
+      waxed_cut_copper:
+        material: WAXED_CUT_COPPER
+        buy: 140
+      waxed_exposed_cut_copper:
+        material: WAXED_EXPOSED_CUT_COPPER
+        buy: 170
+      waxed_weathered_cut_copper:
+        material: WAXED_WEATHERED_CUT_COPPER
+        buy: 195
+      waxed_oxidized_cut_copper:
+        material: WAXED_OXIDIZED_CUT_COPPER
+        buy: 220
+      copper_bulb:
+        material: COPPER_BULB
+        buy: 250
+      ochre_froglight:
+        material: OCHRE_FROGLIGHT
+        buy: 150
+      verdant_froglight:
+        material: VERDANT_FROGLIGHT
+        buy: 150
+      pearlescent_froglight:
+        material: PEARLESCENT_FROGLIGHT
+        buy: 150
+      end_rod:
+        material: END_ROD
+        buy: 80
+      white_banner:
+        material: WHITE_BANNER
+        buy: 80
+      orange_banner:
+        material: ORANGE_BANNER
+        buy: 80
+      magenta_banner:
+        material: MAGENTA_BANNER
+        buy: 80
+      light_blue_banner:
+        material: LIGHT_BLUE_BANNER
+        buy: 80
+      yellow_banner:
+        material: YELLOW_BANNER
+        buy: 80
+      lime_banner:
+        material: LIME_BANNER
+        buy: 80
+      pink_banner:
+        material: PINK_BANNER
+        buy: 80
+      gray_banner:
+        material: GRAY_BANNER
+        buy: 80
+      light_gray_banner:
+        material: LIGHT_GRAY_BANNER
+        buy: 80
+      cyan_banner:
+        material: CYAN_BANNER
+        buy: 80
+      purple_banner:
+        material: PURPLE_BANNER
+        buy: 80
+      blue_banner:
+        material: BLUE_BANNER
+        buy: 80
+      brown_banner:
+        material: BROWN_BANNER
+        buy: 80
+      green_banner:
+        material: GREEN_BANNER
+        buy: 80
+      red_banner:
+        material: RED_BANNER
+        buy: 80
+      black_banner:
+        material: BLACK_BANNER
+        buy: 80
+  page5:
+    items:
+      glow_item_frame:
+        material: GLOW_ITEM_FRAME
+        buy: 120
+      decorated_pot:
+        material: DECORATED_POT
+        buy: 200
+      bamboo_mosaic:
+        material: BAMBOO_MOSAIC
+        buy: 30
+      moss_carpet:
+        material: MOSS_CARPET
+        buy: 20
+      azalea:
+        material: AZALEA
+        buy: 60
+      flowering_azalea:
+        material: FLOWERING_AZALEA
+        buy: 60

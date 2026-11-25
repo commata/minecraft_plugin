@@ -628,6 +628,8 @@ scp .\external\*.jar minipc-lan:~/plugin-staging/economy/
 
 리뷰 반영(v0.4): Bank·EconomyHub 의존성 `Vault`, 커밋 후 성공 반환, MVP 정수 보상(레벨 보너스 0%), 경험치 곡선 `440 × n^0.6`, 검증된 설정으로 운영 첫 기동, 첫 설치/분실 구분과 전체 복원 원칙.
 
+설정 파일(2026-11-25): `server-config/economy/`. VJobs는 `jobs-limit.default: 2`로 동시 직업 2개를 설정 파일에서 바로 정한다(LuckPerms `jobs.limit.2`는 중복이지만 그대로 둠). 퀘스트·특전·레벨 보상·대회 보상·월드/권한 배율·감소 보상은 모두 끔(돈 공급원 하나, 정수 보상).
+
 남은 확인 사항(테스트 서버에서): VJobs 보상·경험치 설정 형식과 레벨 보너스 0% 설정 키, 탈퇴 시 레벨 유지 여부, 피스톤 이동 광석 추적, SQLite `synchronous=FULL` 커밋 시간, LuckPerms 26.3 동작.
 
 ---
@@ -941,3 +943,5 @@ scp .\external\*.jar minipc-lan:~/plugin-staging/economy/
 | 7 | `/trade` | 3단계 → **2단계**로 앞당김(7.1, 7.3) |
 
 **구현 착수 전 1순위 확인**: 테스트 서버에서 VJobs 2.2.0의 Java API 또는 PlaceholderAPI로 플레이어 직업을 읽을 수 있는지. 둘 다 안 되면 ① VJobs SQLite DB를 읽기 전용으로 조회하거나 ② `/jobs join`·`/jobs leave` 명령 처리 결과를 감지해 `Market` 자체 테이블에 동기화한다. ②는 명령이 실패했는데 가입으로 기록되는 경우를 막기 위해, 명령 직후 VJobs 메시지나 DB로 결과를 다시 확인한다.
+
+**확인 결과 (2026-11-25, VJobs 2.2.0-RELEASE JAR 분석)**: 공개 Java API가 있다. `com.vjobs.api.VJobsProvider.get()` → `VJobsApi.getPlayer(uuid)` → `JobPlayer.hasJob(id)`/`getJobs()`로 현재 직업을 읽고, `JobJoinEvent`·`JobLeaveEvent`(취소 가능, `MONITOR` + `ignoreCancelled`로 결과만 받기)로 가입·탈퇴 순간을 잡을 수 있다. 그래서 Market은 ①·②(SQLite 직접 조회, 명령 감지) 없이 API로 구현한다. `JobPayoutEvent`(`setMoney`)도 있어 필요하면 정수 보상 검사에 쓸 수 있다. 게임 안 동작은 Market 테스트에서 확인. PlaceholderAPI는 필요 없다.

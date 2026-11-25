@@ -1,0 +1,25 @@
+# ECONOMY.md 6.3 '광물' 구매가 (1개 기준, 정수). 판매(sell) 키는 일부러 없음: 서버 매입은 Market /판매 로만 (6.4).
+pages:
+  page1:
+    items:
+      coal:
+        material: COAL
+        buy: 40
+      copper_ingot:
+        material: COPPER_INGOT
+        buy: 30
+      iron_ingot:
+        material: IRON_INGOT
+        buy: 150
+      gold_ingot:
+        material: GOLD_INGOT
+        buy: 250
+      redstone:
+        material: REDSTONE
+        buy: 40
+      lapis_lazuli:
+        material: LAPIS_LAZULI
+        buy: 80
+      quartz:
+        material: QUARTZ
+        buy: 60

@@ -1,0 +1,209 @@
+# ECONOMY.md 6.3 '장식' 구매가 (1개 기준, 정수). 판매(sell) 키는 일부러 없음: 서버 매입은 Market /판매 로만 (6.4).
+pages:
+  page1:
+    items:
+      white_dye:
+        material: WHITE_DYE
+        buy: 20
+      orange_dye:
+        material: ORANGE_DYE
+        buy: 20
+      magenta_dye:
+        material: MAGENTA_DYE
+        buy: 20
+      light_blue_dye:
+        material: LIGHT_BLUE_DYE
+        buy: 20
+      yellow_dye:
+        material: YELLOW_DYE
+        buy: 20
+      lime_dye:
+        material: LIME_DYE
+        buy: 20
+      pink_dye:
+        material: PINK_DYE
+        buy: 20
+      gray_dye:
+        material: GRAY_DYE
+        buy: 20
+      light_gray_dye:
+        material: LIGHT_GRAY_DYE
+        buy: 20
+      cyan_dye:
+        material: CYAN_DYE
+        buy: 20
+      purple_dye:
+        material: PURPLE_DYE
+        buy: 20
+      blue_dye:
+        material: BLUE_DYE
+        buy: 20
+      brown_dye:
+        material: BROWN_DYE
+        buy: 20
+      green_dye:
+        material: GREEN_DYE
+        buy: 20
+      red_dye:
+        material: RED_DYE
+        buy: 20
+      black_dye:
+        material: BLACK_DYE
+        buy: 20
+      dandelion:
+        material: DANDELION
+        buy: 25
+      poppy:
+        material: POPPY
+        buy: 25
+      blue_orchid:
+        material: BLUE_ORCHID
+        buy: 25
+      allium:
+        material: ALLIUM
+        buy: 25
+      azure_bluet:
+        material: AZURE_BLUET
+        buy: 25
+      red_tulip:
+        material: RED_TULIP
+        buy: 25
+      orange_tulip:
+        material: ORANGE_TULIP
+        buy: 25
+      white_tulip:
+        material: WHITE_TULIP
+        buy: 25
+      pink_tulip:
+        material: PINK_TULIP
+        buy: 25
+      oxeye_daisy:
+        material: OXEYE_DAISY
+        buy: 25
+      cornflower:
+        material: CORNFLOWER
+        buy: 25
+      lily_of_the_valley:
+        material: LILY_OF_THE_VALLEY
+        buy: 25
+  page2:
+    items:
+      sunflower:
+        material: SUNFLOWER
+        buy: 25
+      lilac:
+        material: LILAC
+        buy: 25
+      rose_bush:
+        material: ROSE_BUSH
+        buy: 25
+      peony:
+        material: PEONY
+        buy: 25
+      oak_leaves:
+        material: OAK_LEAVES
+        buy: 10
+      spruce_leaves:
+        material: SPRUCE_LEAVES
+        buy: 10
+      birch_leaves:
+        material: BIRCH_LEAVES
+        buy: 10
+      jungle_leaves:
+        material: JUNGLE_LEAVES
+        buy: 10
+      acacia_leaves:
+        material: ACACIA_LEAVES
+        buy: 10
+      dark_oak_leaves:
+        material: DARK_OAK_LEAVES
+        buy: 10
+      mangrove_leaves:
+        material: MANGROVE_LEAVES
+        buy: 10
+      cherry_leaves:
+        material: CHERRY_LEAVES
+        buy: 10
+      pale_oak_leaves:
+        material: PALE_OAK_LEAVES
+        buy: 10
+      azalea_leaves:
+        material: AZALEA_LEAVES
+        buy: 10
+      flowering_azalea_leaves:
+        material: FLOWERING_AZALEA_LEAVES
+        buy: 10
+      vine:
+        material: VINE
+        buy: 10
+      lantern:
+        material: LANTERN
+        buy: 80
+      soul_lantern:
+        material: SOUL_LANTERN
+        buy: 80
+      chain:
+        material: CHAIN
+        buy: 40
+      candle:
+        material: CANDLE
+        buy: 60
+      white_candle:
+        material: WHITE_CANDLE
+        buy: 60
+      orange_candle:
+        material: ORANGE_CANDLE
+        buy: 60
+      magenta_candle:
+        material: MAGENTA_CANDLE
+        buy: 60
+      light_blue_candle:
+        material: LIGHT_BLUE_CANDLE
+        buy: 60
+      yellow_candle:
+        material: YELLOW_CANDLE
+        buy: 60
+      lime_candle:
+        material: LIME_CANDLE
+        buy: 60
+      pink_candle:
+        material: PINK_CANDLE
+        buy: 60
+      gray_candle:
+        material: GRAY_CANDLE
+        buy: 60
+  page3:
+    items:
+      light_gray_candle:
+        material: LIGHT_GRAY_CANDLE
+        buy: 60
+      cyan_candle:
+        material: CYAN_CANDLE
+        buy: 60
+      purple_candle:
+        material: PURPLE_CANDLE
+        buy: 60
+      blue_candle:
+        material: BLUE_CANDLE
+        buy: 60
+      brown_candle:
+        material: BROWN_CANDLE
+        buy: 60
+      green_candle:
+        material: GREEN_CANDLE
+        buy: 60
+      red_candle:
+        material: RED_CANDLE
+        buy: 60
+      black_candle:
+        material: BLACK_CANDLE
+        buy: 60
+      item_frame:
+        material: ITEM_FRAME
+        buy: 50
+      painting:
+        material: PAINTING
+        buy: 90
+      flower_pot:
+        material: FLOWER_POT
+        buy: 40

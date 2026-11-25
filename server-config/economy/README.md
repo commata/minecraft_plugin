@@ -1,0 +1,34 @@
+# 경제 플러그인 설정 (server-config/economy)
+
+docs/ECONOMY.md v0.8의 5장(직업)·6장(상점) 값을 실제 설정 파일로 옮긴 것. 가격·보상을 바꿀 때는 ECONOMY.md와 이 폴더를 같은 PR에서 고친다.
+
+| 폴더 | 서버 위치 | 내용 |
+| --- | --- | --- |
+| `VJobs/` | `plugins/VJobs/` | `config.yml` (5개 직업, 보상표, XP 곡선, 정수 보상), `messages_ko.yml` (한국어) |
+| `EconomyShopGUI/` | `plugins/EconomyShopGUI/` | `config.yml` (한국어, 판매 끔, 스포너 끔), `sections/`·`shops/` (6.3 가격표 8개 상점) |
+| `VERSIONS.md` | - | 외부 JAR 고정 버전과 SHA-256 |
+
+데이터 파일(`local.db`, `luckperms-h2-*.db`, `transactions/` 등)은 넣지 않는다. LuckPerms·Vault는 기본 설정 그대로 쓰므로 파일이 없다. LuckPerms 권한은 9.2의 4번 명령으로 넣는다.
+
+## 적용 (로컬 테스트 서버, 서버를 끈 상태에서)
+
+EconomyShopGUI는 **기본 `shops/`·`sections/` 폴더를 먼저 치워야** 한다. 남아 있으면 기본 상점 28개(판매 가능)가 그대로 같이 뜬다.
+
+```powershell
+$run = "C:\minecraft\minecraft_plugin\plugins\bank\run\plugins"
+$cfg = "C:\minecraft\minecraft_plugin\server-config\economy"
+Rename-Item "$run\EconomyShopGUI\shops"    "shops.default"
+Rename-Item "$run\EconomyShopGUI\sections" "sections.default"
+Copy-Item "$cfg\VJobs\*"          "$run\VJobs\"          -Recurse -Force
+Copy-Item "$cfg\EconomyShopGUI\*" "$run\EconomyShopGUI\" -Recurse -Force
+```
+
+## 적용 (운영, ECONOMY.md 9.2)
+
+운영은 첫 설치라 `plugins/EconomyShopGUI/`가 없다. 설정을 먼저 복사해 두면 `shops/`가 이미 있어서 기본 상점을 만들지 않는다(첫 기동 로그에 `Creating default shops`가 **없어야** 함).
+
+## 확인할 로그
+
+- `[VJobs] Config loaded: 5 job(s)` (18이면 config.yml이 안 바뀐 것)
+- `[EconomyShopGUI] Completed loading 8 section configs` / `8 shop configs`
+- `[Bank]` 소수 금액 거부 경고가 없어야 함 (2.2)
