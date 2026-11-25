@@ -626,6 +626,9 @@ jobs:
         MELON: { money: 8, xp: 0.8 }
         COCOA: { money: 5, xp: 0.5 }
         NETHER_WART: { money: 5, xp: 0.5 }
+      # 사탕수수·대나무는 Ageable 이라 harvest 로 두면 "다 자란 나이"일 때만 지급되는데, 줄기 위쪽 블록은
+      # 나이가 0인 경우가 많아 0원이 됨. break 로 두면 자란 위쪽 줄기는 지급, 직접 심은 맨 아래 블록은 0원.
+      break:
         SUGAR_CANE: { money: 1, xp: 0.1 }
         BAMBOO: { money: 1, xp: 0.1 }
       collect:
@@ -678,8 +681,8 @@ jobs:
         TROPICAL_FISH: { money: 40, xp: 4 }
         ENCHANTED_BOOK: { money: 150, xp: 15 }
         BOW: { money: 150, xp: 15 }
-        FISHING_ROD: { money: 150, xp: 15 }
         SADDLE: { money: 150, xp: 15 }
         NAME_TAG: { money: 150, xp: 15 }
         NAUTILUS_SHELL: { money: 150, xp: 15 }
+        # 낚싯대는 쓰레기(손상)와 보물(인챈트)이 같은 FISHING_ROD 키라 구분할 수 없어 쓰레기 값으로 통일 (ANY = 10원)
         ANY: { money: 10, xp: 1 }

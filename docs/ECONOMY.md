@@ -202,7 +202,7 @@ Bank 완료 체크리스트 (테스트 서버, 버전은 9.3에 고정한 JAR):
 | --- | --- |
 | 초기 직업 | 광부, 벌목꾼, 농부, 사냥꾼, 낚시꾼 (5개) |
 | 동시 가입 | 최대 2개 (`jobs.limit.2`를 LuckPerms `default` 그룹에 부여, 운영 적용은 9.2의 4번) |
-| 탈퇴·변경 | 가능. 탈퇴한 직업 레벨은 유지(재가입 시 복구)되는지 테스트에서 확인. 변경 쿨타임은 **탈퇴 후 1시간만**(2026-11-25 확정). 빈 슬롯을 처음 채울 때는 바로 가입. VJobs는 가입할 때도 쿨타임을 걸므로, EconomyHub(1.5단계)가 마지막 탈퇴 후 1시간이 지난 플레이어에게 `jobs.cooldown.instant` 권한을 붙여 VJobs 쿨타임(설정 3600초)을 면제한다(7.2). 매입 우회는 14.2 판매 가능량 기록이 막음. 탈퇴하면 그 직업의 보너스 판매 가능량은 기본가로 전환(14.2) |
+| 탈퇴·변경 | 가능. 탈퇴한 직업 레벨은 유지(재가입 시 복구)되는지 테스트에서 확인. 변경 쿨타임은 **탈퇴 후 1시간만**(2026-11-25 확정). 빈 슬롯을 처음 채울 때는 바로 가입. VJobs는 가입할 때도 쿨타임을 걸므로(`JobManager.join()`이 가입 때도 변경 시각을 갱신), EconomyHub의 직업 보호 기능(**1b에 함께 배포**, 7.1)이 마지막 탈퇴 후 1시간이 지난 플레이어에게 `jobs.cooldown.instant` 권한을 붙여 VJobs 쿨타임(설정 3600초)을 면제한다(7.2). 매입 우회는 14.2 판매 가능량 기록이 막음. 탈퇴하면 그 직업의 보너스 판매 가능량은 기본가로 전환(14.2) |
 | 최대 레벨 | 50 |
 | 레벨 보너스 | **MVP는 0%** (정수 보상 유지, 2.2). 2단계에서 레벨당 +0.5% 검토 |
 | 능력치 특전 | 없음 (채굴 속도·공격력 등 비활성화) |
@@ -252,7 +252,7 @@ Bank 완료 체크리스트 (테스트 서버, 버전은 9.3에 고정한 JAR):
 | 동물 번식 | 0원 | | |
 
 - 피스톤·주민이 수확하면 보상 없음(플레이어가 캔 것만 집계). 자동 농장은 작물 공급용으로는 자유, 돈벌이는 안 됨.
-- 사탕수수·대나무는 자라는 속도가 빨라 낮게 잡음. 동물 번식은 밀만 있으면 무한 반복이라 0원.
+- 사탕수수·대나무는 자라는 속도가 빨라 낮게 잡음. VJobs에서 둘은 나이 값(`Ageable`)이 있어 `harvest`로 두면 줄기 위쪽이 0원이 되므로 `break`로 설정(직접 심은 맨 아래는 설치 블록이라 0원). 동물 번식은 밀만 있으면 무한 반복이라 0원.
 
 **사냥꾼** (목표: 일반 사냥 1시간 ≈ 7,000원)
 
@@ -279,7 +279,7 @@ Bank 완료 체크리스트 (테스트 서버, 버전은 9.3에 고정한 JAR):
 | 보물(인챈트 책·활·낚싯대·안장·이름표·앵무조개 껍데기) | 150원 |
 | 쓰레기 | 10원 |
 
-AFK 낚시(낚싯대 고정)는 AFK 감지로 막는다. 테스트에서 AFK 낚시가 보상을 받으면 낚시꾼 보상을 절반으로 내리고 관리자 감시로 대응.
+낚싯대는 쓰레기(손상)와 보물(인챈트)이 같은 아이템 ID라 VJobs가 구분하지 못해 쓰레기 값(10원)으로 통일. AFK 낚시(낚싯대 고정)는 AFK 감지로 막는다. 테스트에서 AFK 낚시가 보상을 받으면 낚시꾼 보상을 절반으로 내리고 관리자 감시로 대응.
 
 ### 5.3 레벨 경험치
 
@@ -447,8 +447,8 @@ v0.8부터 서버 매입은 자체 `Market`의 `/판매`로만 연다(14장). **
 | 단계 | 내용 | 산출물 | 예상 |
 | --- | --- | --- | --- |
 | **1a. 자체 Bank** | 2.1의 `plugins/bank` 개발 + 단위 테스트 | JAR 1개 | 2–3일 |
-| **1b. 외부 플러그인 MVP** | VaultUnlocked·VJobs·EconomyShopGUI·LuckPerms 설치(Bank와 함께), 5·6장 값 반영, 한글 메시지 | `server-config/economy/` 설정 파일 | 2–3일 (1a와 병행 가능) |
-| **1.5 `/economy` 통합 GUI** | `plugins/economy-hub` (자체). 잔액 표시 + 버튼(직업, 상점, 송금 안내, 순위, 가이드). 버튼은 각 플러그인 명령을 `player.performCommand`로 실행 | JAR 1개 | 1–2일 |
+| **1b. 외부 플러그인 MVP** | VaultUnlocked·VJobs·EconomyShopGUI·LuckPerms 설치(Bank와 함께), 5·6장 값 반영, 한글 메시지 + **EconomyHub 직업 보호 기능**(7.2: 탈퇴 후에만 1시간 쿨타임, 피스톤 이동·유체 생성 블록 보상 제외). VJobs만으로는 막을 수 없어 1b에 같이 배포 | `server-config/economy/` 설정 파일 + EconomyHub JAR | 2–3일 (1a와 병행 가능) |
+| **1.5 `/economy` 통합 GUI** | `plugins/economy-hub` (1b에 직업 보호 기능으로 먼저 배포한 같은 플러그인). 잔액 표시 + 버튼(직업, 상점, 송금 안내, 순위, 가이드). 버튼은 각 플러그인 명령을 `player.performCommand`로 실행 | JAR 1개 | 1–2일 |
 | 1.7 `Market` (v0.8) | `plugins/market` (자체). 희귀 상점(주간 한도) + 인첸트 책 뽑기(확률 공개·천장)(13장) + 직업별 매입 `/판매`(14장) | JAR 1개 | 5–7일 |
 | 2. 정책 조정 | 1주차 데이터로 보상·가격 수정 | 이 문서 v0.9 | 운영 1주 후 |
 | 2. `/trade` 플레이어 교환 (v0.8, 3단계에서 앞당김) | 아래 7.3. 직업별 매입(14장)으로 오픈 직후부터 교환 수요가 생김 | JAR | 4–5일 |
@@ -459,7 +459,9 @@ v0.8부터 서버 매입은 자체 `Market`의 `/판매`로만 연다(14장). **
 - 의존: `compileOnly` Vault API, `plugin.yml`에 `depend: [Vault]`, `softdepend: [VJobs, EconomyShopGUI]`
 - GUI 27칸: 내 잔액(머리 아이템), 직업 현황(`/jobs` 열기), 상점(`/shop`), 송금 안내(채팅에 `/pay <닉> <금액>` 안내), 부자 순위(`/baltop`, Bank), 이용 가이드(책)
 - 외부 플러그인 내부 API에는 의존하지 않는다(버전이 바뀌어도 명령어만 유지되면 동작).
+- **1b에 먼저 배포하는 직업 보호 기능** (GUI보다 먼저, VJobs API는 리플렉션으로 호출해 VJobs JAR 없이 컴파일)
 - **직업 쿨타임 면제** (5.1): `JobLeaveEvent`(MONITOR, ignoreCancelled)에서 탈퇴 시각을 플레이어 PDC(`economyhub:last_job_leave`)에 저장. 접속·탈퇴·1분 주기로 확인해, 마지막 탈퇴 후 1시간이 지났거나 탈퇴 기록이 없으면 `PermissionAttachment`로 `jobs.cooldown.instant=true`, 1시간 안이면 떼어 냄. VJobs 쿨타임은 `jobs.cooldown.instant`가 있으면 0초. 테스트: 첫 직업 → 바로 두 번째 가입 성공, 하나 탈퇴 → 1시간 안 재가입 거부 → 1시간 뒤 성공, 재접속·재시작 후에도 유지
+- **피스톤 이동·유체 생성 블록 보상 제외** (8장): VJobs 2.2.0의 설치 블록 기록은 좌표 기준이고 피스톤 이벤트를 처리하지 않아(JAR 확인), 설치한 원목·광석·호박을 피스톤으로 밀면 자연 블록으로 보고 다시 지급한다(원목 설치 → 밀기 → 베기 반복으로 무한 수입). 돌 생성기(용암 + 물)로 만든 돌도 설치 기록이 없어 1원씩 지급된다. EconomyHub가 `BlockPistonExtendEvent`/`RetractEvent`로 움직인 블록의 도착 좌표와 `BlockFormEvent`로 생긴 돌·조약돌·현무암 등의 좌표를 청크 PDC에 표시해 두고, 표시된 블록을 캘 때 `JobPayoutEvent`(BREAK·HARVEST)를 취소한다. 표시는 그 블록을 캐면 지운다. Market(14.2)도 같은 표시를 읽어 판매 가능량에서 뺀다
 - 아이템 이동 차단: 클릭·드래그·숫자키·Shift 클릭 모두 취소 (NeatSort 등 정렬 플러그인과 충돌 방지 위해 `InventoryHolder` 커스텀 홀더로 식별)
 
 ### 7.3 `/trade` 요구사항 (2단계)
@@ -478,7 +480,9 @@ v0.8부터 서버 매입은 자체 `Market`의 `/판매`로만 연다(14장). **
 | --- | --- | --- |
 | 광석 설치 후 재채굴 | VJobs 설치 블록 추적 | 광석 설치 → 채굴 → 0원, 재시작 후 재확인 |
 | 실크터치 캐기·설치 반복 | VJobs 기본 | |
-| 피스톤으로 옮긴 광석 | **확인 필요** (블록 추적이 피스톤 이동을 따라가는지) | 안 되면 광부 보상 하향 |
+| 피스톤으로 옮긴 광석·원목·호박·수박 | VJobs는 못 막음(JAR 확인). EconomyHub가 이동한 블록 보상 취소(7.2) | 설치 → 피스톤으로 밀기 → 채굴 시 0원 |
+| 돌 생성기(용암 + 물) | VJobs는 못 막음. EconomyHub가 유체로 생긴 블록 보상 취소(7.2) | 생성기 돌 채굴 시 0원, 자연 돌은 1원 |
+| 직업 연속 가입 | EconomyHub 쿨타임 면제(5.1) | 일반 계정: 첫 직업 → 바로 두 번째 성공, 탈퇴 직후 재가입 거부, 1시간 뒤 성공 |
 | 피스톤으로 민 광석·원목·호박·수박 (v0.8 매입) | `Market` 설치 기록이 피스톤 이동 좌표를 따라가거나, 피스톤으로 움직인 블록은 판매 가능량 기록에서 제외 | 설치 → 피스톤 이동 → 채굴 시 판매 가능량 0 |
 | 자동 농장·주민 농장 | 플레이어가 캔 것만 집계 | 피스톤 수확 → 0원 |
 | 미성숙 작물 | VJobs 성장 확인 | 덜 자란 밀 → 0원 |
@@ -520,14 +524,15 @@ Bank는 다른 자체 플러그인처럼 `deploy.ps1 -Plugin bank`로, 외부 �
 ```powershell
 # Windows: 1) Bank 먼저 업로드만 (설치는 외부 플러그인과 한 번에)
 .\scripts\deploy.ps1 -Plugin bank -SshHost minipc-lan -UploadOnly
+.\scripts\deploy.ps1 -Plugin economy-hub -SshHost minipc-lan -UploadOnly   # 직업 보호 기능 (7.2)
 # 2) 외부 JAR 업로드
 ssh minipc-lan "mkdir -p ~/plugin-staging/economy"
 scp .\external\*.jar minipc-lan:~/plugin-staging/economy/
 ```
 ```bash
 # 미니PC
-~/mc-scripts/install-plugin.sh --dry-run ~/plugin-staging/bank-*.jar ~/plugin-staging/economy/*.jar   # 새 플러그인 5개만 나오는지 확인
-~/mc-scripts/install-plugin.sh ~/plugin-staging/bank-*.jar ~/plugin-staging/economy/*.jar             # 백업 + 설치 + 재시작
+~/mc-scripts/install-plugin.sh --dry-run ~/plugin-staging/bank-*.jar ~/plugin-staging/economy-hub-*.jar ~/plugin-staging/economy/*.jar   # 새 플러그인 6개만 나오는지 확인
+~/mc-scripts/install-plugin.sh ~/plugin-staging/bank-*.jar ~/plugin-staging/economy-hub-*.jar ~/plugin-staging/economy/*.jar   # 백업 + 설치 + 재시작
 ```
 
 **운영 첫 기동부터 검증된 설정으로 뜨게 한다.** 기본 설정으로 한 번 열면 그 사이 접속한 사람이 기본 상품을 팔 수 있다.
@@ -739,13 +744,15 @@ scp .\external\*.jar minipc-lan:~/plugin-staging/economy/
 - 의존: `depend: [Vault]`. Bank를 직접 부르지 않고 Vault API로 출금(3장 원칙).
 - 명령: `/희귀상점` (`/market`), `/뽑기` (`/gacha`), `/뽑기 확률`. 관리자: `/market reload`, `/market log <닉>`, `/market reset <닉>`(한도 초기화), 권한 `market.admin`.
 - 저장: `plugins/Market/market.db` (파일형 SQLite, Bank와 같은 WAL·`synchronous=FULL`). `purchases(id, time_ms, uuid, item, amount, price, week_key, bank_ref)`, `pulls(id, time_ms, uuid, tier, enchant, level, price, pity_before, bank_ref)`, `pity(uuid, count)`.
+- **거래 ID 선기록** (리뷰 반영, 2026-11-25): Vault 출금 뒤에 기록하면 그 사이 장애 때 대조할 기록이 없다. 그래서 모든 구매·뽑기는 Market이 만든 거래 ID(`tx_id`, UUID)를 **Bank보다 먼저** `market.db`에 남기고, 같은 ID를 Bank 거래에 붙인다.
+- Bank 추가 기능(Market 개발 때, 스키마 v3): 구 Vault 응답에는 거래번호가 없으므로 Market은 `softdepend: [Bank]`로 Bank의 Java API `withdraw(uuid, amount, source, extRef)`·`deposit(...)`·`findByExtRef(extRef)`를 직접 부른다. `transactions.ext_ref` 유일 제약이라 같은 `tx_id`로 두 번 불러도 **한 번만 반영**되고 처음 결과를 돌려준다. Bank가 없으면 Market 구매·매입은 잠근다. (3장의 "Vault로만"은 EconomyHub·Trade에만 적용)
 - 처리 순서 (구매·뽑기 공통):
   1. 인벤토리 빈칸·한도·잔액 확인 → 하나라도 안 되면 거부(돈 안 빠짐)
   2. 뽑기면 서버에서 결과 확정(`SecureRandom`, 천장 반영)
-  3. Vault 출금 → 실패하면 중단
-  4. 한 SQL 트랜잭션으로 구매/뽑기 기록 + 한도 + 천장 카운터 갱신
-  5. 아이템 지급. 결과 화면은 연출일 뿐 창을 닫거나 로그아웃해도 결과는 이미 확정
-- 3–5 사이에 서버가 꺼지면 2.4와 같은 "돈만 빠진" 경우가 생긴다. Bank `/bank refund`의 `source` 조건에 `Market`을 추가하고(2.4 수정), 관리자는 `market.db`의 기록(시각·품목·금액이 정확히 남음)으로 대조한다. EconomyShopGUI보다 근거가 확실하다.
+  3. 한 SQL 트랜잭션: `orders(tx_id, status=PENDING, 품목/결과, 금액)` + 한도·천장 **예약** 차감
+  4. Bank 출금(`extRef=tx_id`) → 실패하면 `ABORTED`로 바꾸고 예약을 되돌림
+  5. `CHARGED`로 갱신 → 아이템 지급 → `DELIVERED`. 결과 화면은 연출일 뿐
+- 기동 때 복구: 이전 기동의 `PENDING`은 Bank `findByExtRef(tx_id)`로 확인해 출금이 있으면 `CHARGED`, 없으면 `ABORTED`(예약 반환). 비정상 종료된 기동의 `CHARGED`(지급 미확인)는 관리자 목록(`/market pending`)에 올리고, 관리자가 인벤토리를 보고 `/market resolve <tx_id> deliver|refund` 중 하나를 **한 번만** 처리한다(refund는 Bank `/bank refund`와 같은 1회 제약, `source=Market` 허용, 2.4).
 - 정수 가격만(2.2). 확률은 설정 파일 `config.yml`의 등급별 `weight`(정수, 합 10,000 = 100.00%)로 두고, 로드 시 합이 10,000이 아니거나 등급 안 책 목록이 비면 **뽑기를 잠근다**.
 - 아이템 이동 차단은 EconomyHub와 같은 커스텀 `InventoryHolder` 방식(7.2).
 
@@ -823,11 +830,12 @@ scp .\external\*.jar minipc-lan:~/plugin-staging/economy/
    1. 보너스 묶음 수 = min(인벤토리 ÷ 단위, `job_amount` ÷ 단위, 남은 한도 ÷ 묶음당 보너스가)
    2. 기본 묶음 수 = min(남은 인벤토리 ÷ 단위, `base_amount` ÷ 단위, 남은 한도 ÷ 묶음당 기본가)
    3. 한 번에 둘 다 팔리면 `sales`에 `price_type`별로 1줄씩(총 2줄) 기록
-4. 인벤토리에서 아이템 제거 → Vault 입금 → 한 트랜잭션으로 판매 기록 + 판매 가능량 차감 + 하루 한도 갱신
-5. 입금이 실패하면 아이템과 판매 가능량을 되돌린다
-6. 정수 가격만(2.2). 싼 품목은 **묶음 단위 가격**(예: 감자 16개당 기본 4원, 보너스 8원)으로 두고 묶음 단위로만 판다
+4. 한 SQL 트랜잭션: `sales`에 `tx_id`(UUID)·품목·수량·금액을 `PENDING`으로 기록 + 판매 가능량·하루 한도 **예약** 차감 (13.6과 같은 선기록)
+5. 인벤토리에서 아이템 제거 → Bank 입금(`extRef=tx_id`) → `DONE`
+6. 아이템 제거 전 실패는 `ABORTED` + 예약 반환. 입금이 실패하면 아이템을 돌려주고 `ABORTED`
+7. 정수 가격만(2.2). 싼 품목은 **묶음 단위 가격**(예: 감자 16개당 기본 4원, 보너스 8원)으로 두고 묶음 단위로만 판다
 
-강제 종료 시 "아이템은 빠졌는데 돈이 안 들어온" 경우는 2.4와 같은 방식으로 `market.db` 기록과 대조해 `/bank give`로 처리한다(출금이 아니라 입금 누락이라 `/bank refund` 대상은 아님).
+기동 때 복구: 이전 기동의 `PENDING`은 Bank `findByExtRef(tx_id)`로 확인해 입금이 있으면 `DONE`(예약이 이미 차감돼 있어 판매 가능량·한도가 정확함), 없으면 관리자 목록에 올려 "아이템이 빠졌는지"를 보고 `/market resolve <tx_id> pay|return`을 한 번만 처리한다(pay는 같은 `tx_id`로 입금해 중복이 없음).
 
 ### 14.4 1단계 매입가 (2026-11-25 확정)
 
