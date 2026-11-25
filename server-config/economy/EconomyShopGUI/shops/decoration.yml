@@ -1,6 +1,7 @@
-# ECONOMY.md 6.3 '장식' 구매가 (1개 기준, 정수). 판매(sell) 키는 일부러 없음: 서버 매입은 Market /판매 로만 (6.4).
+# ECONOMY.md 6.3 '장식' 구매가 (1개 기준, 정수). 판매(sell) 키는 일부러 없음: 서버 매입은 Market /판매 로만 (6.4). 페이지당 45개.
 pages:
   page1:
+    gui-rows: 6
     items:
       white_dye:
         material: WHITE_DYE
@@ -86,8 +87,6 @@ pages:
       lily_of_the_valley:
         material: LILY_OF_THE_VALLEY
         buy: 25
-  page2:
-    items:
       sunflower:
         material: SUNFLOWER
         buy: 25
@@ -139,6 +138,9 @@ pages:
       lantern:
         material: LANTERN
         buy: 80
+  page2:
+    gui-rows: 6
+    items:
       soul_lantern:
         material: SOUL_LANTERN
         buy: 80
@@ -172,8 +174,6 @@ pages:
       gray_candle:
         material: GRAY_CANDLE
         buy: 60
-  page3:
-    items:
       light_gray_candle:
         material: LIGHT_GRAY_CANDLE
         buy: 60

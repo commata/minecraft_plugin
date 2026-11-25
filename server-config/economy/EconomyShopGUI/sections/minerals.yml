@@ -1,24 +1,29 @@
-# ECONOMY.md 6.3 '광물' 표. 메인 메뉴 22번 칸.
+# ECONOMY.md 6.3 '광물' 표. 상점 GUI 확정 디자인(2026-11-25).
+# 메인 메뉴 칸: 디자인 슬롯 30(0부터 셈). 이 설정의 slot은 1부터 세므로 31.
 enable: true
-title: '&8<---- &6&l광물 &8---->'
-slot: 22
+title: '<#F5C542>광물 <#AAAAAA>[구매 전용]'
+slot: 31
 hidden: false
 sub-section: false
 item:
-  displayname: '&6&l광물'
-  material: IRON_INGOT
+  material: GOLD_INGOT
+  name: '<#F5C542>[ 광물 ]'
+  lore:
+    - '<#AAAAAA>석탄·철·금·구리 주괴 등'
+    - '<#55FF55>▶ 좌클릭으로 열기'
 fill-item:
   material: GRAY_STAINED_GLASS_PANE
-  displayname: ' '
+  name: ' '
 # 구매 전용: 좌클릭 구매만, 판매 클릭은 없음 (ECONOMY.md 6.4)
 click-mappings:
   BUY: LEFT
   SELL: NONE
   SELL_ALL: NONE
+# 1-5줄 전체(페이지당 45개)가 품목 칸, 6줄은 하단 바 (config.yml shops-nav-bar)
 item-layout:
-  - '0 0 0 0 0 0 0 0 0'
-  - '0 1 1 1 1 1 1 1 0'
-  - '0 1 1 1 1 1 1 1 0'
-  - '0 1 1 1 1 1 1 1 0'
-  - '0 1 1 1 1 1 1 1 0'
+  - '1 1 1 1 1 1 1 1 1'
+  - '1 1 1 1 1 1 1 1 1'
+  - '1 1 1 1 1 1 1 1 1'
+  - '1 1 1 1 1 1 1 1 1'
+  - '1 1 1 1 1 1 1 1 1'
   - '0 0 0 0 0 0 0 0 0'

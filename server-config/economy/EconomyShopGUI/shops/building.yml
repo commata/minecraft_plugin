@@ -1,6 +1,7 @@
-# ECONOMY.md 6.3 '건축' 구매가 (1개 기준, 정수). 판매(sell) 키는 일부러 없음: 서버 매입은 Market /판매 로만 (6.4).
+# ECONOMY.md 6.3 '건축' 구매가 (1개 기준, 정수). 판매(sell) 키는 일부러 없음: 서버 매입은 Market /판매 로만 (6.4). 페이지당 45개.
 pages:
   page1:
+    gui-rows: 6
     items:
       stone:
         material: STONE
@@ -86,8 +87,6 @@ pages:
       bricks:
         material: BRICKS
         buy: 25
-  page2:
-    items:
       mud_bricks:
         material: MUD_BRICKS
         buy: 20
@@ -139,6 +138,9 @@ pages:
       brown_terracotta:
         material: BROWN_TERRACOTTA
         buy: 30
+  page2:
+    gui-rows: 6
+    items:
       green_terracotta:
         material: GREEN_TERRACOTTA
         buy: 30
@@ -172,8 +174,6 @@ pages:
       gray_concrete_powder:
         material: GRAY_CONCRETE_POWDER
         buy: 20
-  page3:
-    items:
       light_gray_concrete_powder:
         material: LIGHT_GRAY_CONCRETE_POWDER
         buy: 20

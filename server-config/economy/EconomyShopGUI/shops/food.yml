@@ -1,6 +1,7 @@
-# ECONOMY.md 6.3 '음식' 구매가 (1개 기준, 정수). 판매(sell) 키는 일부러 없음: 서버 매입은 Market /판매 로만 (6.4).
+# ECONOMY.md 6.3 '음식' 구매가 (1개 기준, 정수). 판매(sell) 키는 일부러 없음: 서버 매입은 Market /판매 로만 (6.4). 페이지당 45개.
 pages:
   page1:
+    gui-rows: 6
     items:
       bread:
         material: BREAD

@@ -1,24 +1,29 @@
-# ECONOMY.md 6.3 '농업' 표. 메인 메뉴 24번 칸.
+# ECONOMY.md 6.3 '농사' 표. 상점 GUI 확정 디자인(2026-11-25).
+# 메인 메뉴 칸: 디자인 슬롯 32(0부터 셈). 이 설정의 slot은 1부터 세므로 33.
 enable: true
-title: '&8<---- &6&l농업 &8---->'
-slot: 24
+title: '<#77DD77>농사 <#AAAAAA>[구매 전용]'
+slot: 33
 hidden: false
 sub-section: false
 item:
-  displayname: '&6&l농업'
   material: WHEAT
+  name: '<#F5C542>[ 농사 ]'
+  lore:
+    - '<#AAAAAA>씨앗·묘목·작물·뼛가루'
+    - '<#55FF55>▶ 좌클릭으로 열기'
 fill-item:
   material: GRAY_STAINED_GLASS_PANE
-  displayname: ' '
+  name: ' '
 # 구매 전용: 좌클릭 구매만, 판매 클릭은 없음 (ECONOMY.md 6.4)
 click-mappings:
   BUY: LEFT
   SELL: NONE
   SELL_ALL: NONE
+# 1-5줄 전체(페이지당 45개)가 품목 칸, 6줄은 하단 바 (config.yml shops-nav-bar)
 item-layout:
-  - '0 0 0 0 0 0 0 0 0'
-  - '0 1 1 1 1 1 1 1 0'
-  - '0 1 1 1 1 1 1 1 0'
-  - '0 1 1 1 1 1 1 1 0'
-  - '0 1 1 1 1 1 1 1 0'
+  - '1 1 1 1 1 1 1 1 1'
+  - '1 1 1 1 1 1 1 1 1'
+  - '1 1 1 1 1 1 1 1 1'
+  - '1 1 1 1 1 1 1 1 1'
+  - '1 1 1 1 1 1 1 1 1'
   - '0 0 0 0 0 0 0 0 0'

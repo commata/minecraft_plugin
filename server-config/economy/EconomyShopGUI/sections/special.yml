@@ -1,24 +1,29 @@
-# ECONOMY.md 6.3 '특수' 표. 메인 메뉴 26번 칸.
+# ECONOMY.md 6.3 '특수' 표. 상점 GUI 확정 디자인(2026-11-25).
+# 메인 메뉴 칸: 디자인 슬롯 34(0부터 셈). 이 설정의 slot은 1부터 세므로 35.
 enable: true
-title: '&8<---- &6&l특수 &8---->'
-slot: 26
+title: '<#C39BD3>특수 <#AAAAAA>[구매 전용]'
+slot: 35
 hidden: false
 sub-section: false
 item:
-  displayname: '&6&l특수'
   material: NAME_TAG
+  name: '<#F5C542>[ 특수 ]'
+  lore:
+    - '<#AAAAAA>이름표·안장·끈·폭죽 로켓 등'
+    - '<#55FF55>▶ 좌클릭으로 열기'
 fill-item:
   material: GRAY_STAINED_GLASS_PANE
-  displayname: ' '
+  name: ' '
 # 구매 전용: 좌클릭 구매만, 판매 클릭은 없음 (ECONOMY.md 6.4)
 click-mappings:
   BUY: LEFT
   SELL: NONE
   SELL_ALL: NONE
+# 1-5줄 전체(페이지당 45개)가 품목 칸, 6줄은 하단 바 (config.yml shops-nav-bar)
 item-layout:
-  - '0 0 0 0 0 0 0 0 0'
-  - '0 1 1 1 1 1 1 1 0'
-  - '0 1 1 1 1 1 1 1 0'
-  - '0 1 1 1 1 1 1 1 0'
-  - '0 1 1 1 1 1 1 1 0'
+  - '1 1 1 1 1 1 1 1 1'
+  - '1 1 1 1 1 1 1 1 1'
+  - '1 1 1 1 1 1 1 1 1'
+  - '1 1 1 1 1 1 1 1 1'
+  - '1 1 1 1 1 1 1 1 1'
   - '0 0 0 0 0 0 0 0 0'

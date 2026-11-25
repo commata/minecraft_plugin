@@ -395,11 +395,9 @@ escape-back: false
 # Note: This option requires a server restart for changes
 
 main-menu:
-  # The size of the main shop inventory in rows
-  # Possible values: 2 | 3 | 4 | 5 | 6
-  # Note that the navigation bar also is 1 row(unless disabled)
-  gui-rows: 4
-  # The fill item for inside the main menu which will fill empty spots
+  # 상점 GUI 확정 디자인(2026-11-25): 6줄. 1-5줄 카테고리(sections/*.yml 의 slot), 6줄 하단 바
+  # Possible values: 2 | 3 | 4 | 5 | 6 (하단 바 1줄 포함)
+  gui-rows: 6
   fill-item:
     material: GRAY_STAINED_GLASS_PANE
     name: ' '
@@ -450,14 +448,15 @@ use-vault-prefix-suffix: true
 
 # The navigation bar that appears in the main menu
 main-menu-nav-bar:
+  # 디자인 슬롯 45 = 하단 바 1번(내 정보), 53 = 9번(닫기)
   enabled: true
   items:
     1:
-      material: player_head
+      material: PLAYER_HEAD
       skullowner: '%player_name%'
-      name: '%player_displayname%'
+      name: '<#F5C542>%player_name%'
       lore:
-      - '%translations-money%: &c%player_balance%'
+      - '<#AAAAAA>보유 잔액: <#FFDF6B>%player_balance%'
     2:
       material: GRAY_STAINED_GLASS_PANE
       name: ' '
@@ -480,18 +479,24 @@ main-menu-nav-bar:
       material: GRAY_STAINED_GLASS_PANE
       name: ' '
     9:
-      material: ARROW
-      name: '%translations-cancel%'
-      action: BACK
+      material: BARRIER
+      name: '<#FF5555>닫기'
+      lore:
+      - '<#AAAAAA>상점 창을 닫습니다.'
+      action: CLOSE
 
 # The 'default' navigation bar for every shop category
 # Note that disabling the navigation bar here, will also disable it for every shop category which does not have its own navigation bar configured
 shops-nav-bar:
+  # 카테고리 안쪽 하단 바 (디자인 슬롯 45-53 = 1-9번). 8개 카테고리 공통
   enabled: true
   items:
     1:
-      material: GRAY_STAINED_GLASS_PANE
-      name: ' '
+      material: OAK_DOOR
+      name: '<#55FFFF>◀ 메인 메뉴'
+      lore:
+      - '<#AAAAAA>카테고리 선택으로 돌아갑니다.'
+      action: BACK
     2:
       material: GRAY_STAINED_GLASS_PANE
       name: ' '
@@ -499,8 +504,10 @@ shops-nav-bar:
       material: GRAY_STAINED_GLASS_PANE
       name: ' '
     4:
-      material: red_stained_glass_pane
-      name: '%translations-previous-page%'
+      material: ARROW
+      name: '<#55FFFF>◀ 이전 페이지'
+      lore:
+      - '<#AAAAAA>이전 품목 목록을 봅니다.'
       action: PAGE_BACK
       paginated:
         enabled: true
@@ -508,11 +515,15 @@ shops-nav-bar:
           material: GRAY_STAINED_GLASS_PANE
           name: ' '
     5:
-      material: NETHER_STAR
-      name: '%translations-current-page%'
+      material: PAPER
+      name: '<#F5C542>페이지 %page% / %pages%'
+      lore:
+      - '<#AAAAAA>좌클릭으로 수량을 선택해 구매하세요.'
     6:
-      material: blue_stained_glass_pane
-      name: '%translations-next-page%'
+      material: ARROW
+      name: '<#55FFFF>다음 페이지 ▶'
+      lore:
+      - '<#AAAAAA>다음 품목 목록을 봅니다.'
       action: PAGE_NEXT
       paginated:
         enabled: true
@@ -526,21 +537,24 @@ shops-nav-bar:
       material: GRAY_STAINED_GLASS_PANE
       name: ' '
     9:
-      material: ARROW
-      name: '%translations-back%'
-      action: BACK
+      material: BARRIER
+      name: '<#FF5555>닫기'
+      lore:
+      - '<#AAAAAA>상점 창을 닫습니다.'
+      action: CLOSE
 
 # The navigation bar that appears in the buy/sell screens and the buy stacks screen
 # Available action: 'TOGGLE_MODE' - Switches between buy/sell mode
 transaction-screens-nav-bar:
+  # 구매 수량 화면 5줄 = buy-screen 의 menu-size 5 중 마지막 줄 (디자인 슬롯 36 = 1번, 44 = 9번)
   enabled: true
   items:
     1:
-      material: player_head
-      skullowner: '%player_name%'
-      name: '%player_displayname%'
+      material: OAK_DOOR
+      name: '<#55FFFF>◀ 품목 목록'
       lore:
-      - '%translations-money%: &c%player_balance%'
+      - '<#AAAAAA>이전 카테고리 화면으로 돌아갑니다.'
+      action: BACK
     2:
       material: GRAY_STAINED_GLASS_PANE
       name: ' '
@@ -551,15 +565,8 @@ transaction-screens-nav-bar:
       material: GRAY_STAINED_GLASS_PANE
       name: ' '
     5:
-      material: REDSTONE_TORCH
-      name: '&c&lToggle buying/selling'
-      action: TOGGLE_MODE
-      onlyEnableForGeyserPlayers: true
-      paginated:
-        enabled: true
-        orElse:
-          material: GRAY_STAINED_GLASS_PANE
-          name: ' '
+      material: GRAY_STAINED_GLASS_PANE
+      name: ' '
     6:
       material: GRAY_STAINED_GLASS_PANE
       name: ' '
@@ -570,9 +577,11 @@ transaction-screens-nav-bar:
       material: GRAY_STAINED_GLASS_PANE
       name: ' '
     9:
-      material: ARROW
-      name: '%translations-back%'
-      action: BACK
+      material: BARRIER
+      name: '<#FF5555>닫기'
+      lore:
+      - '<#AAAAAA>상점 창을 닫습니다.'
+      action: CLOSE
 
 # The navigation bar that appears in the buy/sell screens from the shop stands
 # Available action: 'TOGGLE_MODE' - Switches between buy/sell mode
@@ -706,7 +715,7 @@ display-lore-layout:
   # One of the following lore is displayed on shop items with buy prices based on the items state
   buy-prices:
     normal:
-    - '%translations-left-click-buy%'
+    - '<#AAAAAA>구매가: <#FFDF6B>%buyPrice% <#AAAAAA>/ 1개'
     disabled:
     - '%translations-item-cannot-be-bought%'
     undefined:
@@ -735,11 +744,10 @@ display-lore-layout:
   # Can be used to decorate lore, or add information inside lore which applies for all items
   decoration-lore:
     # The following decoration lore is displayed on every shop item with a buy and/or sell price
-    extra-lore:
-    - '%translations-decoration-lore%'
+    extra-lore: []   # 상점 GUI 디자인: 가격 줄과 구매 안내 줄만
     # The following decoration lore is displayed on any shop item with a buy price
     extra-buy-lore:
-    - '%translations-decoration-lore-buy%'
+    - '<#55FF55>▶ 좌클릭하여 구매'
     # The following decoration lore is displayed on any shop item with a sell price
     # AND if the shift-right-click-sell-all config option is enabled
     extra-sell-all-lore:
@@ -825,69 +833,75 @@ max-shop-pages: 50
 
 # Buy screen
 buy-screen:
+  # 상점 GUI 확정 디자인(2026-11-25). 여기 slot 은 0부터 셈(섹션 slot 과 다름, JAR 확인).
+  # 5줄째(36-44)는 transaction-screens-nav-bar. %amount% = 선택 수량, %price% = 총 가격(원 포함)
   menu-size: 5
   fill-item:
     material: GRAY_STAINED_GLASS_PANE
     name: ' '
   items:
     1:
-      material: magenta_stained_glass_pane
-      name: '%translations-min-thirty-two%'
+      material: RED_STAINED_GLASS_PANE
+      name: '<#FF5555>-32개'
       stack-size: 32
       action: REMOVE32
-      slot: 19
-
+      slot: 10
     2:
-      material: magenta_stained_glass_pane
-      name: '%translations-min-sixteen%'
+      material: RED_STAINED_GLASS_PANE
+      name: '<#FF5555>-16개'
       stack-size: 16
       action: REMOVE16
-      slot: 20
-
+      slot: 11
     3:
-      material: magenta_stained_glass_pane
-      name: '%translations-min-one%'
+      material: RED_STAINED_GLASS_PANE
+      name: '<#FF5555>-1개'
       action: REMOVE1
-      slot: 21
-
-    4:
-      material: light_blue_stained_glass_pane
-      name: '%translations-plus-one%'
-      action: ADD1
-      slot: 23
-
+      slot: 12
+    4: # 선택한 품목
+      slot: 13
+      type: SELECTED_ITEM
     5:
-      material: light_blue_stained_glass_pane
-      name: '%translations-plus-sixteen%'
+      material: LIME_STAINED_GLASS_PANE
+      name: '<#55FF55>+1개'
+      action: ADD1
+      slot: 14
+    6:
+      material: LIME_STAINED_GLASS_PANE
+      name: '<#55FF55>+16개'
       stack-size: 16
       action: ADD16
-      slot: 24
-
-    6:
-      material: light_blue_stained_glass_pane
-      name: '%translations-plus-thirty-two%'
+      slot: 15
+    7:
+      material: LIME_STAINED_GLASS_PANE
+      name: '<#55FF55>+32개'
       stack-size: 32
       action: ADD32
-      slot: 25
-
-    7:
-      material: paper
-      name: '%translations-buy%'
-      lore:
-      - '%translations-transaction-screen-total-price%'
-      action: CONFIRM_TRANSACTION
-      slot: 13
-      type: CONFIRM
-
+      slot: 16
     8:
-      slot: 22
-      type: SELECTED_ITEM
-
+      material: RED_CONCRETE
+      name: '<#FF5555>취소'
+      lore:
+      - '<#AAAAAA>구매를 취소하고 목록으로 돌아갑니다.'
+      action: BACK
+      slot: 29
     9:
-      material: chest
-      name: '%translations-buy-stacks%'
+      material: CHEST
+      name: '<#FFDF6B>64개(1세트)로 맞추기'
+      lore:
+      - '<#AAAAAA>수량을 64개로 설정합니다.'
+      stack-size: 64
+      action: SET64
       slot: 31
-      action: OPEN_BUY_STACKS
+    10:
+      material: LIME_CONCRETE
+      name: '<#55FF55>구매 확정'
+      lore:
+      - '<#AAAAAA>구매 수량: <#FFDF6B>%amount%개'
+      - '<#AAAAAA>필요 금액: <#55FF55>%price%'
+      - '<#F5C542>▶ 클릭하여 즉시 구매'
+      action: CONFIRM_TRANSACTION
+      slot: 33
+      type: CONFIRM
 
 # Sell screen
 sell-screen:

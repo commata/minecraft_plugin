@@ -23,6 +23,16 @@ Copy-Item "$cfg\VJobs\*"          "$run\VJobs\"          -Recurse -Force
 Copy-Item "$cfg\EconomyShopGUI\*" "$run\EconomyShopGUI\" -Recurse -Force
 ```
 
+### 상점 GUI 디자인만 다시 적용할 때 (ECONOMY.md 6.6)
+
+서버를 끄고 `EconomyShopGUI` 폴더만 다시 복사한다. `LanguageFiles/lang-ko.yml`(창 제목)도 함께 덮어쓴다. 메인 메뉴 줄 수는 재시작해야 바뀐다.
+
+```powershell
+Copy-Item "$cfg\EconomyShopGUI\*" "$run\EconomyShopGUI\" -Recurse -Force
+```
+
+확인: `/shop` 6줄 메인 메뉴, 카테고리 안쪽 45칸 + 하단 바, 품목 좌클릭 → 5줄 구매 수량 화면, 설명에 판매 문구 없음, 건축·장식·인테리어에서 다음 페이지 동작.
+
 ## EconomyHub (1b에 함께 설치)
 
 VJobs만으로는 막을 수 없는 두 가지를 `plugins/economy-hub`(플러그인 이름 `EconomyHub`)가 맡는다 (ECONOMY.md 7.2).

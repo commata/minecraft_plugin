@@ -1,6 +1,7 @@
-# ECONOMY.md 6.3 '인테리어' 구매가 (1개 기준, 정수). 판매(sell) 키는 일부러 없음: 서버 매입은 Market /판매 로만 (6.4).
+# ECONOMY.md 6.3 '인테리어' 구매가 (1개 기준, 정수). 판매(sell) 키는 일부러 없음: 서버 매입은 Market /판매 로만 (6.4). 페이지당 45개.
 pages:
   page1:
+    gui-rows: 6
     items:
       white_wool:
         material: WHITE_WOOL
@@ -86,8 +87,6 @@ pages:
       blue_carpet:
         material: BLUE_CARPET
         buy: 20
-  page2:
-    items:
       brown_carpet:
         material: BROWN_CARPET
         buy: 20
@@ -139,6 +138,9 @@ pages:
       brown_concrete:
         material: BROWN_CONCRETE
         buy: 40
+  page2:
+    gui-rows: 6
+    items:
       green_concrete:
         material: GREEN_CONCRETE
         buy: 40
@@ -172,8 +174,6 @@ pages:
       gray_glazed_terracotta:
         material: GRAY_GLAZED_TERRACOTTA
         buy: 60
-  page3:
-    items:
       light_gray_glazed_terracotta:
         material: LIGHT_GRAY_GLAZED_TERRACOTTA
         buy: 60
@@ -258,8 +258,6 @@ pages:
       cut_copper:
         material: CUT_COPPER
         buy: 120
-  page4:
-    items:
       exposed_cut_copper:
         material: EXPOSED_CUT_COPPER
         buy: 150
@@ -278,6 +276,9 @@ pages:
       waxed_weathered_cut_copper:
         material: WAXED_WEATHERED_CUT_COPPER
         buy: 195
+  page3:
+    gui-rows: 6
+    items:
       waxed_oxidized_cut_copper:
         material: WAXED_OXIDIZED_CUT_COPPER
         buy: 220
@@ -344,8 +345,6 @@ pages:
       black_banner:
         material: BLACK_BANNER
         buy: 80
-  page5:
-    items:
       glow_item_frame:
         material: GLOW_ITEM_FRAME
         buy: 120
