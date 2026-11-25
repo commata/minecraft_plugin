@@ -77,7 +77,7 @@ job-switch-cooldown:
 # ECONOMY.md 5.1: 탈퇴해도 레벨 유지(재가입 시 복구).
 leave-penalty:
   level-loss-percent: 0.0
-  keep-progress: true
+  keep-progress: true   # 레벨만 유지. 현재 레벨에서 쌓던 XP는 재가입 때 0 (2.2.0 실제 동작, ECONOMY.md 5.1)
 
 # Caps how much money a single player can earn from jobs per interval.
 # XP is never capped, only the payout.
