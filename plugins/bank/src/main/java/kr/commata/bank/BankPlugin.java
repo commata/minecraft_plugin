@@ -137,7 +137,8 @@ public final class BankPlugin extends JavaPlugin {
                 // 이 뒤에 서버가 플레이어를 저장하므로, 접속자와 월드 폴더를 남겨 다음 기동에서 저장 완료를 확인
                 List<UUID> online = getServer().getOnlinePlayers().stream().map(p -> p.getUniqueId()).toList();
                 String worldDir = getServer().getWorlds().isEmpty() ? null
-                        : getServer().getWorlds().get(0).getWorldFolder().getAbsolutePath();
+                        // 26.x: getWorldFolder() 는 차원 폴더 → 플레이어 파일이 있는 월드 루트로 바꿈
+                        : PlayerFiles.worldRoot(getServer().getWorlds().get(0).getWorldFolder().toPath()).toString();
                 store.closeClean(online, worldDir);
                 getLogger().info("정상 종료 기록 완료 (접속자 " + online.size() + "명의 저장은 다음 기동에서 확인)");
             } catch (SQLException e) {

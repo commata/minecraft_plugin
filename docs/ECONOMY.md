@@ -127,7 +127,7 @@ Bank 완료 체크리스트 (테스트 서버, 버전은 9.3에 고정한 JAR):
 
 **비정상 종료 표시**: Bank는 정상 종료(`onDisable`)에서 `meta.clean_shutdown=<boot_id>`를 쓰고, 켜져 있는 동안 30초마다 `meta.heartbeat=<boot_id, 시각>`을 갱신한다. 다음 기동 때 이전 `boot_id`가 정상 종료로 기록돼 있지 않으면 그 기동을 **비정상 종료**로 기록하고, 마지막 heartbeat 시각을 **장애 추정 시각**(실제 종료는 그 뒤 30초 안)으로 남긴다. 마지막 거래 시각은 장애 시각으로 쓰지 않는다(거래가 뜸하면 몇 시간 전일 수 있음).
 
-**종료 중 장애** (PR #8 리뷰 반영): Paper는 플러그인을 끈 **뒤에** 플레이어를 저장한다. 그래서 `onDisable`의 `clean_shutdown`은 "Bank DB를 정상으로 닫았다"는 뜻일 뿐이고, 그 기동은 `boots.status=closed`로 두고 그 순간의 접속자 목록(`shutdown_players`)과 월드 폴더를 남긴다. 다음 기동에서 그 접속자들의 플레이어 파일(`playerdata/<uuid>.dat`, 없으면 `players/data/<uuid>.dat`)이 Bank 종료 시각 이후에 저장됐는지 확인해서, 모두 저장됐으면 정상 종료, 하나라도 아니면 **비정상 종료**(`unclean_reason=player_save_missing`, 장애 추정 시각 = Bank 종료 시각)로 기록한다. 접속자가 없었으면 정상 종료. `/reload`처럼 서버가 꺼지지 않고 Bank만 꺼진 경우도 저장이 확인되지 않아 비정상으로 잡히지만, 환불 대상이 넓어질 뿐 관리자 확인에서 걸러진다.
+**종료 중 장애** (PR #8 리뷰 반영): Paper는 플러그인을 끈 **뒤에** 플레이어를 저장한다. 그래서 `onDisable`의 `clean_shutdown`은 "Bank DB를 정상으로 닫았다"는 뜻일 뿐이고, 그 기동은 `boots.status=closed`로 두고 그 순간의 접속자 목록(`shutdown_players`)과 월드 폴더를 남긴다. 다음 기동에서 그 접속자들의 플레이어 파일(월드 루트의 `players/data/<uuid>.dat`, 예전 구조면 `playerdata/<uuid>.dat`. 26.x의 `getWorldFolder()`는 차원 폴더 `world/dimensions/minecraft/overworld`라 위로 올라가 루트를 구함)이 Bank 종료 시각보다 **확실히 늦게** 저장됐는지(밀리초 값이 있으면 엄격 비교, 초 단위 값이면 다음 초 이후만 인정, 같은 초는 미확인) 확인해서, 모두 저장됐으면 정상 종료, 하나라도 아니면 **비정상 종료**(`unclean_reason=player_save_missing`, 장애 추정 시각 = Bank 종료 시각)로 기록한다. 접속자가 없었으면 정상 종료. `/reload`처럼 서버가 꺼지지 않고 Bank만 꺼진 경우도 저장이 확인되지 않아 비정상으로 잡히지만, 환불 대상이 넓어질 뿐 관리자 확인에서 걸러진다.
 
 **`/bank refund`가 확인하는 조건** (하나라도 아니면 명령이 거부하고 이유를 출력)
 
