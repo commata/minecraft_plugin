@@ -25,6 +25,8 @@ final class JobsMenu extends Menu {
 
     static final int SLOT_HUB = 36;
     static final int SLOT_RULES = 40;
+    /** 편의 스킬 설정 (ECONOMY.md 15.5. 40번은 확정 레이아웃의 규칙·쿨타임이라 42번) */
+    static final int SLOT_SKILLS = 42;
     static final int SLOT_CLOSE = 44;
     /** 탈퇴는 이 시간 안에 한 번 더 우클릭해야 확정 */
     static final long LEAVE_CONFIRM_MS = 3_000;
@@ -114,6 +116,11 @@ final class JobsMenu extends Menu {
         set(SLOT_HUB, Items.of(Material.OAK_DOOR).name("<#F5C542>메인 허브").lore("<#AAAAAA>/economy 로 돌아갑니다.").build(),
                 (player, click) -> menus.later(() -> menus.openEconomy(player)));
         set(SLOT_RULES, rules(joined == null ? 0 : joined.size(), limit, remaining, cooldownText));
+        if (menus.skillsAvailable()) {
+            set(SLOT_SKILLS, Items.of(Material.BOOK).name("<#F5C542>스킬 설정")
+                    .lore("<#AAAAAA>직업 레벨 편의 스킬 켜기·끄기", "", "<#55FF55>▶ 클릭하여 열기").build(),
+                    (player, click) -> menus.later(() -> menus.openSkills(player)));
+        }
         set(SLOT_CLOSE, Items.close(), (player, click) -> menus.later(player::closeInventory));
 
         ticking = needsTick;

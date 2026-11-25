@@ -22,6 +22,7 @@ public final class VJobsHook {
     public static final String LEAVE_EVENT = "com.vjobs.api.event.JobLeaveEvent";
     public static final String PAYOUT_EVENT = "com.vjobs.api.event.JobPayoutEvent";
     public static final String JOIN_EVENT = "com.vjobs.api.event.JobJoinEvent";
+    public static final String LEVEL_UP_EVENT = "com.vjobs.api.event.JobLevelUpEvent";
 
     /** 핸들러를 한 객체에 묶어 두면 플러그인을 끌 때 Bukkit 이 한꺼번에 해제함. */
     private static final Listener OWNER = new Listener() { };

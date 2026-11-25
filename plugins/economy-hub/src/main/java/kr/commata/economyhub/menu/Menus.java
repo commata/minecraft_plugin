@@ -4,6 +4,8 @@ import java.util.List;
 import kr.commata.common.gui.Items;
 import kr.commata.economyhub.jobs.JobCooldownGuard;
 import kr.commata.economyhub.jobs.VJobsHook;
+import kr.commata.economyhub.skills.CaveVision;
+import kr.commata.economyhub.skills.Skills;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
@@ -17,6 +19,8 @@ public final class Menus {
     private volatile MenuSettings settings;
     private final VJobsHook vjobs;
     private final JobCooldownGuard cooldowns;
+    private Skills skills;
+    private CaveVision caveVision;
 
     /**
      * @param vjobs     VJobs 가 없으면 null (/직업 은 [준비 중])
@@ -28,6 +32,25 @@ public final class Menus {
         this.settings = settings;
         this.vjobs = vjobs;
         this.cooldowns = cooldowns;
+    }
+
+    /** 편의 스킬이 켜져 있으면 /직업 에 스킬 설정 버튼이 생김 */
+    public void enableSkills(Skills skills, CaveVision caveVision) {
+        this.skills = skills;
+        this.caveVision = caveVision;
+    }
+
+    /** 스킬이 없으면 false */
+    public boolean openSkills(Player player) {
+        if (skills == null) {
+            return false;
+        }
+        new SkillMenu(this, skills, caveVision).open(player);
+        return true;
+    }
+
+    boolean skillsAvailable() {
+        return skills != null;
     }
 
     public void reload(MenuSettings settings) {

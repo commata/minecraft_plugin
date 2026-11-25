@@ -14,6 +14,10 @@ import kr.commata.economyhub.jobs.JobXpKeeper;
 import kr.commata.economyhub.jobs.VJobsHook;
 import kr.commata.economyhub.menu.MenuSettings;
 import kr.commata.economyhub.menu.Menus;
+import kr.commata.economyhub.skills.CaveVision;
+import kr.commata.economyhub.skills.SkillListener;
+import kr.commata.economyhub.skills.SkillSettings;
+import kr.commata.economyhub.skills.Skills;
 import kr.commata.common.gui.MenuListener;
 import io.papermc.paper.command.brigadier.BasicCommand;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
@@ -45,6 +49,8 @@ public final class EconomyHubPlugin extends JavaPlugin {
     private JobXpKeeper xpKeeper;
     private VJobsHook vjobsHook;
     private Menus menus;
+    private Skills skills;
+    private CaveVision caveVision;
 
     @Override
     public void onEnable() {
@@ -68,6 +74,9 @@ public final class EconomyHubPlugin extends JavaPlugin {
         menus = new Menus(this, MenuSettings.read(getConfig(), getLogger()),
                 xpHooked && leaveHooked ? vjobsHook : null, leaveHooked ? cooldownGuard : null);
         getServer().getPluginManager().registerEvents(new MenuListener(), this);
+        if (vjobsHook != null) {
+            enableSkills(vjobsHook);
+        }
 
         getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event -> {
             event.registrar().register("economyhub", "EconomyHub 상태 확인·설정 다시 읽기",
@@ -88,6 +97,29 @@ public final class EconomyHubPlugin extends JavaPlugin {
     /** VJobs config.yml 의 job-switch-cooldown.default-seconds. 탈퇴 후 대기 시간은 이 값 하나만 씁니다. */
     static LongSupplier vjobsCooldownMs(Plugin vjobs) {
         return () -> Math.max(0L, vjobs.getConfig().getLong("job-switch-cooldown.default-seconds", 3600L)) * 1000L;
+    }
+
+    /** 직업 레벨 편의 스킬 (ECONOMY.md 15장). 가입·탈퇴·레벨업 때 직업 캐시를 바로 버림 */
+    private void enableSkills(VJobsHook hook) {
+        skills = new Skills(this, hook, SkillSettings.read(getConfig(), getLogger()));
+        caveVision = new CaveVision(skills);
+        getServer().getPluginManager().registerEvents(new SkillListener(skills), this);
+        getServer().getPluginManager().registerEvents(caveVision, this);
+        getServer().getScheduler().runTaskTimer(this, caveVision::tickAll, CaveVision.PERIOD_TICKS, CaveVision.PERIOD_TICKS);
+        for (String event : List.of(VJobsHook.JOIN_EVENT, VJobsHook.LEAVE_EVENT, VJobsHook.LEVEL_UP_EVENT)) {
+            String error = hook.listen(event, EventPriority.MONITOR, e -> {
+                Player player = VJobsHook.player(e);
+                if (player != null) {
+                    skills.invalidate(player.getUniqueId());
+                    // 탈퇴 직후 동굴 시야도 바로 끔 (VJobs 가 이벤트 뒤에 직업을 지우므로 다음 틱)
+                    getServer().getScheduler().runTask(this, () -> caveVision.update(player));
+                }
+            });
+            if (error != null) {
+                getLogger().warning("편의 스킬: " + error + " (직업 변화가 최대 1초 늦게 반영됨)");
+            }
+        }
+        menus.enableSkills(skills, caveVision);
     }
 
     /** 플레이어만 쓰는 명령 */
@@ -166,6 +198,9 @@ public final class EconomyHubPlugin extends JavaPlugin {
     public void onDisable() {
         // 리스너가 풀린 뒤 메뉴에서 아이템을 꺼내지 못하게 먼저 닫음
         MenuListener.closeAll(getServer());
+        if (caveVision != null) {
+            caveVision.shutdown();
+        }
         if (cooldownGuard != null) {
             cooldownGuard.shutdown();
         }
@@ -177,6 +212,9 @@ public final class EconomyHubPlugin extends JavaPlugin {
         Settings settings = Settings.read(getConfig(), this);
         payoutGuard.configure(settings.guardEnabled(), settings.formedBlocks());
         menus.reload(MenuSettings.read(getConfig(), getLogger()));
+        if (skills != null) {
+            skills.reload(SkillSettings.read(getConfig(), getLogger()));
+        }
         if (leaveHooked) {
             cooldownGuard.refreshAll();
         }

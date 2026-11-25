@@ -78,3 +78,38 @@ menus:
       rewards:
         - { action: fish, key: COD, label: "물고기" }
         - { action: fish, key: NAME_TAG, label: "보물" }
+
+# 직업 레벨 편의 스킬 (ECONOMY.md 15장, 1차 Lv.10·20). 보상 금액은 바꾸지 않고 반복 작업만 줄인다.
+# 플레이어는 /직업 → 스킬 설정에서 스킬마다 켜고 끈다(플레이어 PDC). 바꾼 뒤 /economyhub reload
+skills:
+  enabled: true
+  # 서버 전체에서 끌 스킬 id (예: [hunter_detect])
+  disabled: []
+  # 스킬 id: 해금 레벨
+  unlock-levels:
+    miner_cave_vision: 10
+    miner_magnet: 20
+    lumberjack_replant: 10
+    lumberjack_leaves: 20
+    lumberjack_magnet: 20
+    farmer_trample: 10
+    farmer_replant: 10
+    farmer_magnet: 20
+    farmer_hoe_harvest: 20
+    hunter_magnet: 10
+    hunter_detect: 20
+    fisherman_alert: 10
+    fisherman_magnet: 10
+    fisherman_trash_filter: 20
+  cave-vision:
+    # 하늘이 가려진 곳(하늘빛 7 이하)에서 Y 가 이 값 이하이거나 블록 빛이 7 이하일 때 야간 투시
+    max-y: 50
+  leaf-decay:
+    # 원목을 벤 자리에서 이 반경 안의 떠 있는 자연 나뭇잎만 정리 (2–8)
+    radius: 6
+  hunter-detect:
+    radius: 24
+    cooldown-seconds: 12
+    glow-seconds: 6
+  # 쓰레기 자동 필터가 버리는 아이템. Market 매입 품목(뼈·실 등)·보물·낚싯대는 넣지 말 것
+  fisherman-trash: [LEATHER_BOOTS, BOWL, STICK, ROTTEN_FLESH, POTION, TRIPWIRE_HOOK]
