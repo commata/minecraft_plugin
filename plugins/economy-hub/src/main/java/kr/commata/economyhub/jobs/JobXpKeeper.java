@@ -2,6 +2,7 @@ package kr.commata.economyhub.jobs;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -16,6 +17,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
 /**
@@ -54,6 +56,11 @@ public final class JobXpKeeper implements Listener {
     private final String storeProblem;
     private final String confirmProblem;
     private boolean confirming;
+
+    /** 재가입 때 계산 기준을 잡아 두고 아직 지급하지 않은 복구. 다음 틱·같은 틱 탈퇴·퇴장 중 먼저 오는 쪽에서 한 번 실행. */
+    private record Pending(VJobsHook.Progress base, SavedJobXp saved) { }
+
+    private final Map<UUID, Map<String, Pending>> pending = new HashMap<>();
 
     private JobXpKeeper(JavaPlugin plugin, VJobsHook hook, JobXpStore store, String storeProblem, String confirmProblem) {
         this.plugin = plugin;
@@ -154,6 +161,10 @@ public final class JobXpKeeper implements Listener {
             cancelLeave(player, jobId, event, storeProblem, null);
             return;
         }
+        if (jobId != null) {
+            // 재가입한 틱에 바로 탈퇴: 예정된 복구를 먼저 VJobs 에 반영해야 그 틱에 얻은 XP 와 함께 기록됨
+            runPending(player, JobXpStore.normalize(jobId));
+        }
         VJobsHook.Progress now = jobId == null ? null : hook.progress(uuid, jobId);
         if (now == null) {
             cancelLeave(player, jobId, event, "VJobs 직업 레벨과 XP를 읽지 못함", null);
@@ -206,7 +217,31 @@ public final class JobXpKeeper implements Listener {
             return;
         }
         VJobsHook.Progress base = hook.joinBase(player.getUniqueId(), job); // 읽지 못하면 null → 다음 틱 값 기준
-        plugin.getServer().getScheduler().runTask(plugin, () -> restore(player, job, base, saved));
+        pending.computeIfAbsent(player.getUniqueId(), k -> new HashMap<>()).put(job, new Pending(base, saved));
+        plugin.getServer().getScheduler().runTask(plugin, () -> runPending(player, job));
+    }
+
+    /** 예정된 재가입 복구가 남아 있으면 지금 실행. 다음 틱 작업, 같은 틱 탈퇴, 퇴장 중 먼저 부른 쪽에서 한 번만. */
+    private void runPending(Player player, String job) {
+        Map<String, Pending> jobs = pending.get(player.getUniqueId());
+        Pending p = jobs == null ? null : jobs.remove(job);
+        if (jobs != null && jobs.isEmpty()) {
+            pending.remove(player.getUniqueId());
+        }
+        if (p != null) {
+            restore(player, job, p.base(), p.saved());
+        }
+    }
+
+    /** 재가입한 틱에 나가면 다음 틱 작업이 못 도니, VJobs 가 퇴장 저장을 하기 전에(LOWEST) 예정된 복구를 반영. */
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        Map<String, Pending> jobs = pending.get(event.getPlayer().getUniqueId());
+        if (jobs != null) {
+            for (String job : List.copyOf(jobs.keySet())) {
+                runPending(event.getPlayer(), job);
+            }
+        }
     }
 
     /** 접속: VJobs 가 DB 에서 데이터를 다 읽은 첫 틱에 기록을 확인. 강제 종료로 VJobs DB 가 예전 값이면 여기서 다시 채움. */
