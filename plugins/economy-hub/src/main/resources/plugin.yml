@@ -1,0 +1,12 @@
+name: EconomyHub
+version: '${version}'
+main: kr.commata.economyhub.EconomyHubPlugin
+api-version: '${apiVersion}'
+description: 경제 보조. 직업 쿨타임은 탈퇴 후에만, 피스톤으로 옮기거나 용암·물로 생긴 블록은 직업 보상 제외 (ECONOMY.md 7.2)
+author: commata
+# VJobs 클래스(이벤트)를 찾으려면 VJobs 가 먼저 켜져야 함
+softdepend: [VJobs]
+permissions:
+  economyhub.admin:
+    description: /economyhub reload·status
+    default: op
