@@ -29,39 +29,51 @@ import org.bukkit.plugin.java.JavaPlugin;
  * 항상 "모자란 만큼"만 주므로 같은 XP 가 두 번 들어가지 않습니다.
  * VJobs 탈퇴 벌칙(level-loss-percent)이 0 이 아니거나 keep-progress 가 꺼져 있으면 저장·복구 모두 하지 않고,
  * 그 상태로 재가입하면 남아 있던 기록을 버립니다.
+ *
+ * <p>꺼지는 이유는 세 가지로 나눔:
+ * <ul>
+ *   <li>벌칙: VJobs 규칙대로 탈퇴 허용, 기록 버림</li>
+ *   <li>VJobs 설정을 읽지 못함: 기록은 저장하되 복구·삭제는 하지 않음</li>
+ *   <li>기록 파일 장애(job-xp.tsv 를 읽지 못함): XP 유지가 정책상 꺼진 경우를 제외하고 탈퇴를 취소</li>
+ * </ul>
  */
 public final class JobXpKeeper {
 
     private static final long RESTORE_TICKS = 20L * 5;
     private static final long CONFIRM_TICKS = 20L * 60;
-    private static final String LEAVE_SETTINGS_UNAVAILABLE = "VJobs 탈퇴 설정을 읽지 못함";
 
     private final JavaPlugin plugin;
     private final VJobsHook hook;
     private final JobXpStore store;
     private final String storeProblem;
+    private final String confirmProblem;
     private boolean confirming;
 
-    private JobXpKeeper(JavaPlugin plugin, VJobsHook hook, JobXpStore store, String storeProblem) {
+    private JobXpKeeper(JavaPlugin plugin, VJobsHook hook, JobXpStore store, String storeProblem, String confirmProblem) {
         this.plugin = plugin;
         this.hook = hook;
         this.store = store;
         this.storeProblem = storeProblem;
+        this.confirmProblem = confirmProblem;
     }
 
-    /** 기록 파일을 읽음. 읽지 못하면 파일을 덮어쓰지 않도록 기능을 끈 채로 만듦. */
+    /** 기록 파일을 읽음. 읽지 못하면 파일을 보존하고 XP 유지가 적용되는 탈퇴를 막음. */
     public static JobXpKeeper create(JavaPlugin plugin, VJobsHook hook) {
-        String problem = hook.storedProgressProblem();
         JobXpStore store = null;
-        if (problem == null) {
-            try {
-                store = JobXpStore.open(plugin.getDataFolder().toPath().resolve("job-xp.tsv"));
-            } catch (IOException e) {
-                problem = "job-xp.tsv 를 읽지 못함 (" + e.getMessage() + ")";
-                plugin.getLogger().log(Level.SEVERE, "직업 XP 복구 기록을 읽지 못해 탈퇴 후 XP 유지를 끕니다. 파일은 그대로 둡니다.", e);
-            }
+        String storeProblem = null;
+        try {
+            store = JobXpStore.open(plugin.getDataFolder().toPath().resolve("job-xp.tsv"));
+        } catch (IOException e) {
+            storeProblem = "job-xp.tsv 를 읽지 못함";
+            plugin.getLogger().log(Level.SEVERE, "직업 XP 복구 기록 파일을 읽지 못했습니다. 파일은 그대로 두고, 고칠 때까지"
+                    + " XP 유지가 적용되는 직업의 탈퇴를 막습니다.", e);
         }
-        return new JobXpKeeper(plugin, hook, store, problem);
+        // VJobs DB 를 못 읽으면 기록을 지우지 못할 뿐 복구는 "모자란 만큼"이라 그대로 안전. 기록만 쌓임
+        String confirmProblem = hook.storedProgressProblem();
+        if (confirmProblem != null) {
+            plugin.getLogger().warning("XP 기록 정리 꺼짐 (복구는 동작): " + confirmProblem);
+        }
+        return new JobXpKeeper(plugin, hook, store, storeProblem, confirmProblem);
     }
 
     /** 복구 확인 작업 시작. 이벤트 연결이 끝난 뒤 부름. */
@@ -70,79 +82,92 @@ public final class JobXpKeeper {
             return;
         }
         plugin.getServer().getScheduler().runTaskTimer(plugin, this::restoreOnline, RESTORE_TICKS, RESTORE_TICKS);
-        plugin.getServer().getScheduler().runTaskTimer(plugin, this::confirmStored, CONFIRM_TICKS, CONFIRM_TICKS);
-    }
-
-    /** 꺼진 이유. 켜져 있으면 null. 매번 VJobs 가 실제로 쓰는 설정을 읽음. */
-    public String offReason() {
-        if (store == null) {
-            return storeProblem;
+        if (confirmProblem == null) {
+            plugin.getServer().getScheduler().runTaskTimer(plugin, this::confirmStored, CONFIRM_TICKS, CONFIRM_TICKS);
         }
-        VJobsHook.LeaveSettings settings = hook.leaveSettings();
-        return settings == null ? LEAVE_SETTINGS_UNAVAILABLE : policyOffReason(settings);
     }
 
-    private static String policyOffReason(VJobsHook.LeaveSettings settings) {
+    /** VJobs 탈퇴 설정 기준 상태. */
+    private enum Rule { KEEP, PENALTY, UNKNOWN }
+
+    private Rule rule() {
+        VJobsHook.LeaveSettings settings = hook.leaveSettings();
+        if (settings == null) {
+            return Rule.UNKNOWN;
+        }
+        return settings.levelLossPercent() == 0.0 && settings.keepProgress() ? Rule.KEEP : Rule.PENALTY;
+    }
+
+    private String penaltyReason() {
+        VJobsHook.LeaveSettings settings = hook.leaveSettings();
+        if (settings == null) {
+            return "VJobs 탈퇴 설정을 읽지 못함";
+        }
         if (settings.levelLossPercent() != 0.0) {
             return "VJobs 탈퇴 벌칙 " + String.format(Locale.ROOT, "%.1f", settings.levelLossPercent()) + "%";
         }
-        if (!settings.keepProgress()) {
-            return "VJobs keep-progress 꺼짐";
-        }
-        return null;
+        return "VJobs keep-progress 꺼짐";
     }
 
-    /** 시작 로그·status 용: "켜짐 (복구 대기 n건)" 또는 "꺼짐 (이유)". */
+    /** 복구해도 되는지. 기록 파일이 정상이고 VJobs 설정이 "벌칙 0% + 진행도 보관"일 때만. */
+    private boolean canRestore() {
+        return store != null && rule() == Rule.KEEP;
+    }
+
+    /** 시작 로그·status 용: "켜짐 (기록 n건)" 또는 "꺼짐 (이유)". 매번 VJobs 가 실제로 쓰는 설정을 읽음. */
     public String state() {
-        String reason = offReason();
-        if (reason != null) {
-            return "꺼짐 (" + reason + ")";
+        if (store == null) {
+            return "꺼짐 (" + storeProblem + ")";
         }
-        return "켜짐 (기록 " + store.size() + "건)";
+        Rule rule = rule();
+        if (rule == Rule.PENALTY) {
+            return "꺼짐 (" + penaltyReason() + ")";
+        }
+        if (rule == Rule.UNKNOWN) {
+            return "꺼짐 (VJobs 탈퇴 설정을 읽지 못함, 기록만 저장)";
+        }
+        return "켜짐 (기록 " + store.size() + "건" + (confirmProblem == null ? "" : ", 기록 정리 꺼짐") + ")";
     }
 
     /** JobLeaveEvent(HIGHEST, 취소되지 않은 것). 아직 VJobs 데이터가 바뀌기 전. */
     public void onLeave(Player player, String jobId, Event event) {
-        VJobsHook.LeaveSettings settings = hook.leaveSettings();
-        if (settings == null) {
-            cancelLeave(player, event, LEAVE_SETTINGS_UNAVAILABLE, null);
-            return;
-        }
         UUID uuid = player.getUniqueId();
-        String off = policyOffReason(settings);
-        if (off != null) {
+        if (rule() == Rule.PENALTY) {
             // 벌칙이 켜진 상태의 탈퇴는 VJobs 규칙대로. 예전 기록이 남아 나중에 복구되지 않도록 지움
             if (store != null && jobId != null) {
-                dropQuietly(uuid, jobId, off);
+                dropQuietly(uuid, jobId, penaltyReason());
             }
             return;
         }
         if (store == null) {
-            cancelLeave(player, event, storeProblem, null);
+            // 현재 XP가 0이어도 손상된 파일에 복구 대기 XP가 있는지 확인할 수 없음
+            cancelLeave(player, jobId, event, storeProblem, null);
             return;
         }
         VJobsHook.Progress now = jobId == null ? null : hook.progress(uuid, jobId);
         if (now == null) {
-            cancelLeave(player, event, "VJobs 직업 레벨과 XP를 읽지 못함", null);
+            cancelLeave(player, jobId, event, "VJobs 직업 레벨과 XP를 읽지 못함", null);
             return;
         }
-        SavedJobXp saved = SavedJobXp.forLeave(now.level(), now.xp(), store.get(uuid, jobId));
+        // 같은 레벨의 기존 기록이 더 크면 유지 (재접속 직후 복구 전에 다시 탈퇴하는 경우)
+        SavedJobXp next = SavedJobXp.onLeave(store.get(uuid, jobId), now.level(), now.xp());
         try {
-            if (saved == null) {
-                store.remove(uuid, jobId);
+            if (next != null) {
+                store.put(uuid, jobId, next);
             } else {
-                store.put(uuid, jobId, saved);
+                store.remove(uuid, jobId);
             }
         } catch (IOException e) {
-            cancelLeave(player, event, jobId + " XP 기록 저장 실패", e);
+            cancelLeave(player, jobId, event, "XP 기록 저장 실패", e);
         }
     }
 
-    private void cancelLeave(Player player, Event event, String reason, IOException cause) {
-        plugin.getLogger().log(Level.SEVERE, player.getName() + " 직업 탈퇴 취소: " + reason, cause);
+    private void cancelLeave(Player player, String jobId, Event event, String why, Exception cause) {
+        String job = jobId == null ? "직업" : jobId;
+        plugin.getLogger().log(Level.SEVERE, player.getName() + " " + job + " 탈퇴 취소: " + why, cause);
         if (event instanceof Cancellable cancellable) {
             cancellable.setCancelled(true);
-            player.sendMessage(Component.text("직업 경험치를 저장하지 못해 탈퇴를 취소했습니다. 관리자에게 알려 주세요.",
+            player.sendMessage(Component.text("직업 경험치를 저장할 수 없어 탈퇴를 취소했습니다. 관리자에게 알려 주세요.",
                     NamedTextColor.RED));
         }
     }
@@ -152,22 +177,21 @@ public final class JobXpKeeper {
         if (jobId == null || store == null) {
             return;
         }
-        VJobsHook.LeaveSettings settings = hook.leaveSettings();
-        if (settings == null) {
+        Rule rule = rule();
+        if (rule == Rule.PENALTY) {
+            // 복구 직전 설정 확인: 벌칙이 켜진 상태로 재가입했으면 저장해 둔 XP 를 돌려주지 않음
+            dropQuietly(player.getUniqueId(), jobId, penaltyReason());
             return;
         }
-        String off = policyOffReason(settings);
-        if (off != null) {
-            // 복구 직전 설정 확인: 벌칙이 켜진 상태로 재가입했으면 저장해 둔 XP 를 돌려주지 않음
-            dropQuietly(player.getUniqueId(), jobId, off);
-            return;
+        if (rule == Rule.UNKNOWN) {
+            return; // 설정을 알 수 없으면 복구도 삭제도 하지 않고 기록 유지
         }
         plugin.getServer().getScheduler().runTask(plugin, () -> restore(player, JobXpStore.normalize(jobId)));
     }
 
     /** 접속 중인 플레이어의 기록을 모두 확인. 재기동 뒤 VJobs 가 DB 에서 다시 읽은 값이 모자라면 여기서 다시 채움. */
     private void restoreOnline() {
-        if (store.isEmpty() || offReason() != null) {
+        if (store == null || store.isEmpty() || !canRestore()) {
             return;
         }
         for (Player player : plugin.getServer().getOnlinePlayers()) {
@@ -178,7 +202,7 @@ public final class JobXpKeeper {
     }
 
     private void restore(Player player, String job) {
-        if (!player.isOnline() || offReason() != null) {
+        if (!player.isOnline() || !canRestore()) {
             return;
         }
         UUID uuid = player.getUniqueId();
@@ -214,7 +238,7 @@ public final class JobXpKeeper {
 
     /** "복구함" 기록 중 VJobs DB 에 저장된 것만 지움. DB 는 비동기로 읽고 지우기는 메인 스레드에서. */
     private void confirmStored() {
-        if (confirming || store.isEmpty()) {
+        if (confirming || store == null || store.isEmpty()) {
             return;
         }
         List<JobXpStore.Entry> pending = store.snapshot().stream().filter(e -> e.saved().restored()).toList();
