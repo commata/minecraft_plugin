@@ -29,7 +29,7 @@ final class EconomyMenu extends Menu {
                     .lore("<#AAAAAA>직업 가입·탈퇴, 레벨, 쿨타임 확인", "", "<#55FF55>▶ 클릭하여 열기 (/직업)").build(),
                     (player, click) -> menus.later(() -> menus.openJobs(player)));
         } else {
-            set(11, notReady("직업 관리"));
+            set(11, notReady("직업 관리"), EconomyMenu::sayNotReady);
         }
 
         command(12, "shop", Material.CHEST, "서버 상점", "<#AAAAAA>건축·장식·농사 재료를 삽니다.", settings);
@@ -57,7 +57,7 @@ final class EconomyMenu extends Menu {
         boolean ready = button != null && !button.command().isEmpty()
                 && (button.plugin().isEmpty() || menus.plugin().getServer().getPluginManager().isPluginEnabled(button.plugin()));
         if (!ready) {
-            set(slot, notReady(name));
+            set(slot, notReady(name), EconomyMenu::sayNotReady);
             return;
         }
         set(slot, Items.of(icon).name("<#F5C542>" + name)
@@ -66,6 +66,10 @@ final class EconomyMenu extends Menu {
                     player.closeInventory();
                     player.performCommand(button.command());
                 }));
+    }
+
+    private static void sayNotReady(Player player, org.bukkit.event.inventory.ClickType click) {
+        player.sendMessage(Items.text("<#AAAAAA>아직 준비 중인 기능입니다."));
     }
 
     private static ItemStack notReady(String name) {

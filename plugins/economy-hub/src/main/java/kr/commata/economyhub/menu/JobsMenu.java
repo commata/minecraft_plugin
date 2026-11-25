@@ -179,6 +179,13 @@ final class JobsMenu extends Menu {
         busy = true;
         menus.later(() -> {
             busy = false;
+            if (!player.isOnline()) {
+                return;
+            }
+            // 쿨타임이 막 끝났으면 30초 주기를 기다리지 않고 VJobs 쿨타임 면제 권한을 지금 붙임
+            if (cooldowns != null) {
+                cooldowns.refresh(player);
+            }
             String result = vjobs.joinJob(player, job.id());
             String message = switch (result == null ? "" : result) {
                 case "SUCCESS" -> "<#55FF55>" + job.name() + " 직업에 가입했습니다.";
@@ -208,7 +215,19 @@ final class JobsMenu extends Menu {
         busy = true;
         menus.later(() -> {
             busy = false;
+            if (!player.isOnline()) {
+                return;
+            }
+            long before = cooldowns == null ? 0 : cooldowns.lastLeaveMs(player);
+            long calledAt = System.currentTimeMillis();
             Boolean left = vjobs.leaveJob(player, job.id());
+            if (Boolean.TRUE.equals(left) && cooldowns != null && cooldowns.lastLeaveMs(player) == before) {
+                // API 탈퇴가 JobLeaveEvent 를 내지 않은 경우(VJobs 버전 변경 등). 쿨타임만이라도 직접 기록하고 크게 경고
+                menus.plugin().getLogger().severe(player.getName() + " 의 /직업 탈퇴에서 VJobs JobLeaveEvent 가 오지 않았습니다 ("
+                        + job.id() + ", " + calledAt + "). 탈퇴 후 쿨타임은 직접 기록했지만 XP 유지 기록은 남지 않았을 수 있습니다."
+                        + " /직업 탈퇴를 쓰지 말고 VJobs 버전을 확인하세요.");
+                cooldowns.onJobLeave(player);
+            }
             String message;
             if (Boolean.TRUE.equals(left)) {
                 message = "<#55FF55>" + job.name() + " 직업에서 탈퇴했습니다. <#AAAAAA>레벨·XP는 유지됩니다.";
