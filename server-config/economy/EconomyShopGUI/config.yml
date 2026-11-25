@@ -515,10 +515,12 @@ shops-nav-bar:
           material: GRAY_STAINED_GLASS_PANE
           name: ' '
     5:
+      # 7.3.4 는 페이지를 넘겨도 이 칸의 %page% 를 다시 그리지 않아(2페이지에서도 1/2) 고정 안내로 둠
       material: PAPER
-      name: '<#F5C542>페이지 %page% / %pages%'
+      name: '<#F5C542>구매 안내'
       lore:
       - '<#AAAAAA>좌클릭으로 수량을 선택해 구매하세요.'
+      - '<#AAAAAA>◀ ▶ 화살표로 페이지를 넘깁니다.'
     6:
       material: ARROW
       name: '<#55FFFF>다음 페이지 ▶'
