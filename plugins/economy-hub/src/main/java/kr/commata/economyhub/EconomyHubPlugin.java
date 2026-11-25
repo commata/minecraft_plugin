@@ -12,6 +12,13 @@ import kr.commata.economyhub.guard.UntrustedBlocks;
 import kr.commata.economyhub.jobs.JobCooldownGuard;
 import kr.commata.economyhub.jobs.JobXpKeeper;
 import kr.commata.economyhub.jobs.VJobsHook;
+import kr.commata.economyhub.menu.MenuSettings;
+import kr.commata.economyhub.menu.Menus;
+import kr.commata.common.gui.MenuListener;
+import io.papermc.paper.command.brigadier.BasicCommand;
+import io.papermc.paper.command.brigadier.CommandSourceStack;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Material;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
@@ -21,8 +28,7 @@ import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 
 /**
- * 경제 보조 플러그인 (ECONOMY.md 7.2). 1b 에는 VJobs 를 보완하는 직업 보호 기능만 들어 있고,
- * /economy GUI 는 1.5단계에 추가합니다.
+ * 경제 보조 플러그인 (ECONOMY.md 7.2). 1b 의 직업 보호 기능(VJobs 보완)과 1.5단계 메뉴(/economy, /직업, 7.4)가 들어 있습니다.
  */
 public final class EconomyHubPlugin extends JavaPlugin {
 
@@ -37,6 +43,8 @@ public final class EconomyHubPlugin extends JavaPlugin {
     private boolean payoutHooked;
     private boolean xpHooked;
     private JobXpKeeper xpKeeper;
+    private VJobsHook vjobsHook;
+    private Menus menus;
 
     @Override
     public void onEnable() {
@@ -56,9 +64,22 @@ public final class EconomyHubPlugin extends JavaPlugin {
             hookVJobs(vjobs);
         }
 
-        getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event ->
-                event.registrar().register("economyhub", "EconomyHub 상태 확인·설정 다시 읽기",
-                        List.of("ehub"), new HubCommand(this)));
+        // /직업 은 가입·탈퇴 이벤트를 받을 수 있을 때만 (탈퇴 시각·XP 기록 없이 탈퇴시키지 않음)
+        menus = new Menus(this, MenuSettings.read(getConfig(), getLogger()),
+                xpHooked && leaveHooked ? vjobsHook : null, leaveHooked ? cooldownGuard : null);
+        getServer().getPluginManager().registerEvents(new MenuListener(), this);
+
+        getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event -> {
+            event.registrar().register("economyhub", "EconomyHub 상태 확인·설정 다시 읽기",
+                    List.of("ehub"), new HubCommand(this));
+            event.registrar().register("economy", "서버 경제 메뉴 열기", List.of("경제"),
+                    playerOnly(player -> menus.openEconomy(player)));
+            event.registrar().register("직업", "직업 가입·탈퇴·쿨타임 메뉴 열기", playerOnly(player -> {
+                if (!menus.openJobs(player)) {
+                    player.sendMessage(Component.text("직업 메뉴를 지금 쓸 수 없습니다. 관리자에게 문의해 주세요.", NamedTextColor.RED));
+                }
+            }));
+        });
         getLogger().info("EconomyHub " + getPluginMeta().getVersion() + " 활성화 (탈퇴 후 쿨타임 "
                 + cooldownState() + ", 보상 제외 " + payoutState() + ", 탈퇴 후 XP 유지 "
                 + xpState() + ")");
@@ -69,8 +90,23 @@ public final class EconomyHubPlugin extends JavaPlugin {
         return () -> Math.max(0L, vjobs.getConfig().getLong("job-switch-cooldown.default-seconds", 3600L)) * 1000L;
     }
 
+    /** 플레이어만 쓰는 명령 */
+    private static BasicCommand playerOnly(java.util.function.Consumer<Player> action) {
+        return new BasicCommand() {
+            @Override
+            public void execute(CommandSourceStack source, String[] args) {
+                if (source.getExecutor() instanceof Player player) {
+                    action.accept(player);
+                } else {
+                    source.getSender().sendMessage(Component.text("게임 안에서만 쓸 수 있습니다.", NamedTextColor.RED));
+                }
+            }
+        };
+    }
+
     private void hookVJobs(Plugin vjobs) {
         VJobsHook hook = new VJobsHook(this, vjobs);
+        vjobsHook = hook;
         JobXpKeeper keeper = JobXpKeeper.create(this, hook);
 
         // XP 기록은 HIGHEST: 탈퇴 직전(VJobs 가 아직 데이터를 바꾸기 전)이고, 파일 저장에 실패하면 탈퇴를 취소할 수 있음
@@ -128,6 +164,8 @@ public final class EconomyHubPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        // 리스너가 풀린 뒤 메뉴에서 아이템을 꺼내지 못하게 먼저 닫음
+        MenuListener.closeAll(getServer());
         if (cooldownGuard != null) {
             cooldownGuard.shutdown();
         }
@@ -138,6 +176,7 @@ public final class EconomyHubPlugin extends JavaPlugin {
         reloadConfig();
         Settings settings = Settings.read(getConfig(), this);
         payoutGuard.configure(settings.guardEnabled(), settings.formedBlocks());
+        menus.reload(MenuSettings.read(getConfig(), getLogger()));
         if (leaveHooked) {
             cooldownGuard.refreshAll();
         }

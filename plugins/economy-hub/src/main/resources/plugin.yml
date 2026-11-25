@@ -2,10 +2,11 @@ name: EconomyHub
 version: '${version}'
 main: kr.commata.economyhub.EconomyHubPlugin
 api-version: '${apiVersion}'
-description: 경제 보조. 직업 쿨타임은 탈퇴 후에만, 피스톤으로 옮기거나 용암·물로 생긴 블록은 직업 보상 제외 (ECONOMY.md 7.2)
+description: 경제 메뉴(/economy, /직업)와 직업 보호. 직업 쿨타임은 탈퇴 후에만, 피스톤으로 옮기거나 용암·물로 생긴 블록은 직업 보상 제외 (ECONOMY.md 7.2)
 author: commata
-# VJobs 클래스(이벤트)를 찾으려면 VJobs 가 먼저 켜져야 함
-softdepend: [VJobs]
+# VJobs 클래스(이벤트)를 찾으려면 VJobs 가 먼저 켜져야 함. Vault 는 잔액 표시용(없어도 직업 보호는 동작해서 depend 로 두지 않음).
+# /economy 버튼이 여는 플러그인(Market·Trade 등)은 누를 때 켜져 있는지만 보므로 순서 의존이 필요 없음
+softdepend: [VJobs, Vault]
 permissions:
   economyhub.admin:
     description: /economyhub reload·status

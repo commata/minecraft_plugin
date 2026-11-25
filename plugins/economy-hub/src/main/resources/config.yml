@@ -9,3 +9,72 @@ payout-guard:
   enabled: true
   # 유체로 생겼을 때 표시할 블록
   formed-blocks: [STONE, COBBLESTONE, BASALT]
+
+# /economy, /직업 메뉴 (ECONOMY.md 7.4). 슬롯 배치는 확정 레이아웃이라 코드에 있고, 여기서는 명령·문구·직업만 바꿉니다.
+# 문구는 MiniMessage 형식 (<#F5C542>, <white> 등).
+menus:
+  economy:
+    # 버튼이 실행할 명령(앞의 / 없이)과 그 명령을 제공하는 플러그인. 플러그인이 꺼져 있으면 회색 [준비 중]으로 보임
+    buttons:
+      shop: { command: "shop", plugin: "EconomyShopGUI" }
+      rare-shop: { command: "희귀상점", plugin: "Market" }
+      gacha: { command: "뽑기", plugin: "Market" }
+      sell: { command: "판매", plugin: "Market" }
+      baltop: { command: "baltop", plugin: "Bank" }
+      trade: { command: "trade", plugin: "Trade" }
+    # 송금 안내 버튼을 누르면 창을 닫고 채팅에 보냄
+    pay-guide:
+      - "<#F5C542>[송금] <white>/pay <닉네임> <금액>"
+      - "<#AAAAAA>예: /pay Steve 1000 · 수수료 없음, 최소 10원, 정수만"
+    # 이용 가이드 버튼을 누르면 창을 닫고 채팅에 보냄
+    guide:
+      - "<#F5C542>[이용 가이드]"
+      - "<#AAAAAA>· 돈 벌기: <white>/직업<#AAAAAA> 에서 직업을 최대 2개 골라 캐기·베기·수확·사냥·낚시"
+      - "<#AAAAAA>· 돈 쓰기: <white>/shop<#AAAAAA> 서버 상점에서 건축·장식·농사 재료 구매"
+      - "<#AAAAAA>· 잔액: <white>/money<#AAAAAA> · 송금: <white>/pay<#AAAAAA> · 순위: <white>/baltop"
+      - "<#AAAAAA>· 메뉴 다시 열기: <white>/economy"
+
+  # /직업 에 보일 직업. 키는 VJobs 직업 id (VJobs config.yml jobs.<id>). slot 은 0–35 (위 4줄)
+  # rewards: VJobs config 의 jobs.<id>.actions.<action>.<key>.money 를 읽어 "주요 보상: 다이아 400원, 철 60원" 처럼 표시
+  jobs:
+    miner:
+      name: "광부"
+      slot: 11
+      icon: IRON_PICKAXE
+      joined-icon: DIAMOND_PICKAXE
+      rewards:
+        - { action: break, key: DIAMOND_ORE, label: "다이아" }
+        - { action: break, key: IRON_ORE, label: "철" }
+    lumberjack:
+      name: "벌목꾼"
+      slot: 13
+      icon: IRON_AXE
+      joined-icon: DIAMOND_AXE
+      rewards:
+        - { action: break, key: OAK_LOG, label: "원목" }
+    farmer:
+      name: "농부"
+      slot: 15
+      icon: IRON_HOE
+      joined-icon: DIAMOND_HOE
+      rewards:
+        - { action: harvest, key: WHEAT, label: "밀·당근·감자" }
+        - { action: harvest, key: PUMPKIN, label: "호박·수박" }
+    hunter:
+      name: "사냥꾼"
+      slot: 21
+      icon: IRON_SWORD
+      joined-icon: DIAMOND_SWORD
+      rewards:
+        - { action: kill, key: ZOMBIE, label: "일반 몹" }
+        - { action: kill, key: BLAZE, label: "블레이즈" }
+    fisherman:
+      name: "낚시꾼"
+      slot: 23
+      icon: FISHING_ROD
+      # 낚시꾼은 다이아 도구가 없어서 가입 중이면 같은 낚싯대에 인챈트 광택
+      joined-icon: FISHING_ROD
+      glow-when-joined: true
+      rewards:
+        - { action: fish, key: COD, label: "물고기" }
+        - { action: fish, key: NAME_TAG, label: "보물" }
