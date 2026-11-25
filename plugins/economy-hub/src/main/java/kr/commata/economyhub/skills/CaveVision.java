@@ -39,7 +39,7 @@ public final class CaveVision implements Listener {
         boolean ours = applied.contains(player.getUniqueId());
         PotionEffect current = player.getPotionEffect(PotionEffectType.NIGHT_VISION);
         int duration = current == null ? 0 : (current.isInfinite() ? -1 : current.getDuration());
-        if (ours && !CaveVisionRule.mayOverwrite(duration, true)) {
+        if (ours && !CaveVisionRule.mayOverwrite(duration)) {
             // 그 사이 물약을 마심: 이제 그 효과는 플레이어 것
             applied.remove(player.getUniqueId());
             ours = false;
@@ -47,7 +47,7 @@ public final class CaveVision implements Listener {
         boolean want = player.getWorld().getEnvironment() == World.Environment.NORMAL
                 && skills.active(player, Skill.MINER_CAVE_VISION) && dark(player);
         if (want) {
-            if (CaveVisionRule.mayOverwrite(duration, ours)) {
+            if (CaveVisionRule.mayOverwrite(duration)) {
                 player.addPotionEffect(new PotionEffect(PotionEffectType.NIGHT_VISION, CaveVisionRule.EFFECT_TICKS, 0,
                         true, false, false));
                 applied.add(player.getUniqueId());
@@ -60,7 +60,7 @@ public final class CaveVision implements Listener {
 
     private boolean dark(Player player) {
         Block eye = player.getEyeLocation().getBlock();
-        return CaveVisionRule.dark(eye.getY(), skills.settings().caveMaxY(), eye.getLightFromSky(), eye.getLightFromBlocks());
+        return CaveVisionRule.dark(eye.getY(), skills.settings().caveMaxY(), eye.getLightFromSky());
     }
 
     /** 플러그인 종료: 스킬이 건 효과만 지움 */

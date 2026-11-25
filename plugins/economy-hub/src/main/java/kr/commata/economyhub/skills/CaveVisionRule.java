@@ -10,25 +10,20 @@ public final class CaveVisionRule {
     }
 
     /**
-     * 하늘빛(시간과 무관한 값)이 7 이하인 덮인 곳이면서, Y 가 기준 이하이거나 블록 빛도 7 이하인 곳.
-     * "밝기 ≤ 7"만 보면 밤의 지상에서도 켜지므로 하늘빛으로 지붕 여부를 먼저 봄.
+     * 눈높이 Y 가 기준 이하이고 하늘빛(시간과 무관한 값)이 0 인 곳 (15.3 확정: {@code Y ≤ 50 && sky == 0}).
+     * 하늘빛을 보므로 밤의 지상이나 하늘이 트인 협곡에서는 켜지지 않음.
      */
-    public static boolean dark(int eyeY, int maxY, int skyLight, int blockLight) {
-        return skyLight <= 7 && (eyeY <= maxY || blockLight <= 7);
+    public static boolean dark(int eyeY, int maxY, int skyLight) {
+        return eyeY <= maxY && skyLight == 0;
     }
 
     /**
-     * 지금 걸린 야간 투시를 스킬이 덮어써도 되는지. 물약 등으로 더 길게(또는 무한히) 걸려 있으면 건드리지 않음.
+     * 지금 걸린 야간 투시를 스킬이 덮어써도 되는지 (15.5 확정). 남은 시간이 300틱을 넘거나 무한이면 물약 등으로 보고
+     * 건드리지 않음. 300틱 이하는 스킬 효과(15초)보다 짧아 덮어써도 손해가 없음.
      *
      * @param durationTicks 남은 시간, 효과가 없으면 0, 무한이면 -1
      */
-    public static boolean mayOverwrite(int durationTicks, boolean ours) {
-        if (durationTicks == 0) {
-            return true;
-        }
-        if (durationTicks < 0) {
-            return false;
-        }
-        return ours && durationTicks <= EFFECT_TICKS;
+    public static boolean mayOverwrite(int durationTicks) {
+        return durationTicks >= 0 && durationTicks <= EFFECT_TICKS;
     }
 }

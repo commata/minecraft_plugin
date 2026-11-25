@@ -102,7 +102,7 @@ skills:
     fisherman_magnet: 10
     fisherman_trash_filter: 20
   cave-vision:
-    # 하늘이 가려진 곳(하늘빛 7 이하)에서 Y 가 이 값 이하이거나 블록 빛이 7 이하일 때 야간 투시
+    # 눈높이 Y 가 이 값 이하이고 하늘빛이 0 일 때 야간 투시 (15.3)
     max-y: 50
   leaf-decay:
     # 원목을 벤 자리에서 이 반경 안의 떠 있는 자연 나뭇잎만 정리 (2–8)

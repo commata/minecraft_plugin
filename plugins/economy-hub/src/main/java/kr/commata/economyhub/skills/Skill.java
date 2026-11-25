@@ -34,7 +34,7 @@ public enum Skill {
     HUNTER_MAGNET("hunter_magnet", "hunter", 10, true, Material.EXPERIENCE_BOTTLE,
             "전리품·경험치 자석", "직접 잡은 자연 적대 몹의 드롭·경험치를 바로 흡수"),
     HUNTER_DETECT("hunter_detect", "hunter", 20, true, Material.SPYGLASS,
-            "사냥감 탐지", "웅크리고 검 우클릭: 주변 적대 몹 발광"),
+            "사냥감 탐지", "검·활을 들고 웅크린 채 허공 좌클릭: 주변 적대 몹 발광"),
 
     FISHERMAN_ALERT("fisherman_alert", "fisherman", 10, true, Material.BELL,
             "입질 알림", "입질 순간 액션바·효과음"),

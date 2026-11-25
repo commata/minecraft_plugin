@@ -255,7 +255,7 @@ public final class SkillListener implements Listener {
 
     private static boolean isDecaying(Block block) {
         return block.getBlockData() instanceof Leaves leaves && !leaves.isPersistent()
-                && leaves.getDistance() >= LEAF_MAX_DISTANCE;
+                && leaves.getDistance() == LEAF_MAX_DISTANCE;
     }
 
     private void decayOne(Player player, Block block) {
@@ -342,8 +342,10 @@ public final class SkillListener implements Listener {
     public void onDetect(PlayerInteractEvent event) {
         Player player = event.getPlayer();
         Action action = event.getAction();
-        if ((action != Action.RIGHT_CLICK_AIR && action != Action.RIGHT_CLICK_BLOCK) || event.getHand() != EquipmentSlot.HAND
-                || !player.isSneaking() || !Tag.ITEMS_SWORDS.isTagged(player.getInventory().getItemInMainHand().getType())
+        // 웅크리기 + 허공 좌클릭 (15.5). 우클릭은 활 당기기와 겹치고, 블록 좌클릭은 채굴과 겹침
+        Material held = player.getInventory().getItemInMainHand().getType();
+        if (action != Action.LEFT_CLICK_AIR || event.getHand() != EquipmentSlot.HAND || !player.isSneaking()
+                || !(Tag.ITEMS_SWORDS.isTagged(held) || held == Material.BOW)
                 || !skills.active(player, Skill.HUNTER_DETECT)) {
             return;
         }
