@@ -30,7 +30,7 @@ class PlayerFilesTest {
     @Test
     void worldRootFromDimensionFolder() {
         // Paper 26.3: getWorldFolder() = world/dimensions/minecraft/overworld (운영 /data/world 와 같은 구조)
-        Path root = Path.of("/data/world");
+        Path root = world;
         assertEquals(root, PlayerFiles.worldRoot(root.resolve("dimensions/minecraft/overworld")));
         assertEquals(root, PlayerFiles.worldRoot(root.resolve("dimensions/minecraft/the_nether")));
         // 예전 구조: 월드 폴더가 곧 루트
