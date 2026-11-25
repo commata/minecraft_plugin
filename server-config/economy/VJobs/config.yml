@@ -67,8 +67,9 @@ jobs-limit:
 # default-seconds applies if the player has NONE of the cooldown permissions listed below
 # (e.g. 86400 = only 1x per day). If a player has one or more of the permissions, the
 # SHORTEST matching value applies.
+# ECONOMY.md 5.1: 1시간. VJobs는 첫 직업 가입에도 쿨타임을 걸어서 24시간이면 오픈 날 두 번째 직업을 못 고름.
 job-switch-cooldown:
-  default-seconds: 86400
+  default-seconds: 3600
   permissions:
     jobs.cooldown.hour: 3600
     jobs.cooldown.instant: 0
