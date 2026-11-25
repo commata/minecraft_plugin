@@ -66,7 +66,7 @@
 | 역할 | VaultUnlocked에 **경제 제공자(Economy provider)** 로 등록. VJobs·EconomyShopGUI·자체 플러그인이 모두 이 잔액을 씀 |
 | 연동 | `depend: [Vault]`. VaultUnlocked 2.20.3의 `plugin.yml`은 이름이 `Vault`이고 `VaultUnlocked` 별칭이 없다(2026-11-25 확인). 구 Vault `net.milkbowl.vault.economy.Economy` 인터페이스만 구현(VJobs·EconomyShopGUI가 쓰는 쪽). 첫 연동 테스트(아래 1번)가 통과하면 MVP에 Vault 2 API는 넣지 않는다 |
 | 금액 | 잔액은 `long` 정수 원. 표시는 `12,340원`. 소수 처리 규칙은 아래 2.2 |
-| 저장 | `plugins/Bank/bank.db` (파일형 SQLite, `journal_mode=WAL`, `synchronous=FULL`). `accounts(uuid, name, balance, updated_at)`, `transactions(id, time_ms, type, from, to, amount, balance_after, source, boot_id, context, ref)`, `meta(key, value)` |
+| 저장 | `plugins/Bank/bank.db` (파일형 SQLite, `journal_mode=WAL`, `synchronous=FULL`). `accounts(uuid, name, balance, updated_at)`, `transactions(id, time_ms, type, from_uuid, to_uuid, amount, from_balance_after, to_balance_after, source, boot_id, context, ref)`, `boots(boot_id, started_ms, last_heartbeat_ms, ended_ms, crash_estimated_ms, status, world_dir, unclean_reason)`, `shutdown_players(boot_id, uuid)`, `meta(key, value)`. `/pay`는 한 줄에 양쪽 잔액이 필요해서 `balance_after`를 `from_`/`to_` 두 칸으로 나눔. `boots`는 기동별 정상·비정상 종료 판정(2.4) |
 | 쓰기 방식 | **모든 잔액 변경은 "잔액 검사 → 변경 → 거래 기록"을 한 SQL 트랜잭션으로 처리하고, 커밋이 끝난 뒤에만 성공을 반환한다.** 메모리 캐시는 커밋 후에 갱신하는 조회용 사본. 커밋이 실패하면 Vault에 실패를 반환(상점은 상품을 주지 않음). `/pay`도 출금·입금·로그가 한 트랜잭션. Vault 호출이 다른 스레드에서 와도 되도록 DB 연결 하나를 락으로 보호 |
 | 명령 | `/money` (`/bal`, `/돈`): 내 잔액 · `/money <닉>`: 남의 잔액 · `/pay <닉> <금액>` · `/baltop [쪽]` (10명씩, 1분 캐시) |
 | 관리자 | `/bank give·take·set <닉> <금액>`, `/bank log <닉> [쪽]`, `/bank refund <거래번호>` (해당 출금을 한 번만 환불, 2.4), `/bank reload` (권한 `bank.admin`, 기본 OP) |
@@ -126,6 +126,8 @@ Bank 완료 체크리스트 (테스트 서버, 버전은 9.3에 고정한 JAR):
 | `context` | 플레이어 위치(월드·좌표)와 그 순간 열려 있던 인벤토리 창 제목 | 출금 시점 `Player` 상태 (오프라인이면 비움) |
 
 **비정상 종료 표시**: Bank는 정상 종료(`onDisable`)에서 `meta.clean_shutdown=<boot_id>`를 쓰고, 켜져 있는 동안 30초마다 `meta.heartbeat=<boot_id, 시각>`을 갱신한다. 다음 기동 때 이전 `boot_id`가 정상 종료로 기록돼 있지 않으면 그 기동을 **비정상 종료**로 기록하고, 마지막 heartbeat 시각을 **장애 추정 시각**(실제 종료는 그 뒤 30초 안)으로 남긴다. 마지막 거래 시각은 장애 시각으로 쓰지 않는다(거래가 뜸하면 몇 시간 전일 수 있음).
+
+**종료 중 장애** (PR #8 리뷰 반영): Paper는 플러그인을 끈 **뒤에** 플레이어를 저장한다. 그래서 `onDisable`의 `clean_shutdown`은 "Bank DB를 정상으로 닫았다"는 뜻일 뿐이고, 그 기동은 `boots.status=closed`로 두고 그 순간의 접속자 목록(`shutdown_players`)과 월드 폴더를 남긴다. 다음 기동에서 그 접속자들의 플레이어 파일(월드 루트의 `players/data/<uuid>.dat`, 예전 구조면 `playerdata/<uuid>.dat`. 26.x의 `getWorldFolder()`는 차원 폴더 `world/dimensions/minecraft/overworld`라 위로 올라가 루트를 구함)이 Bank 종료 시각보다 **확실히 늦게** 저장됐는지(밀리초 값이 있으면 엄격 비교, 초 단위 값이면 다음 초 이후만 인정, 같은 초는 미확인) 확인해서, 모두 저장됐으면 정상 종료, 하나라도 아니면 **비정상 종료**(`unclean_reason=player_save_missing`, 장애 추정 시각 = Bank 종료 시각)로 기록한다. 접속자가 없었으면 정상 종료. `/reload`처럼 서버가 꺼지지 않고 Bank만 꺼진 경우도 저장이 확인되지 않아 비정상으로 잡히지만, 환불 대상이 넓어질 뿐 관리자 확인에서 걸러진다.
 
 **`/bank refund`가 확인하는 조건** (하나라도 아니면 명령이 거부하고 이유를 출력)
 
