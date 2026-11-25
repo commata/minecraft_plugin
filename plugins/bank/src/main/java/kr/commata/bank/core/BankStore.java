@@ -9,6 +9,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -16,6 +17,7 @@ import java.util.OptionalLong;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteOpenMode;
@@ -30,7 +32,9 @@ import org.sqlite.SQLiteOpenMode;
 public final class BankStore implements AutoCloseable {
 
     public static final String DB_FILE = "bank.db";
-    static final int SCHEMA_VERSION = 1;
+    static final int SCHEMA_VERSION = 2;
+    /** 다른 프로세스가 쓰기 잠금을 잡고 있을 때 기다리는 시간 */
+    static final int BUSY_TIMEOUT_MS = 2000;
 
     private static final String SCHEMA = """
             CREATE TABLE meta (
@@ -51,7 +55,14 @@ public final class BankStore implements AutoCloseable {
               last_heartbeat_ms  INTEGER,
               ended_ms           INTEGER,
               crash_estimated_ms INTEGER,
-              status             TEXT NOT NULL
+              status             TEXT NOT NULL,
+              world_dir          TEXT,
+              unclean_reason     TEXT
+            );
+            CREATE TABLE shutdown_players (
+              boot_id TEXT NOT NULL,
+              uuid    TEXT NOT NULL,
+              PRIMARY KEY (boot_id, uuid)
             );
             CREATE TABLE transactions (
               id                 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,13 +88,17 @@ public final class BankStore implements AutoCloseable {
     private final Map<UUID, Long> balances = new ConcurrentHashMap<>();
     private volatile String bootId;
     private volatile boolean closed;
+    /** 커밋·롤백 결과를 확신할 수 없어 연결을 닫았을 때의 이유. 이후 모든 변경은 STORAGE_ERROR. */
+    private volatile String brokenReason;
+    /** write() 가 BEGIN 한 트랜잭션이 열려 있는지 (lock 안에서만 읽고 씀) */
+    private boolean inTx;
 
     private BankStore(Connection conn, LongSupplier clock) throws SQLException {
         this.conn = conn;
         this.clock = clock;
         try (Statement st = conn.createStatement()) {
             st.execute("PRAGMA foreign_keys = ON");
-            st.execute("PRAGMA busy_timeout = 5000");
+            st.execute("PRAGMA busy_timeout = " + BUSY_TIMEOUT_MS);
             try (ResultSet rs = st.executeQuery("PRAGMA journal_mode = WAL")) {
                 String mode = rs.next() ? rs.getString(1) : "";
                 if (!"wal".equalsIgnoreCase(mode)) {
@@ -157,6 +172,7 @@ public final class BankStore implements AutoCloseable {
                 }
             }
             BankStore store = new BankStore(conn, clock);
+            store.migrate();
             store.loadBalances();
             return store;
         } catch (SQLException | RuntimeException e) {
@@ -174,9 +190,38 @@ public final class BankStore implements AutoCloseable {
         } else {
             config.resetOpenMode(SQLiteOpenMode.CREATE);
         }
-        config.setTransactionMode(SQLiteConfig.TransactionMode.IMMEDIATE);
         // 서버 클래스로더 문제를 피하려고 DriverManager 대신 드라이버를 직접 사용
         return config.createConnection("jdbc:sqlite:" + dbFile.toAbsolutePath());
+    }
+
+    /** 예전 스키마(v1)에 v2 의 칸·테이블을 더함. 추가만 하므로 예전 JAR 로 롤백해도 읽을 수 있음. */
+    private void migrate() throws SQLException {
+        write(() -> {
+            boolean hasWorldDir = false;
+            boolean hasReason = false;
+            try (Statement st = conn.createStatement();
+                 ResultSet rs = st.executeQuery("PRAGMA table_info(boots)")) {
+                while (rs.next()) {
+                    hasWorldDir |= "world_dir".equals(rs.getString("name"));
+                    hasReason |= "unclean_reason".equals(rs.getString("name"));
+                }
+            }
+            try (Statement st = conn.createStatement()) {
+                if (!hasWorldDir) {
+                    st.execute("ALTER TABLE boots ADD COLUMN world_dir TEXT");
+                }
+                if (!hasReason) {
+                    st.execute("ALTER TABLE boots ADD COLUMN unclean_reason TEXT");
+                }
+                st.execute("CREATE TABLE IF NOT EXISTS shutdown_players (boot_id TEXT NOT NULL,"
+                        + " uuid TEXT NOT NULL, PRIMARY KEY (boot_id, uuid))");
+            }
+            String schema = meta("schema");
+            if (schema == null || Integer.parseInt(schema) < SCHEMA_VERSION) {
+                putMeta("schema", String.valueOf(SCHEMA_VERSION));
+            }
+            return null;
+        });
     }
 
     private void loadBalances() throws SQLException {
@@ -188,38 +233,86 @@ public final class BankStore implements AutoCloseable {
         }
     }
 
-    /**
-     * 이번 기동을 시작합니다. 이전 기동이 정상 종료를 남기지 않았으면 비정상 종료로 기록하고,
-     * 그 기동의 마지막 heartbeat 를 장애 추정 시각으로 남깁니다 (마지막 거래 시각은 쓰지 않음).
-     */
+    /** 종료 때 접속해 있던 플레이어의 데이터가 Bank 종료 뒤에 저장됐는지 확인하는 방법. */
+    @FunctionalInterface
+    public interface SaveCheck {
+        /** worldDir 의 플레이어 파일이 sinceMs 이후에 저장됐는지. 확인할 수 없으면 false. */
+        boolean savedAfter(String worldDir, UUID player, long sinceMs);
+    }
+
+    /** 확인 수단이 없을 때: 저장됐다고 보지 않음 (환불 대상에서 빠지지 않게). */
+    public static final SaveCheck NO_SAVE_EVIDENCE = (dir, player, since) -> false;
+
+    /** {@link #startBoot(String, SaveCheck)} 를 저장 근거 없이 호출. */
     public BootReport startBoot(String newBootId) throws SQLException {
+        return startBoot(newBootId, NO_SAVE_EVIDENCE);
+    }
+
+    /**
+     * 이번 기동을 시작하면서 이전 기동을 판정합니다.
+     * <ul>
+     *   <li>정상 종료(clean_shutdown) 기록이 없음 → 비정상 종료. 장애 추정 시각 = 마지막 heartbeat (마지막 거래 시각 아님)</li>
+     *   <li>Bank 는 정상 종료했지만, 그때 접속해 있던 플레이어 중 그 뒤에 플레이어 파일이 저장되지 않은 사람이 있음
+     *       → 비정상 종료. Paper 는 플러그인을 끈 뒤에 플레이어를 저장하므로, 그 사이에 꺼지면 구매한 상품이 유실될 수 있음.
+     *       장애 추정 시각 = Bank 종료 시각</li>
+     *   <li>둘 다 아니면 정상 종료</li>
+     * </ul>
+     */
+    public BootReport startBoot(String newBootId, SaveCheck saveCheck) throws SQLException {
         return write(() -> {
             long now = clock.getAsLong();
             String prev = meta("boot_id");
             String clean = meta("clean_shutdown");
-            boolean unclean = prev != null && !prev.equals(clean);
+            String reason = null;
             long crashMs = 0;
-            if (unclean) {
+            List<UUID> unsaved = List.of();
+            if (prev != null && !prev.equals(clean)) {
+                reason = BootReport.NO_CLEAN_SHUTDOWN;
                 crashMs = lastHeartbeatOf(prev);
+            } else if (prev != null) {
+                String status = null;
+                long ended = 0;
+                String worldDir = null;
                 try (PreparedStatement ps = conn.prepareStatement(
-                        "UPDATE boots SET status = ?, crash_estimated_ms = ? WHERE boot_id = ?")) {
-                    ps.setString(1, BootStatus.UNCLEAN);
-                    ps.setLong(2, crashMs);
-                    ps.setString(3, prev);
-                    if (ps.executeUpdate() == 0) {
-                        // boots 줄이 없는 경우(이론상 없음)에도 환불 판정이 가능하도록 남김
-                        try (PreparedStatement ins = conn.prepareStatement(
-                                "INSERT INTO boots (boot_id, started_ms, last_heartbeat_ms, crash_estimated_ms, status)"
-                                        + " VALUES (?, ?, ?, ?, ?)")) {
-                            ins.setString(1, prev);
-                            ins.setLong(2, crashMs);
-                            ins.setLong(3, crashMs);
-                            ins.setLong(4, crashMs);
-                            ins.setString(5, BootStatus.UNCLEAN);
-                            ins.executeUpdate();
+                        "SELECT status, ended_ms, world_dir FROM boots WHERE boot_id = ?")) {
+                    ps.setString(1, prev);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (rs.next()) {
+                            status = rs.getString(1);
+                            ended = rs.getLong(2);
+                            worldDir = rs.getString(3);
                         }
                     }
                 }
+                if (BootStatus.CLOSED.equals(status)) {
+                    List<UUID> missing = new ArrayList<>();
+                    for (UUID player : shutdownPlayers(prev)) {
+                        boolean saved;
+                        try {
+                            saved = worldDir != null && saveCheck.savedAfter(worldDir, player, ended);
+                        } catch (RuntimeException e) {
+                            saved = false;
+                        }
+                        if (!saved) {
+                            missing.add(player);
+                        }
+                    }
+                    if (missing.isEmpty()) {
+                        try (PreparedStatement ps = conn.prepareStatement(
+                                "UPDATE boots SET status = ? WHERE boot_id = ?")) {
+                            ps.setString(1, BootStatus.CLEAN);
+                            ps.setString(2, prev);
+                            ps.executeUpdate();
+                        }
+                    } else {
+                        reason = BootReport.PLAYER_SAVE_MISSING;
+                        crashMs = ended;
+                        unsaved = List.copyOf(missing);
+                    }
+                }
+            }
+            if (reason != null) {
+                markUnclean(prev, crashMs, reason);
             }
             try (PreparedStatement ps = conn.prepareStatement(
                     "INSERT INTO boots (boot_id, started_ms, last_heartbeat_ms, status) VALUES (?, ?, ?, ?)")) {
@@ -232,8 +325,45 @@ public final class BankStore implements AutoCloseable {
             putMeta("boot_id", newBootId);
             putMeta("heartbeat", newBootId + "@" + now);
             bootId = newBootId;
-            return new BootReport(prev, unclean, crashMs);
+            return new BootReport(prev, reason != null, crashMs, reason, unsaved);
         });
+    }
+
+    private void markUnclean(String boot, long crashMs, String reason) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "UPDATE boots SET status = ?, crash_estimated_ms = ?, unclean_reason = ? WHERE boot_id = ?")) {
+            ps.setString(1, BootStatus.UNCLEAN);
+            ps.setLong(2, crashMs);
+            ps.setString(3, reason);
+            ps.setString(4, boot);
+            if (ps.executeUpdate() == 0) {
+                // boots 줄이 없는 경우(이론상 없음)에도 환불 판정이 가능하도록 남김
+                try (PreparedStatement ins = conn.prepareStatement(
+                        "INSERT INTO boots (boot_id, started_ms, last_heartbeat_ms, crash_estimated_ms, status,"
+                                + " unclean_reason) VALUES (?, ?, ?, ?, ?, ?)")) {
+                    ins.setString(1, boot);
+                    ins.setLong(2, crashMs);
+                    ins.setLong(3, crashMs);
+                    ins.setLong(4, crashMs);
+                    ins.setString(5, BootStatus.UNCLEAN);
+                    ins.setString(6, reason);
+                    ins.executeUpdate();
+                }
+            }
+        }
+    }
+
+    private List<UUID> shutdownPlayers(String boot) throws SQLException {
+        List<UUID> out = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement("SELECT uuid FROM shutdown_players WHERE boot_id = ?")) {
+            ps.setString(1, boot);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.add(UUID.fromString(rs.getString(1)));
+                }
+            }
+        }
+        return out;
     }
 
     /** meta.heartbeat 가 그 기동 것이면 그 시각, 아니면 boots 의 마지막 heartbeat, 그것도 없으면 시작 시각. */
@@ -274,8 +404,21 @@ public final class BankStore implements AutoCloseable {
         });
     }
 
-    /** 정상 종료: clean_shutdown 을 기록하고 닫습니다. 이후 모든 변경은 CLOSED 로 실패합니다. */
+    /** 접속자 없이 정상 종료 (테스트용). */
     public void closeClean() throws SQLException {
+        closeClean(List.of(), null);
+    }
+
+    /**
+     * Bank 정상 종료: clean_shutdown 을 기록하고 닫습니다. 이후 모든 변경은 CLOSED 로 실패합니다.
+     * 이 시점에는 아직 서버가 플레이어를 저장하기 전이므로, 기동 상태는 clean 이 아니라 closed 로 두고
+     * 접속해 있던 플레이어 목록과 월드 폴더를 남깁니다. 다음 기동에서 그 플레이어 파일이 이 시각 뒤에
+     * 저장됐는지 확인한 뒤에야 clean 으로 판정합니다 ({@link #startBoot(String, SaveCheck)}).
+     *
+     * @param onlinePlayers 종료 순간 접속해 있던 플레이어
+     * @param worldDir      플레이어 파일이 있는 기본 월드 폴더 (모르면 null → 접속자가 있으면 비정상 종료로 판정)
+     */
+    public void closeClean(Collection<UUID> onlinePlayers, String worldDir) throws SQLException {
         lock.lock();
         try {
             if (closed) {
@@ -286,12 +429,22 @@ public final class BankStore implements AutoCloseable {
                     write(() -> {
                         long now = clock.getAsLong();
                         try (PreparedStatement ps = conn.prepareStatement(
-                                "UPDATE boots SET status = ?, ended_ms = ?, last_heartbeat_ms = ? WHERE boot_id = ?")) {
-                            ps.setString(1, BootStatus.CLEAN);
+                                "UPDATE boots SET status = ?, ended_ms = ?, last_heartbeat_ms = ?, world_dir = ?"
+                                        + " WHERE boot_id = ?")) {
+                            ps.setString(1, BootStatus.CLOSED);
                             ps.setLong(2, now);
                             ps.setLong(3, now);
-                            ps.setString(4, bootId);
+                            setNullable(ps, 4, worldDir);
+                            ps.setString(5, bootId);
                             ps.executeUpdate();
+                        }
+                        try (PreparedStatement ps = conn.prepareStatement(
+                                "INSERT OR IGNORE INTO shutdown_players (boot_id, uuid) VALUES (?, ?)")) {
+                            for (UUID player : onlinePlayers) {
+                                ps.setString(1, bootId);
+                                ps.setString(2, player.toString());
+                                ps.executeUpdate();
+                            }
                         }
                         putMeta("heartbeat", bootId + "@" + now);
                         putMeta("clean_shutdown", bootId);
@@ -303,7 +456,7 @@ public final class BankStore implements AutoCloseable {
                 }
             } finally {
                 closed = true;
-                conn.close();
+                closeQuietly(conn);
             }
         } finally {
             lock.unlock();
@@ -369,8 +522,7 @@ public final class BankStore implements AutoCloseable {
                     ps.executeUpdate();
                 }
                 return null;
-            });
-            balances.putIfAbsent(uuid, 0L);
+            }, ignored -> balances.putIfAbsent(uuid, 0L));
             return true;
         } catch (SQLException e) {
             return false;
@@ -628,7 +780,8 @@ public final class BankStore implements AutoCloseable {
             applied = write(() -> {
                 requireBoot();
                 return work.run();
-            });
+            }, // 커밋이 끝난 뒤, 같은 락 안에서 조회용 사본 갱신 → 커밋 순서와 조회 값이 항상 일치
+                    a -> balances.putAll(a.newBalances()));
         } catch (Rejected r) {
             return Outcome.fail(r.failure, r.balance, r.detail);
         } catch (ClosedException e) {
@@ -636,8 +789,6 @@ public final class BankStore implements AutoCloseable {
         } catch (SQLException | RuntimeException e) {
             return Outcome.fail(Failure.STORAGE_ERROR, 0, e.getClass().getSimpleName() + ": " + e.getMessage());
         }
-        // 커밋이 끝난 뒤에만 조회용 사본 갱신
-        balances.putAll(applied.newBalances());
         return Outcome.success(applied.balance(), applied.txId());
     }
 
@@ -649,47 +800,111 @@ public final class BankStore implements AutoCloseable {
         }
     }
 
-    /** 쓰기 트랜잭션. 커밋이 끝나야 반환하고, 예외면 롤백. */
     private <T> T write(SqlWork<T> work) throws SQLException {
+        return write(work, null);
+    }
+
+    /**
+     * 쓰기 트랜잭션. 시작(BEGIN IMMEDIATE)·커밋·롤백을 여기서만 직접 실행합니다.
+     * JDBC 의 setAutoCommit 은 쓰지 않습니다: sqlite-jdbc 는 BEGIN 이 실패해도 autoCommit=false 로 남아
+     * 다음 요청이 트랜잭션 없이 실행될 수 있기 때문입니다 (PR #8 리뷰 P1).
+     * <ul>
+     *   <li>BEGIN 실패(예: 다른 연결이 쓰기 잠금): 트랜잭션이 남아 있지 않게 ROLLBACK 을 시도하고 실패 반환. 연결은 계속 씀</li>
+     *   <li>작업 중 오류: ROLLBACK. ROLLBACK 도 실패하면 상태를 알 수 없으므로 연결을 닫음</li>
+     *   <li>COMMIT 실패: 반영 여부를 확신할 수 없으므로 연결을 닫음. 이후 모든 변경은 실패하고,
+     *       재시작하면 DB 의 실제 값을 다시 읽음</li>
+     * </ul>
+     *
+     * @param afterCommit 커밋이 끝난 뒤 같은 락 안에서 실행 (조회용 사본 갱신)
+     */
+    private <T> T write(SqlWork<T> work, Consumer<T> afterCommit) throws SQLException {
         lock.lock();
         try {
-            if (closed) {
-                throw new ClosedException();
+            ensureUsable();
+            if (inTx) {
+                throw new SQLException("이미 트랜잭션 안에서 다시 쓰기를 시작함 (버그)");
             }
-            if (!conn.getAutoCommit()) {
-                // 이미 이 연결의 트랜잭션 안 (중첩 호출)
-                return work.run();
-            }
-            conn.setAutoCommit(false);
             try {
-                T result = work.run();
-                conn.commit();
-                return result;
+                exec("BEGIN IMMEDIATE");
+            } catch (SQLException e) {
+                clearStrayTransaction(e);
+                throw e;
+            }
+            inTx = true;
+            T result;
+            try {
+                result = work.run();
             } catch (SQLException | RuntimeException e) {
                 try {
-                    conn.rollback();
-                } catch (SQLException suppressed) {
-                    e.addSuppressed(suppressed);
+                    exec("ROLLBACK");
+                    inTx = false;
+                } catch (SQLException rollbackError) {
+                    e.addSuppressed(rollbackError);
+                    breakConnection("ROLLBACK 실패: " + rollbackError.getMessage());
                 }
                 throw e;
-            } finally {
-                try {
-                    conn.setAutoCommit(true);
-                } catch (SQLException ignored) {
-                    // 연결이 끊긴 경우. 다음 호출에서 오류가 납니다.
-                }
             }
+            try {
+                exec("COMMIT");
+            } catch (SQLException e) {
+                breakConnection("COMMIT 실패: " + e.getMessage());
+                throw e;
+            }
+            inTx = false;
+            if (afterCommit != null) {
+                afterCommit.accept(result);
+            }
+            return result;
         } finally {
             lock.unlock();
         }
     }
 
+    /** BEGIN 이 실패했을 때 혹시 열려 있는 트랜잭션을 닫음. "열린 트랜잭션 없음" 오류는 정상. */
+    private void clearStrayTransaction(SQLException cause) {
+        try {
+            exec("ROLLBACK");
+        } catch (SQLException e) {
+            String msg = String.valueOf(e.getMessage()).toLowerCase(java.util.Locale.ROOT);
+            if (!msg.contains("no transaction is active")) {
+                cause.addSuppressed(e);
+                breakConnection("BEGIN 실패 후 상태 확인 실패: " + e.getMessage());
+            }
+        }
+    }
+
+    private void exec(String sql) throws SQLException {
+        try (Statement st = conn.createStatement()) {
+            st.execute(sql);
+        }
+    }
+
+    /** 연결 상태를 확신할 수 없음 → 연결을 닫고 이후 모든 읽기·쓰기를 막음. */
+    private void breakConnection(String reason) {
+        brokenReason = reason;
+        closed = true;
+        inTx = false;
+        closeQuietly(conn);
+    }
+
+    private void ensureUsable() throws SQLException {
+        if (brokenReason != null) {
+            throw new SQLException("저장 오류로 DB 연결을 닫았음, 서버 재시작 필요 (" + brokenReason + ")");
+        }
+        if (closed) {
+            throw new ClosedException();
+        }
+    }
+
+    /** 저장 오류로 연결을 닫았으면 그 이유, 아니면 null. */
+    public String brokenReason() {
+        return brokenReason;
+    }
+
     private <T> T read(SqlWork<T> work) throws SQLException {
         lock.lock();
         try {
-            if (closed) {
-                throw new ClosedException();
-            }
+            ensureUsable();
             return work.run();
         } finally {
             lock.unlock();
@@ -846,6 +1061,14 @@ public final class BankStore implements AutoCloseable {
                     return OptionalLong.empty();
                 }
             }
+        });
+    }
+
+    /** 테스트용: 잠금 대기 시간 변경. */
+    void busyTimeoutForTest(int ms) throws SQLException {
+        read(() -> {
+            exec("PRAGMA busy_timeout = " + ms);
+            return null;
         });
     }
 

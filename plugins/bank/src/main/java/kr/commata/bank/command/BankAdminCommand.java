@@ -93,8 +93,9 @@ public final class BankAdminCommand implements BasicCommand {
             Msg.info(sender, "정상 (기동 ID " + store.bootId() + ")");
             BootReport boot = bank.boot();
             if (boot != null && boot.previousUnclean()) {
-                Msg.error(sender, "직전 기동 " + boot.previousBootId() + " 은 비정상 종료. 장애 추정 시각 "
-                        + time(boot.crashEstimateMs()) + " (실제 종료는 그 뒤 30초 안)");
+                Msg.error(sender, "직전 기동 " + boot.previousBootId() + " 은 비정상 종료 (" + boot.describe()
+                        + "). 장애 추정 시각 " + time(boot.crashEstimateMs())
+                        + (BootReport.NO_CLEAN_SHUTDOWN.equals(boot.reason()) ? " (실제 종료는 그 뒤 30초 안)" : ""));
             }
         }
         usage(sender);

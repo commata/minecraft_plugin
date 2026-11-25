@@ -39,7 +39,7 @@ public final class JoinListener implements Listener {
         }
         BootReport boot = bank.boot();
         if (admin && boot != null && boot.previousUnclean()) {
-            Msg.error(player, "직전 서버 종료가 비정상이었습니다 (장애 추정 "
+            Msg.error(player, "직전 서버 종료가 비정상이었습니다 (" + boot.describe() + ", 장애 추정 "
                     + TIME.format(Instant.ofEpochMilli(boot.crashEstimateMs()).atZone(bank.settings().zone()))
                     + "). 구매 유실 신고는 /bank log 로 확인 후 ECONOMY.md 2.4 절차로 처리하세요.");
         }

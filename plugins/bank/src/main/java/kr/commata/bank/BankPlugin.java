@@ -15,6 +15,7 @@ import kr.commata.bank.command.PayCommand;
 import kr.commata.bank.core.BankStore;
 import kr.commata.bank.core.BootReport;
 import kr.commata.bank.core.Bootstrap;
+import kr.commata.bank.core.PlayerFiles;
 import kr.commata.bank.listener.JoinListener;
 import kr.commata.bank.vault.BankEconomy;
 import net.milkbowl.vault.economy.Economy;
@@ -54,7 +55,7 @@ public final class BankPlugin extends JavaPlugin {
             store = ready.store();
             firstInstall = ready.firstInstall();
             try {
-                boot = store.startBoot(UUID.randomUUID().toString());
+                boot = store.startBoot(UUID.randomUUID().toString(), new PlayerFiles());
             } catch (SQLException e) {
                 store.close();
                 store = null;
@@ -116,9 +117,13 @@ public final class BankPlugin extends JavaPlugin {
             return;
         }
         if (boot != null && boot.previousUnclean()) {
-            getLogger().warning("직전 기동 " + boot.previousBootId() + " 은 정상 종료 기록이 없습니다 (비정상 종료). "
-                    + "장애 추정 시각(마지막 heartbeat) " + Instant.ofEpochMilli(boot.crashEstimateMs())
-                    + ", 실제 종료는 그 뒤 30초 안. 구매 유실 신고는 ECONOMY.md 2.4 절차로 처리하세요.");
+            String when = BootReport.PLAYER_SAVE_MISSING.equals(boot.reason())
+                    ? "장애 추정 시각(Bank 종료 시각) " + Instant.ofEpochMilli(boot.crashEstimateMs())
+                    + ", 저장 안 된 플레이어 " + boot.unsavedPlayers()
+                    : "장애 추정 시각(마지막 heartbeat) " + Instant.ofEpochMilli(boot.crashEstimateMs())
+                    + ", 실제 종료는 그 뒤 30초 안";
+            getLogger().warning("직전 기동 " + boot.previousBootId() + " 비정상 종료 (" + boot.describe() + "). "
+                    + when + ". 구매 유실 신고는 ECONOMY.md 2.4 절차로 처리하세요.");
         }
         getLogger().info("Bank " + getPluginMeta().getVersion() + " 활성화 (계좌 "
                 + store.accountCount() + "개, 기동 ID " + store.bootId() + ")");
@@ -129,8 +134,12 @@ public final class BankPlugin extends JavaPlugin {
         getServer().getServicesManager().unregisterAll(this);
         if (store != null) {
             try {
-                store.closeClean();
-                getLogger().info("정상 종료 기록 완료");
+                // 이 뒤에 서버가 플레이어를 저장하므로, 접속자와 월드 폴더를 남겨 다음 기동에서 저장 완료를 확인
+                List<UUID> online = getServer().getOnlinePlayers().stream().map(p -> p.getUniqueId()).toList();
+                String worldDir = getServer().getWorlds().isEmpty() ? null
+                        : getServer().getWorlds().get(0).getWorldFolder().getAbsolutePath();
+                store.closeClean(online, worldDir);
+                getLogger().info("정상 종료 기록 완료 (접속자 " + online.size() + "명의 저장은 다음 기동에서 확인)");
             } catch (SQLException e) {
                 getLogger().severe("정상 종료 기록 실패 (다음 기동에서 비정상 종료로 보입니다): " + e.getMessage());
             }

@@ -392,6 +392,156 @@ class BankStoreTest {
         assertInstanceOf(Bootstrap.Locked.class, r);
     }
 
+    // ------------------------------------------------------------------ PR #8 리뷰
+
+    private java.sql.Connection rawConnection() throws Exception {
+        return java.sql.DriverManager.getConnection("jdbc:sqlite:" + bankDir().resolve(BankStore.DB_FILE));
+    }
+
+    private static void exec(java.sql.Connection c, String sql) throws Exception {
+        try (var st = c.createStatement()) {
+            st.execute(sql);
+        }
+    }
+
+    /** P1: 잠금 오류 뒤 다음 거래가 트랜잭션 없이 실행되어 실패했는데 잔액만 바뀌던 문제. */
+    @Test
+    void failedChangeAfterLockErrorDoesNotTouchBalance() throws Exception {
+        BankStore s = install();
+        s.ensureAccount(alice, "Alice");
+        assertTrue(s.deposit(alice, "Alice", 130, TxType.DEPOSIT, "VJobs", null).ok());
+        long txBefore = s.transactionCount();
+        s.busyTimeoutForTest(50);
+
+        try (var other = rawConnection()) {
+            exec(other, "BEGIN IMMEDIATE"); // 다른 연결이 쓰기 잠금
+            Outcome locked = s.deposit(alice, "Alice", 5, TxType.DEPOSIT, "VJobs", null);
+            assertEquals(Failure.STORAGE_ERROR, locked.failure());
+            exec(other, "ROLLBACK");
+            // 거래 기록 저장이 실패하도록 만듦
+            exec(other, "CREATE TRIGGER fail_tx BEFORE INSERT ON transactions BEGIN SELECT RAISE(ABORT, 'test'); END");
+        }
+        Outcome failed = s.deposit(alice, "Alice", 7, TxType.DEPOSIT, "VJobs", null);
+        assertFalse(failed.ok());
+        assertEquals(130, s.account(alice).orElseThrow().balance(), "DB 잔액");
+        assertEquals(130, s.balance(alice).orElseThrow(), "조회용 사본");
+        assertEquals(txBefore, s.transactionCount());
+
+        try (var other = rawConnection()) {
+            exec(other, "DROP TRIGGER fail_tx");
+        }
+        Outcome ok = s.deposit(alice, "Alice", 3, TxType.DEPOSIT, "VJobs", null);
+        assertTrue(ok.ok(), ok::message);
+        assertEquals(133, ok.balance());
+        s.close();
+        BankStore r = reboot("boot-2");
+        assertEquals(133, r.balance(alice).orElseThrow());
+        assertEquals(txBefore + 1, r.transactionCount());
+    }
+
+    /** P2: 동시 입금 후 조회용 사본이 DB 보다 예전 값으로 덮이던 문제. */
+    @Test
+    void concurrentDepositsKeepCacheEqualToDatabase() throws Exception {
+        BankStore s = install();
+        s.ensureAccount(alice, "Alice");
+        s.ensureAccount(bob, "Bob");
+        s.deposit(alice, "Alice", 100, TxType.DEPOSIT, "x", null);
+        ExecutorService pool = Executors.newFixedThreadPool(8);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<?>> futures = new ArrayList<>();
+        for (int t = 0; t < 8; t++) {
+            futures.add(pool.submit(() -> {
+                start.await();
+                ThreadLocalRandom rnd = ThreadLocalRandom.current();
+                for (int k = 0; k < 150; k++) {
+                    UUID who = rnd.nextBoolean() ? alice : bob;
+                    assertTrue(s.deposit(who, null, 1 + rnd.nextInt(30), TxType.DEPOSIT, "x", null).ok());
+                    // 매번 사본이 DB 이상(커밋 순서상 최신)이어야 하고, 끝나면 정확히 같아야 함
+                }
+                return null;
+            }));
+        }
+        start.countDown();
+        for (Future<?> f : futures) {
+            f.get(60, TimeUnit.SECONDS);
+        }
+        pool.shutdown();
+        assertEquals(s.account(alice).orElseThrow().balance(), s.balance(alice).orElseThrow());
+        assertEquals(s.account(bob).orElseThrow().balance(), s.balance(bob).orElseThrow());
+    }
+
+    /** P2: Bank 종료 뒤 서버가 플레이어를 저장하기 전에 꺼진 경우. */
+    @Test
+    void shutdownWithoutPlayerSaveIsUncleanAndRefundable() throws Exception {
+        BankStore s = install();
+        s.ensureAccount(alice, "Alice");
+        s.deposit(alice, "Alice", 5000, TxType.DEPOSIT, "VJobs", null);
+        Outcome buy = s.withdraw(alice, 1280, TxType.WITHDRAW, Sources.SHOP, null);
+        long endedAt = now.addAndGet(1000);
+        s.closeClean(List.of(alice), "/world");
+
+        var r = Bootstrap.open(bankDir(), true, now::get);
+        BankStore store = assertInstanceOf(Bootstrap.Ready.class, r).store();
+        opened.add(store);
+        BootReport report = store.startBoot("boot-2", (dir, player, since) -> false);
+        assertTrue(report.previousUnclean());
+        assertEquals(BootReport.PLAYER_SAVE_MISSING, report.reason());
+        assertEquals(List.of(alice), report.unsavedPlayers());
+        assertEquals(endedAt, report.crashEstimateMs());
+        assertTrue(store.refund(buy.txId(), Sources.BANK, null).ok());
+    }
+
+    @Test
+    void shutdownWithPlayerSavedAfterBankIsClean() throws Exception {
+        BankStore s = install();
+        s.ensureAccount(alice, "Alice");
+        s.deposit(alice, "Alice", 5000, TxType.DEPOSIT, "VJobs", null);
+        Outcome buy = s.withdraw(alice, 1280, TxType.WITHDRAW, Sources.SHOP, null);
+        long endedAt = now.addAndGet(1000);
+        s.closeClean(List.of(alice), "/world");
+
+        var r = Bootstrap.open(bankDir(), true, now::get);
+        BankStore store = assertInstanceOf(Bootstrap.Ready.class, r).store();
+        opened.add(store);
+        List<Object> asked = new ArrayList<>();
+        BootReport report = store.startBoot("boot-2", (dir, player, since) -> {
+            asked.add(dir + "|" + player + "|" + since);
+            return true;
+        });
+        assertFalse(report.previousUnclean());
+        assertEquals(List.of("/world|" + alice + "|" + endedAt), asked);
+        assertEquals(Failure.CLEAN_BOOT, store.refund(buy.txId(), Sources.BANK, null).failure());
+        assertEquals(BootStatus.CLEAN, store.transaction(buy.txId()).orElseThrow().bootStatus());
+    }
+
+    @Test
+    void shutdownWithUnknownWorldFolderAndPlayersOnlineIsUnclean() throws Exception {
+        BankStore s = install();
+        s.closeClean(List.of(alice), null);
+        var r = Bootstrap.open(bankDir(), true, now::get);
+        BankStore store = assertInstanceOf(Bootstrap.Ready.class, r).store();
+        opened.add(store);
+        assertTrue(store.startBoot("boot-2", (dir, player, since) -> true).previousUnclean());
+    }
+
+    @Test
+    void schemaV1DatabaseIsMigrated() throws Exception {
+        install().closeClean();
+        try (var c = rawConnection()) {
+            exec(c, "DROP TABLE shutdown_players");
+            exec(c, "ALTER TABLE boots DROP COLUMN world_dir");
+            exec(c, "ALTER TABLE boots DROP COLUMN unclean_reason");
+            exec(c, "UPDATE meta SET value = '1' WHERE key = 'schema'");
+        }
+        BankStore r = reboot("boot-2");
+        assertEquals(String.valueOf(BankStore.SCHEMA_VERSION), r.readMeta("schema"));
+        r.closeClean(List.of(alice), "/world");
+        var again = Bootstrap.open(bankDir(), true, now::get);
+        BankStore store = assertInstanceOf(Bootstrap.Ready.class, again).store();
+        opened.add(store);
+        assertTrue(store.startBoot("boot-3", (d, p, t) -> false).previousUnclean());
+    }
+
     // ------------------------------------------------------------------ 성능
 
     @Test
