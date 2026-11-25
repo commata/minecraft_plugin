@@ -20,6 +20,12 @@ public record SavedJobXp(int level, double xp, boolean restored) {
         this(level, xp, false);
     }
 
+    /** 강제 종료 뒤 아직 복구되지 않은 같은 레벨의 XP도 다시 탈퇴할 때 보관한다. */
+    static SavedJobXp forLeave(int level, double currentXp, SavedJobXp pending) {
+        double xp = pending != null && pending.level() == level ? Math.max(currentXp, pending.xp()) : currentXp;
+        return xp > EPSILON ? new SavedJobXp(level, xp) : null;
+    }
+
     public SavedJobXp asRestored() {
         return new SavedJobXp(level, xp, true);
     }

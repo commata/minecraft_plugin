@@ -34,6 +34,7 @@ public final class JobXpKeeper {
 
     private static final long RESTORE_TICKS = 20L * 5;
     private static final long CONFIRM_TICKS = 20L * 60;
+    private static final String LEAVE_SETTINGS_UNAVAILABLE = "VJobs 탈퇴 설정을 읽지 못함";
 
     private final JavaPlugin plugin;
     private final VJobsHook hook;
@@ -78,9 +79,10 @@ public final class JobXpKeeper {
             return storeProblem;
         }
         VJobsHook.LeaveSettings settings = hook.leaveSettings();
-        if (settings == null) {
-            return "VJobs 탈퇴 설정을 읽지 못함";
-        }
+        return settings == null ? LEAVE_SETTINGS_UNAVAILABLE : policyOffReason(settings);
+    }
+
+    private static String policyOffReason(VJobsHook.LeaveSettings settings) {
         if (settings.levelLossPercent() != 0.0) {
             return "VJobs 탈퇴 벌칙 " + String.format(Locale.ROOT, "%.1f", settings.levelLossPercent()) + "%";
         }
@@ -101,33 +103,47 @@ public final class JobXpKeeper {
 
     /** JobLeaveEvent(HIGHEST, 취소되지 않은 것). 아직 VJobs 데이터가 바뀌기 전. */
     public void onLeave(Player player, String jobId, Event event) {
-        if (jobId == null || store == null) {
+        VJobsHook.LeaveSettings settings = hook.leaveSettings();
+        if (settings == null) {
+            cancelLeave(player, event, LEAVE_SETTINGS_UNAVAILABLE, null);
             return;
         }
         UUID uuid = player.getUniqueId();
-        String off = offReason();
+        String off = policyOffReason(settings);
         if (off != null) {
             // 벌칙이 켜진 상태의 탈퇴는 VJobs 규칙대로. 예전 기록이 남아 나중에 복구되지 않도록 지움
-            dropQuietly(uuid, jobId, off);
+            if (store != null && jobId != null) {
+                dropQuietly(uuid, jobId, off);
+            }
             return;
         }
-        VJobsHook.Progress now = hook.progress(uuid, jobId);
+        if (store == null) {
+            cancelLeave(player, event, storeProblem, null);
+            return;
+        }
+        VJobsHook.Progress now = jobId == null ? null : hook.progress(uuid, jobId);
         if (now == null) {
+            cancelLeave(player, event, "VJobs 직업 레벨과 XP를 읽지 못함", null);
             return;
         }
+        SavedJobXp saved = SavedJobXp.forLeave(now.level(), now.xp(), store.get(uuid, jobId));
         try {
-            if (now.xp() > SavedJobXp.EPSILON) {
-                store.put(uuid, jobId, new SavedJobXp(now.level(), now.xp()));
-            } else {
+            if (saved == null) {
                 store.remove(uuid, jobId);
+            } else {
+                store.put(uuid, jobId, saved);
             }
         } catch (IOException e) {
-            plugin.getLogger().log(Level.SEVERE, player.getName() + " " + jobId + " XP 기록 저장 실패, 탈퇴를 취소합니다.", e);
-            if (event instanceof Cancellable cancellable) {
-                cancellable.setCancelled(true);
-                player.sendMessage(Component.text("직업 경험치를 저장하지 못해 탈퇴를 취소했습니다. 관리자에게 알려 주세요.",
-                        NamedTextColor.RED));
-            }
+            cancelLeave(player, event, jobId + " XP 기록 저장 실패", e);
+        }
+    }
+
+    private void cancelLeave(Player player, Event event, String reason, IOException cause) {
+        plugin.getLogger().log(Level.SEVERE, player.getName() + " 직업 탈퇴 취소: " + reason, cause);
+        if (event instanceof Cancellable cancellable) {
+            cancellable.setCancelled(true);
+            player.sendMessage(Component.text("직업 경험치를 저장하지 못해 탈퇴를 취소했습니다. 관리자에게 알려 주세요.",
+                    NamedTextColor.RED));
         }
     }
 
@@ -136,7 +152,11 @@ public final class JobXpKeeper {
         if (jobId == null || store == null) {
             return;
         }
-        String off = offReason();
+        VJobsHook.LeaveSettings settings = hook.leaveSettings();
+        if (settings == null) {
+            return;
+        }
+        String off = policyOffReason(settings);
         if (off != null) {
             // 복구 직전 설정 확인: 벌칙이 켜진 상태로 재가입했으면 저장해 둔 XP 를 돌려주지 않음
             dropQuietly(player.getUniqueId(), jobId, off);

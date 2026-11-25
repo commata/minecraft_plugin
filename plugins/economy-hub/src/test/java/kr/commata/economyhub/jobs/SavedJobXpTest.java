@@ -52,6 +52,16 @@ class SavedJobXpTest {
     }
 
     @Test
+    void keepsUnconfirmedXpWhenLeavingAgainBeforeRecovery() {
+        SavedJobXp pending = new SavedJobXp(3, 123.5).asRestored();
+        assertEquals(new SavedJobXp(3, 123.5), SavedJobXp.forLeave(3, 0.0, pending));
+        assertEquals(new SavedJobXp(3, 123.5), SavedJobXp.forLeave(3, 40.0, pending));
+        assertEquals(new SavedJobXp(3, 150.0), SavedJobXp.forLeave(3, 150.0, pending));
+        assertEquals(new SavedJobXp(4, 10.0), SavedJobXp.forLeave(4, 10.0, pending));
+        assertNull(SavedJobXp.forLeave(4, 0.0, pending));
+    }
+
+    @Test
     void coveredOnlyWhenVJobsStoredAtLeastTheSavedXp() {
         SavedJobXp saved = new SavedJobXp(3, 123.5).asRestored();
         assertFalse(saved.coveredBy(3, 0.0));
