@@ -49,6 +49,11 @@ public final class PayoutGuard implements Listener {
         this.formed = formed.isEmpty() ? EnumSet.noneOf(Material.class) : EnumSet.copyOf(formed);
     }
 
+    /** config.yml payout-guard.enabled 현재 값 (/economyhub reload 반영). */
+    public boolean enabled() {
+        return enabled;
+    }
+
     /** VJobs JobPayoutEvent 에서 호출. BREAK·HARVEST 보상이 표시된 블록에서 나온 것이면 true(취소). */
     public boolean shouldCancel(Player player, String actionType) {
         if (!enabled || breakingMarked == null || !breakingMarked.equals(player.getUniqueId())) {

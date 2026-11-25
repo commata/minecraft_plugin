@@ -112,6 +112,27 @@ public final class VJobsHook {
         }
     }
 
+    /** VJobs 가 이 플레이어 데이터를 다 읽었는지 (VJobsApi.getPlayer 는 읽기 전이면 비어 있음, JAR 확인). */
+    public boolean loaded(UUID uuid) {
+        try {
+            Object apiInstance = api("com.vjobs.api.VJobsProvider").getMethod("get").invoke(null);
+            return unwrap(api("com.vjobs.api.VJobsApi").getMethod("getPlayer", UUID.class).invoke(apiInstance, uuid)) != null;
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return false;
+        }
+    }
+
+    /** VJobsApi.xpForLevel(level): 그 레벨에서 다음 레벨까지 필요한 XP. 읽지 못하면 NaN. */
+    public double xpForLevel(int level) {
+        try {
+            Object apiInstance = api("com.vjobs.api.VJobsProvider").getMethod("get").invoke(null);
+            return ((Number) api("com.vjobs.api.VJobsApi").getMethod("xpForLevel", int.class)
+                    .invoke(apiInstance, level)).doubleValue();
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return Double.NaN;
+        }
+    }
+
     /** VJobsApi.giveXp(player, jobId, xp). 배율 없이 그대로 더함(JobManager.giveXp, JAR 확인). */
     public boolean giveXp(Player player, String jobId, double xp) {
         try {

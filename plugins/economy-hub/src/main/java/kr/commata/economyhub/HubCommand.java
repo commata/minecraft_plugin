@@ -28,10 +28,9 @@ final class HubCommand implements BasicCommand {
             return;
         }
         if (args.length >= 1 && args[0].equalsIgnoreCase("status")) {
-            sender.sendMessage(Component.text("탈퇴 후 쿨타임: " + (plugin.leaveHooked()
-                            ? plugin.cooldownGuard().cooldownMs() / 60_000L + "분 (VJobs job-switch-cooldown.default-seconds)"
-                            : "꺼짐")
-                    + " · 보상 제외: " + (plugin.payoutHooked() ? "켜짐" : "꺼짐")
+            sender.sendMessage(Component.text("탈퇴 후 쿨타임: " + plugin.cooldownState()
+                    + " (VJobs job-switch-cooldown.default-seconds)"
+                    + " · 보상 제외: " + plugin.payoutState()
                     + " · 이번 기동에서 취소한 보상 " + plugin.cancelledPayouts() + "건"
                     + " · 탈퇴 후 XP 유지: " + plugin.xpState(), NamedTextColor.YELLOW));
             if (args.length >= 2) {

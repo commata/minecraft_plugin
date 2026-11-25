@@ -60,8 +60,7 @@ public final class EconomyHubPlugin extends JavaPlugin {
                 event.registrar().register("economyhub", "EconomyHub 상태 확인·설정 다시 읽기",
                         List.of("ehub"), new HubCommand(this)));
         getLogger().info("EconomyHub " + getPluginMeta().getVersion() + " 활성화 (탈퇴 후 쿨타임 "
-                + (leaveHooked ? cooldownGuard.cooldownMs() / 60_000L + "분" : "꺼짐") + ", 보상 제외 "
-                + (payoutHooked && settings.guardEnabled() ? "켜짐" : "꺼짐") + ", 탈퇴 후 XP 유지 "
+                + cooldownState() + ", 보상 제외 " + payoutState() + ", 탈퇴 후 XP 유지 "
                 + xpState() + ")");
     }
 
@@ -150,6 +149,23 @@ public final class EconomyHubPlugin extends JavaPlugin {
 
     boolean leaveHooked() {
         return leaveHooked;
+    }
+
+    /** 탈퇴 후 쿨타임의 실제 상태. */
+    String cooldownState() {
+        if (!leaveHooked) {
+            return "꺼짐";
+        }
+        String problem = cooldownGuard.problem();
+        return cooldownGuard.cooldownMs() / 60_000L + "분" + (problem == null ? "" : " (" + problem + ")");
+    }
+
+    /** 보상 제외의 실제 상태: 이벤트 연결과 config.yml payout-guard.enabled 둘 다. */
+    String payoutState() {
+        if (!payoutHooked) {
+            return "꺼짐 (VJobs 이벤트 연결 안 됨)";
+        }
+        return payoutGuard.enabled() ? "켜짐" : "꺼짐 (payout-guard.enabled: false)";
     }
 
     /** 탈퇴 후 XP 유지의 실제 상태. VJobs 설정을 매번 다시 읽음. */

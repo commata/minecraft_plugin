@@ -1,6 +1,7 @@
 package kr.commata.economyhub.jobs;
 
 import java.util.Locale;
+import java.util.function.IntToDoubleFunction;
 
 /**
  * 탈퇴할 때 저장해 두는 직업 레벨·XP (ECONOMY.md 5.1). VJobs 2.2.0 은 탈퇴하면 레벨만 보관하고 XP 를 0 으로 만들어서,
@@ -50,25 +51,40 @@ public record SavedJobXp(int level, double xp, boolean restored) {
     }
 
     /**
-     * 지금 VJobs 메모리 값 기준으로 돌려줄 XP. 레벨이 다르면 0, 이미 그 이상이면 0.
-     * 여러 번 불러도 모자란 만큼만 계산하므로 같은 XP 가 두 번 들어가지 않습니다.
+     * (currentLevel, currentXp) 에서 이 기록의 레벨·XP 까지 가는 데 필요한 XP. 이미 그 이상이면 0.
+     * 레벨이 더 낮으면(강제 종료로 VJobs DB 가 예전 상태로 돌아간 경우) 그 사이 레벨업에 필요한 XP 까지 더함.
+     * VJobs 는 {@code xp >= xpForLevel(level + 1)} 이면 빼고 레벨을 올리므로(JobManager.applyLevelUps, JAR 확인)
+     * 한 번에 giveXp 하면 정확히 이 기록의 레벨·XP 가 됩니다. xpForLevel 이 이상하면 NaN.
+     *
+     * <p>재가입·접속 순간의 값으로만 부릅니다. 그 뒤에 새로 얻은 XP 를 빼고 계산하면 복구량에 흡수되기 때문.
      */
-    public double toRestore(int currentLevel, double currentXp) {
-        if (currentLevel != level || currentXp >= xp - EPSILON) {
+    public double missingXp(int currentLevel, double currentXp, IntToDoubleFunction xpForLevel) {
+        if (coveredBy(currentLevel, currentXp)) {
             return 0;
         }
-        return xp - currentXp;
+        double total = 0;
+        double have = currentXp;
+        for (int lv = currentLevel; lv < level; lv++) {
+            double need = xpForLevel.applyAsDouble(lv + 1); // lv → lv+1
+            if (!Double.isFinite(need) || need <= 0) {
+                return Double.NaN;
+            }
+            total += need - have;
+            have = 0;
+        }
+        return total + xp - have;
     }
 
     /**
-     * 탈퇴할 때 남길 기록. 같은 레벨의 기존 기록이 지금 XP 보다 크면 그대로 둠: 재접속 직후 복구가 돌기 전(VJobs DB 에서 XP 0 을
-     * 읽은 상태)에 다시 탈퇴해도 저장해 둔 XP 를 잃지 않게. 남기는 기록은 항상 "재가입 대기"(restored=false).
+     * 탈퇴할 때 남길 기록. 기존 기록이 지금보다 앞서 있으면(더 높은 레벨, 또는 같은 레벨에 더 많은 XP) 그대로 둠:
+     * 복구가 돌기 전(VJobs DB 에서 예전 값을 읽은 상태)에 다시 탈퇴해도 저장해 둔 진행도를 잃지 않게.
+     * 남기는 기록은 항상 "재가입 대기"(restored=false).
      *
      * @return 남길 기록, 지울 거면 null
      */
     public static SavedJobXp onLeave(SavedJobXp existing, int level, double xp) {
-        if (existing != null && existing.level == level && existing.xp > xp + EPSILON) {
-            return new SavedJobXp(level, existing.xp, false);
+        if (existing != null && !existing.coveredBy(level, xp)) {
+            return new SavedJobXp(existing.level, existing.xp, false);
         }
         return xp > EPSILON ? new SavedJobXp(level, xp, false) : null;
     }

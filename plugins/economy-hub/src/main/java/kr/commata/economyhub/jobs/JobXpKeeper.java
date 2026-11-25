@@ -12,6 +12,10 @@ import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Cancellable;
 import org.bukkit.event.Event;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
 /**
@@ -21,12 +25,13 @@ import org.bukkit.plugin.java.JavaPlugin;
  * <ol>
  *   <li>JobLeaveEvent(HIGHEST, VJobs 가 데이터를 바꾸기 전): 레벨·XP 를 {@link JobXpStore} 파일에 쓰고 fsync.
  *       쓰기에 실패하면 탈퇴를 취소.</li>
- *   <li>JobJoinEvent 다음 틱, 그리고 접속 중인 플레이어를 5초마다: 같은 레벨이면 모자란 XP 만 {@code giveXp}.
- *       기록은 지우지 않고 "복구함(:r)" 으로만 바꿈.</li>
+ *   <li>복구는 두 순간에만, 그 순간의 VJobs 값을 기준으로 한 번: 재가입 다음 틱, 그리고 접속 후 VJobs 가 데이터를 다 읽은
+ *       첫 틱. 기록의 레벨·XP 까지 모자란 만큼(레벨이 낮으면 그 사이 레벨업분까지) {@code giveXp}. 그 뒤에 새로 얻은 XP 는
+ *       계산에 들어가지 않으므로 흡수되지 않음. 기록은 지우지 않고 "복구함(:r)" 으로만 바꿈.</li>
  *   <li>1분마다 비동기로 VJobs DB 를 읽어, 같은 레벨에 그 XP 이상이 저장된 "복구함" 기록만 지움.</li>
  * </ol>
- * 복구 직후 VJobs 가 DB 에 저장하기 전에 서버가 꺼지면 기록이 남아 있어 재접속 때 모자란 만큼 다시 줍니다.
- * 항상 "모자란 만큼"만 주므로 같은 XP 가 두 번 들어가지 않습니다.
+ * 복구 직후 VJobs 가 DB 에 저장하기 전에 서버가 꺼지면 기록이 남아 있어 재접속 때 DB 값 기준으로 모자란 만큼 다시 줍니다.
+ * DB 에 이미 반영돼 있으면 모자란 게 없어 다시 주지 않습니다. 레벨이 기록보다 낮아도 기록을 지우지 않습니다.
  * VJobs 탈퇴 벌칙(level-loss-percent)이 0 이 아니거나 keep-progress 가 꺼져 있으면 저장·복구 모두 하지 않고,
  * 그 상태로 재가입하면 남아 있던 기록을 버립니다.
  *
@@ -37,9 +42,10 @@ import org.bukkit.plugin.java.JavaPlugin;
  *   <li>기록 파일 장애(job-xp.tsv 를 읽지 못함): XP 유지가 정책상 꺼진 경우를 제외하고 탈퇴를 취소</li>
  * </ul>
  */
-public final class JobXpKeeper {
+public final class JobXpKeeper implements Listener {
 
-    private static final long RESTORE_TICKS = 20L * 5;
+    /** 접속 후 VJobs 가 데이터를 비동기로 읽는 동안 기다리는 최대 틱 (30초). */
+    private static final int LOAD_WAIT_TICKS = 20 * 30;
     private static final long CONFIRM_TICKS = 20L * 60;
 
     private final JavaPlugin plugin;
@@ -81,7 +87,11 @@ public final class JobXpKeeper {
         if (store == null) {
             return;
         }
-        plugin.getServer().getScheduler().runTaskTimer(plugin, this::restoreOnline, RESTORE_TICKS, RESTORE_TICKS);
+        plugin.getServer().getPluginManager().registerEvents(this, plugin);
+        // /reload 등으로 이미 접속해 있는 플레이어: VJobs 데이터가 있으면 지금 값 기준으로 확인
+        for (Player player : plugin.getServer().getOnlinePlayers()) {
+            afterVJobsLoad(player);
+        }
         if (confirmProblem == null) {
             plugin.getServer().getScheduler().runTaskTimer(plugin, this::confirmStored, CONFIRM_TICKS, CONFIRM_TICKS);
         }
@@ -189,16 +199,30 @@ public final class JobXpKeeper {
         plugin.getServer().getScheduler().runTask(plugin, () -> restore(player, JobXpStore.normalize(jobId)));
     }
 
-    /** 접속 중인 플레이어의 기록을 모두 확인. 재기동 뒤 VJobs 가 DB 에서 다시 읽은 값이 모자라면 여기서 다시 채움. */
-    private void restoreOnline() {
-        if (store == null || store.isEmpty() || !canRestore()) {
+    /** 접속: VJobs 가 DB 에서 데이터를 다 읽은 첫 틱에 기록을 확인. 강제 종료로 VJobs DB 가 예전 값이면 여기서 다시 채움. */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        afterVJobsLoad(event.getPlayer());
+    }
+
+    private void afterVJobsLoad(Player player) {
+        if (store == null || store.jobs(player.getUniqueId()).isEmpty()) {
             return;
         }
-        for (Player player : plugin.getServer().getOnlinePlayers()) {
+        int[] waited = {0};
+        plugin.getServer().getScheduler().runTaskTimer(plugin, task -> {
+            if (!player.isOnline() || ++waited[0] > LOAD_WAIT_TICKS) {
+                task.cancel();
+                return;
+            }
+            if (!hook.loaded(player.getUniqueId())) {
+                return;
+            }
+            task.cancel();
             for (String job : store.jobs(player.getUniqueId()).keySet()) {
                 restore(player, job);
             }
-        }
+        }, 0L, 1L);
     }
 
     private void restore(Player player, String job) {
@@ -212,25 +236,28 @@ public final class JobXpKeeper {
         }
         VJobsHook.Progress now = hook.progress(uuid, job);
         if (now == null) {
-            return; // 가입하지 않았거나 VJobs 가 아직 데이터를 읽는 중. 기록 유지
+            return; // 가입하지 않았거나 VJobs 가 아직 데이터를 읽는 중. 기록 유지, 다음 재가입·접속 때 다시
         }
-        if (now.level() < saved.level()) {
-            dropQuietly(uuid, job, "현재 Lv" + now.level() + " 이 저장된 Lv" + saved.level() + " 보다 낮음");
+        // 이 순간의 값 기준으로 한 번만 계산 (이후 얻은 XP 는 계산에 넣지 않음)
+        double give = saved.missingXp(now.level(), now.xp(), hook::xpForLevel);
+        if (Double.isNaN(give)) {
+            plugin.getLogger().warning(player.getName() + " " + job + " 레벨별 필요 XP 를 읽지 못해 복구 보류 (기록 유지)");
             return;
         }
-        double give = saved.toRestore(now.level(), now.xp());
-        if (give > 0) {
+        if (give > SavedJobXp.EPSILON) {
             if (!hook.giveXp(player, job, give)) {
-                return; // 기록을 그대로 두고 다음 확인 때 다시 시도
+                return; // 기록을 그대로 두고 다음 재가입·접속 때 다시
             }
-            plugin.getLogger().info(player.getName() + " " + job + " Lv" + now.level() + " XP "
-                    + String.format(Locale.ROOT, "%.1f", give) + " 복구" + (saved.restored() ? " (VJobs 저장 전 종료 후 다시)" : ""));
+            plugin.getLogger().info(player.getName() + " " + job + " Lv" + saved.level() + " XP "
+                    + String.format(Locale.ROOT, "%.1f", give) + " 복구"
+                    + (now.level() < saved.level() ? " (Lv" + now.level() + " 에서)" : "")
+                    + (saved.restored() ? " (VJobs 저장 전 종료 후 다시)" : ""));
         }
         if (!saved.restored()) {
             try {
                 store.put(uuid, job, saved.asRestored());
             } catch (IOException e) {
-                // "복구 대기" 로 남아도 다음 확인 때 모자란 XP 가 없어 다시 주지 않음
+                // "복구 대기" 로 남아도 다음 확인 때 VJobs 값이 이미 기록 이상이라 다시 주지 않음
                 plugin.getLogger().log(Level.WARNING, player.getName() + " " + job + " XP 기록 상태 저장 실패", e);
             }
         }

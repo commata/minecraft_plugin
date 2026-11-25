@@ -1,14 +1,9 @@
 package kr.commata.economyhub.jobs;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -154,26 +149,6 @@ public final class JobXpStore {
         StringBuilder out = new StringBuilder(HEADER).append('\n');
         entries.forEach((uuid, jobs) -> jobs.forEach((job, saved) ->
                 out.append(uuid).append('\t').append(job).append('\t').append(saved.encode()).append('\n')));
-        Path dir = file.toAbsolutePath().getParent();
-        Files.createDirectories(dir);
-        Path tmp = dir.resolve(file.getFileName() + ".tmp");
-        try (FileChannel channel = FileChannel.open(tmp, StandardOpenOption.CREATE, StandardOpenOption.WRITE,
-                StandardOpenOption.TRUNCATE_EXISTING)) {
-            ByteBuffer buffer = ByteBuffer.wrap(out.toString().getBytes(StandardCharsets.UTF_8));
-            while (buffer.hasRemaining()) {
-                channel.write(buffer);
-            }
-            channel.force(true);
-        }
-        try {
-            Files.move(tmp, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-        } catch (AtomicMoveNotSupportedException e) {
-            Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
-        }
-        try (FileChannel dirChannel = FileChannel.open(dir, StandardOpenOption.READ)) {
-            dirChannel.force(true); // Linux: 파일 이름 바꾼 것까지 디스크에 반영
-        } catch (IOException | UnsupportedOperationException e) {
-            // Windows 는 폴더를 열 수 없음. 파일 내용은 이미 fsync 됨
-        }
+        AtomicFiles.write(file, out.toString());
     }
 }
