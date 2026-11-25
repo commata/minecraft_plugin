@@ -112,6 +112,30 @@ public final class VJobsHook {
         }
     }
 
+    /**
+     * JobJoinEvent 시점에 VJobs 가 곧 가입시킬 진행도: 보관된 진행도(PlayerJobData.getArchivedProgress), 없으면 Lv1·XP 0.
+     * VJobs 2.2.0 JobManager.join 이 이벤트 직후 이 값으로 putProgress 함(JAR 확인). 내부 클래스라 읽지 못하면 null.
+     */
+    public Progress joinBase(UUID uuid, String jobId) {
+        try {
+            Object manager = vjobs.getClass().getMethod("getJobManager").invoke(vjobs);
+            Object cache = manager.getClass().getMethod("getCache").invoke(manager);
+            Object data = cache instanceof java.util.Map<?, ?> map ? map.get(uuid) : null;
+            if (data == null) {
+                return null;
+            }
+            Object archived = data.getClass().getMethod("getArchivedProgress", String.class).invoke(data, jobId);
+            if (archived == null) {
+                return new Progress(1, 0.0);
+            }
+            int lv = ((Number) archived.getClass().getMethod("getLevel").invoke(archived)).intValue();
+            double xp = ((Number) archived.getClass().getMethod("getXp").invoke(archived)).doubleValue();
+            return new Progress(lv, xp);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return null;
+        }
+    }
+
     /** VJobs 가 이 플레이어 데이터를 다 읽었는지 (VJobsApi.getPlayer 는 읽기 전이면 비어 있음, JAR 확인). */
     public boolean loaded(UUID uuid) {
         try {

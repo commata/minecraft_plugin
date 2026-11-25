@@ -182,7 +182,11 @@ public final class JobXpKeeper implements Listener {
         }
     }
 
-    /** JobJoinEvent(MONITOR, 취소되지 않은 것). 가입 처리가 끝난 다음 틱에 복구. */
+    /**
+     * JobJoinEvent(MONITOR, 취소되지 않은 것). VJobs 는 이 이벤트 직후 같은 호출 안에서 보관 진행도(없으면 Lv1·XP 0)로
+     * 가입시킵니다(JobManager.join, JAR 확인). 그래서 복구량을 지금 그 보관 값 기준으로 계산해 두고, 다음 틱에는 계산해 둔
+     * 양만 더합니다. 가입한 틱에 새로 얻은 XP 는 계산에 들어가지 않아 흡수되지 않음.
+     */
     public void onJoin(Player player, String jobId) {
         if (jobId == null || store == null) {
             return;
@@ -196,7 +200,13 @@ public final class JobXpKeeper implements Listener {
         if (rule == Rule.UNKNOWN) {
             return; // 설정을 알 수 없으면 복구도 삭제도 하지 않고 기록 유지
         }
-        plugin.getServer().getScheduler().runTask(plugin, () -> restore(player, JobXpStore.normalize(jobId)));
+        String job = JobXpStore.normalize(jobId);
+        SavedJobXp saved = store.get(player.getUniqueId(), job);
+        if (saved == null) {
+            return;
+        }
+        VJobsHook.Progress base = hook.joinBase(player.getUniqueId(), job); // 읽지 못하면 null → 다음 틱 값 기준
+        plugin.getServer().getScheduler().runTask(plugin, () -> restore(player, job, base, saved));
     }
 
     /** 접속: VJobs 가 DB 에서 데이터를 다 읽은 첫 틱에 기록을 확인. 강제 종료로 VJobs DB 가 예전 값이면 여기서 다시 채움. */
@@ -220,25 +230,30 @@ public final class JobXpKeeper implements Listener {
             }
             task.cancel();
             for (String job : store.jobs(player.getUniqueId()).keySet()) {
-                restore(player, job);
+                restore(player, job, null, null);
             }
         }, 0L, 1L);
     }
 
-    private void restore(Player player, String job) {
+    /**
+     * @param base     복구량 계산 기준 (재가입 때 VJobs 보관 값). null 이면 지금 VJobs 값 (접속 후 데이터를 다 읽은 첫 틱)
+     * @param expected 재가입 때 본 기록. 그 사이 기록이 바뀌었으면(같은 틱에 다시 탈퇴 등) 이번 복구는 하지 않음
+     */
+    private void restore(Player player, String job, VJobsHook.Progress base, SavedJobXp expected) {
         if (!player.isOnline() || !canRestore()) {
             return;
         }
         UUID uuid = player.getUniqueId();
         SavedJobXp saved = store.get(uuid, job);
-        if (saved == null) {
+        if (saved == null || (expected != null && !saved.equals(expected))) {
             return;
         }
-        VJobsHook.Progress now = hook.progress(uuid, job);
-        if (now == null) {
+        VJobsHook.Progress current = hook.progress(uuid, job);
+        if (current == null) {
             return; // 가입하지 않았거나 VJobs 가 아직 데이터를 읽는 중. 기록 유지, 다음 재가입·접속 때 다시
         }
-        // 이 순간의 값 기준으로 한 번만 계산 (이후 얻은 XP 는 계산에 넣지 않음)
+        // 기준 순간의 값으로 한 번만 계산 (그 뒤 얻은 XP 는 계산에 넣지 않음)
+        VJobsHook.Progress now = base != null ? base : current;
         double give = saved.missingXp(now.level(), now.xp(), hook::xpForLevel);
         if (Double.isNaN(give)) {
             plugin.getLogger().warning(player.getName() + " " + job + " 레벨별 필요 XP 를 읽지 못해 복구 보류 (기록 유지)");
