@@ -1,6 +1,8 @@
 package kr.commata.economyhub.jobs;
 
 import java.lang.reflect.Method;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.function.Consumer;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Event;
@@ -17,6 +19,7 @@ public final class VJobsHook {
 
     public static final String LEAVE_EVENT = "com.vjobs.api.event.JobLeaveEvent";
     public static final String PAYOUT_EVENT = "com.vjobs.api.event.JobPayoutEvent";
+    public static final String JOIN_EVENT = "com.vjobs.api.event.JobJoinEvent";
 
     /** 핸들러를 한 객체에 묶어 두면 플러그인을 끌 때 Bukkit 이 한꺼번에 해제함. */
     private static final Listener OWNER = new Listener() { };
@@ -68,5 +71,65 @@ public final class VJobsHook {
         } catch (ReflectiveOperationException | RuntimeException e) {
             return null;
         }
+    }
+
+    /** 현재 직업 레벨과 그 레벨에서 쌓은 XP. */
+    public record Progress(int level, double xp) { }
+
+    /** JobPlayerEvent.getJob().getId(). 읽지 못하면 null. */
+    public String jobId(Event event) {
+        try {
+            Object job = event.getClass().getMethod("getJob").invoke(event);
+            return job == null ? null : (String) api("com.vjobs.api.Job").getMethod("getId").invoke(job);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * VJobsProvider.get().getPlayer(uuid).getJob(jobId) 의 레벨·XP. 가입하지 않은 직업이거나 읽지 못하면 null.
+     * 인터페이스의 Method 로 호출해야 구현 클래스가 public 이 아니어도 됨.
+     */
+    public Progress progress(UUID uuid, String jobId) {
+        try {
+            Object apiInstance = api("com.vjobs.api.VJobsProvider").getMethod("get").invoke(null);
+            Object player = unwrap(api("com.vjobs.api.VJobsApi").getMethod("getPlayer", UUID.class)
+                    .invoke(apiInstance, uuid));
+            if (player == null) {
+                return null;
+            }
+            Object level = unwrap(api("com.vjobs.api.JobPlayer").getMethod("getJob", String.class)
+                    .invoke(player, jobId));
+            if (level == null) {
+                return null;
+            }
+            Class<?> levelType = api("com.vjobs.api.JobLevel");
+            int lv = (Integer) levelType.getMethod("level").invoke(level);
+            double xp = (Double) levelType.getMethod("xp").invoke(level);
+            return new Progress(lv, xp);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** VJobsApi.giveXp(player, jobId, xp). 배율 없이 그대로 더함(JobManager.giveXp, JAR 확인). */
+    public boolean giveXp(Player player, String jobId, double xp) {
+        try {
+            Object apiInstance = api("com.vjobs.api.VJobsProvider").getMethod("get").invoke(null);
+            api("com.vjobs.api.VJobsApi").getMethod("giveXp", Player.class, String.class, double.class)
+                    .invoke(apiInstance, player, jobId, xp);
+            return true;
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            plugin.getLogger().warning("VJobs giveXp 실패 (" + jobId + "): " + e);
+            return false;
+        }
+    }
+
+    private Class<?> api(String name) throws ClassNotFoundException {
+        return Class.forName(name, true, vjobs.getClass().getClassLoader());
+    }
+
+    private static Object unwrap(Object value) {
+        return value instanceof Optional<?> optional ? optional.orElse(null) : value;
     }
 }

@@ -10,6 +10,7 @@ import java.util.function.LongSupplier;
 import kr.commata.economyhub.guard.PayoutGuard;
 import kr.commata.economyhub.guard.UntrustedBlocks;
 import kr.commata.economyhub.jobs.JobCooldownGuard;
+import kr.commata.economyhub.jobs.JobXpKeeper;
 import kr.commata.economyhub.jobs.VJobsHook;
 import org.bukkit.Material;
 import org.bukkit.configuration.file.FileConfiguration;
@@ -34,6 +35,7 @@ public final class EconomyHubPlugin extends JavaPlugin {
     private final AtomicLong cancelledPayouts = new AtomicLong();
     private boolean leaveHooked;
     private boolean payoutHooked;
+    private boolean xpHooked;
 
     @Override
     public void onEnable() {
@@ -58,7 +60,8 @@ public final class EconomyHubPlugin extends JavaPlugin {
                         List.of("ehub"), new HubCommand(this)));
         getLogger().info("EconomyHub " + getPluginMeta().getVersion() + " 활성화 (탈퇴 후 쿨타임 "
                 + (leaveHooked ? cooldownGuard.cooldownMs() / 60_000L + "분" : "꺼짐") + ", 보상 제외 "
-                + (payoutHooked && settings.guardEnabled() ? "켜짐" : "꺼짐") + ")");
+                + (payoutHooked && settings.guardEnabled() ? "켜짐" : "꺼짐") + ", 탈퇴 후 XP 유지 "
+                + (xpHooked ? "켜짐" : "꺼짐") + ")");
     }
 
     /** VJobs config.yml 의 job-switch-cooldown.default-seconds. 탈퇴 후 대기 시간은 이 값 하나만 씁니다. */
@@ -68,10 +71,13 @@ public final class EconomyHubPlugin extends JavaPlugin {
 
     private void hookVJobs(Plugin vjobs) {
         VJobsHook hook = new VJobsHook(this, vjobs);
+        JobXpKeeper xpKeeper = new JobXpKeeper(this, vjobs, hook);
 
         String leaveError = hook.listen(VJobsHook.LEAVE_EVENT, EventPriority.MONITOR, event -> {
             Player player = VJobsHook.player(event);
             if (player != null) {
+                // 탈퇴 직전(VJobs 가 아직 데이터를 바꾸기 전)이라 현재 레벨·XP 를 읽을 수 있음
+                xpKeeper.onLeave(player, hook.jobId(event));
                 cooldownGuard.onJobLeave(player);
             }
         });
@@ -83,6 +89,18 @@ public final class EconomyHubPlugin extends JavaPlugin {
             getServer().getScheduler().runTaskTimer(this, cooldownGuard::refreshAll, REFRESH_TICKS, REFRESH_TICKS);
         } else {
             getLogger().warning("직업 탈퇴 이벤트 연결 실패, 탈퇴 후 쿨타임 기능 꺼짐: " + leaveError);
+        }
+
+        String joinError = hook.listen(VJobsHook.JOIN_EVENT, EventPriority.MONITOR, event -> {
+            Player player = VJobsHook.player(event);
+            if (player != null) {
+                xpKeeper.onJoin(player, hook.jobId(event));
+            }
+        });
+        if (joinError == null && leaveError == null) {
+            xpHooked = true;
+        } else {
+            getLogger().warning("직업 가입·탈퇴 이벤트 연결 실패, 탈퇴 후 XP 유지 꺼짐: " + (joinError != null ? joinError : leaveError));
         }
 
         String payoutError = hook.listen(VJobsHook.PAYOUT_EVENT, EventPriority.HIGH, event -> {
