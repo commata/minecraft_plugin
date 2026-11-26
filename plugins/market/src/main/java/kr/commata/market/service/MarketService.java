@@ -363,7 +363,7 @@ public final class MarketService {
 
     // ------------------------------------------------------------------ 직업별 서버 매입 (ECONOMY.md 14.3)
 
-    public boolean sellItem(Player player, String itemId, boolean sellMax) {
+    public boolean sellItem(Player player, String itemId, SellMath.Amount amount) {
         MarketConfig cfg = this.config;
         if (!ensureReady(player, cfg.sell().available(), cfg.sell().lockReason())) {
             return false;
@@ -425,7 +425,7 @@ public final class MarketService {
             SellMath.Plan plan = SellMath.calculate(
                     invCount, effectiveJobQuota, quota.baseAmount(),
                     item.unit(), item.basePrice(), item.bonusPrice(),
-                    remainingLimit, sellMax ? Integer.MAX_VALUE : 1);
+                    remainingLimit, SellMath.maxBundles(amount, material.getMaxStackSize(), item.unit()));
 
             if (plan.isEmpty()) {
                 if (effectiveJobQuota < item.unit() && quota.baseAmount() < item.unit()) {

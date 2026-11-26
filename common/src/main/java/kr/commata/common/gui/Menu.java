@@ -1,7 +1,9 @@
 package kr.commata.common.gui;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Bukkit;
@@ -32,6 +34,8 @@ public abstract class Menu implements InventoryHolder {
 
     private final Inventory inventory;
     private final Map<Integer, Click> clicks = new HashMap<>();
+    /** Shift+좌클릭도 버튼으로 받는 칸 (ECONOMY.md 7.4 공통 규칙의 예외, 칸마다 명시적으로 켬) */
+    private final Set<Integer> shiftLeftSlots = new HashSet<>();
     private final boolean[] placed;
 
     protected Menu(int rows, Component title) {
@@ -64,6 +68,7 @@ public abstract class Menu implements InventoryHolder {
     /** 창을 다시 그립니다. 바뀐 칸만 클라이언트에 전송됩니다. */
     public final void render(Player viewer) {
         clicks.clear();
+        shiftLeftSlots.clear();
         java.util.Arrays.fill(placed, false);
         draw(viewer);
         ItemStack filler = null;
@@ -84,11 +89,27 @@ public abstract class Menu implements InventoryHolder {
     protected final void set(int slot, ItemStack item, Click click) {
         inventory.setItem(slot, item);
         placed[slot] = true;
+        shiftLeftSlots.remove(slot);
         if (click != null) {
             clicks.put(slot, click);
         } else {
             clicks.remove(slot);
         }
+    }
+
+    /**
+     * {@link #set(int, ItemStack, Click)} 와 같고, 이 칸은 Shift+좌클릭({@link ClickType#SHIFT_LEFT})도 버튼으로 넘깁니다.
+     * 아이템 이동은 여전히 {@link MenuListener} 가 취소합니다. 핸들러는 {@code type} 으로 클릭을 구분해야 합니다.
+     */
+    protected final void setShiftable(int slot, ItemStack item, Click click) {
+        set(slot, item, click);
+        if (click != null) {
+            shiftLeftSlots.add(slot);
+        }
+    }
+
+    final boolean acceptsShiftLeft(int slot) {
+        return shiftLeftSlots.contains(slot);
     }
 
     /** 이 창을 보고 있으면 true */

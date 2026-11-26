@@ -156,4 +156,30 @@ class CatalogsAndMathTest {
         assertEquals(draws.get(0).enchantKey(), decoded.get(0).enchantKey());
         assertEquals(2000L, decoded.get(2).unitPrice());
     }
+
+    @Test
+    void stackSellCapsAtOneSlotInUnitMultiples() {
+        // 좌클릭 1묶음, 우클릭 제한 없음
+        assertEquals(1, SellMath.maxBundles(SellMath.Amount.ONE, 64, 16));
+        assertEquals(Integer.MAX_VALUE, SellMath.maxBundles(SellMath.Amount.MAX, 64, 16));
+        // Shift+좌클릭: 한 칸(64개) 안의 묶음 수 — 단위 1 → 64, 2 → 32, 16 → 4
+        assertEquals(64, SellMath.maxBundles(SellMath.Amount.STACK, 64, 1));
+        assertEquals(32, SellMath.maxBundles(SellMath.Amount.STACK, 64, 2));
+        assertEquals(4, SellMath.maxBundles(SellMath.Amount.STACK, 64, 16));
+        // 엔더 진주처럼 16개까지만 쌓이는 품목 → 16개
+        assertEquals(16, SellMath.maxBundles(SellMath.Amount.STACK, 16, 1));
+        // 판매 단위가 한 칸보다 커도 최소 1묶음
+        assertEquals(1, SellMath.maxBundles(SellMath.Amount.STACK, 16, 32));
+
+        // 감자 100개 보유·판매 가능량 충분: 한 칸 판매는 64개(4묶음), 최대 판매는 96개(6묶음)
+        SellMath.Plan stack = SellMath.calculate(100, 1000, 0, 16, 4, 8, 5000,
+                SellMath.maxBundles(SellMath.Amount.STACK, 64, 16));
+        assertEquals(64, stack.totalAmount());
+        SellMath.Plan max = SellMath.calculate(100, 1000, 0, 16, 4, 8, 5000, Integer.MAX_VALUE);
+        assertEquals(96, max.totalAmount());
+        // 보유가 한 칸보다 적으면 보유 수량(단위 배수)까지만: 감자 40개 → 32개
+        SellMath.Plan few = SellMath.calculate(40, 1000, 0, 16, 4, 8, 5000,
+                SellMath.maxBundles(SellMath.Amount.STACK, 64, 16));
+        assertEquals(32, few.totalAmount());
+    }
 }

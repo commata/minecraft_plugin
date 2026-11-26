@@ -16,7 +16,6 @@ import kr.commata.market.core.SellMath;
 import kr.commata.market.service.ItemFactory;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
-import org.bukkit.event.inventory.ClickType;
 import org.bukkit.inventory.ItemStack;
 
 /**
@@ -189,7 +188,9 @@ final class SellMenu extends Menu {
                 } else if (onePlan.isEmpty()) {
                     lore.add("<#FF5555>판매 가능한 수량 또는 한도가 부족합니다.");
                 } else {
-                    lore.add("<#55FF55>▶ 좌클릭: 1묶음 판매 / 우클릭: 최대 판매");
+                    lore.add("<#55FF55>▶ 좌클릭: 1묶음 판매");
+                    lore.add("<#55FF55>▶ Shift+좌클릭: 한 칸(최대 " + mat.getMaxStackSize() + "개) 판매");
+                    lore.add("<#55FF55>▶ 우클릭: 최대 판매");
                 }
 
                 ItemStack icon = Items.of(mat)
@@ -198,9 +199,16 @@ final class SellMenu extends Menu {
                         .build();
 
                 if (bankReady && !onePlan.isEmpty()) {
-                    set(slot, icon, (player, click) -> {
-                        if (click == ClickType.LEFT || click == ClickType.RIGHT) {
-                            menus.market().sellItem(player, item.id(), click == ClickType.RIGHT);
+                    // Shift+좌클릭은 이 품목 칸만 받음 (ECONOMY.md 7.4 공통 규칙의 예외, 7.4.5)
+                    setShiftable(slot, icon, (player, click) -> {
+                        SellMath.Amount amount = switch (click) {
+                            case LEFT -> SellMath.Amount.ONE;
+                            case SHIFT_LEFT -> SellMath.Amount.STACK;
+                            case RIGHT -> SellMath.Amount.MAX;
+                            default -> null;
+                        };
+                        if (amount != null) {
+                            menus.market().sellItem(player, item.id(), amount);
                             if (isViewing(player)) {
                                 render(player);
                             }

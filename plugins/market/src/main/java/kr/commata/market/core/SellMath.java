@@ -7,6 +7,23 @@ package kr.commata.market.core;
  */
 public final class SellMath {
 
+    /** {@code /판매} 클릭별 판매량 (ECONOMY.md 7.4.5): 좌클릭 1묶음, Shift+좌클릭 한 칸, 우클릭 최대. */
+    public enum Amount {
+        ONE, STACK, MAX
+    }
+
+    /**
+     * 한 번에 팔 묶음 수 상한. {@code STACK} 은 그 품목 한 칸 최대치({@code maxStackSize}, 대부분 64) 안에 들어가는 묶음 수이며
+     * 판매 단위가 한 칸보다 커도 최소 1묶음.
+     */
+    public static int maxBundles(Amount amount, int maxStackSize, int unit) {
+        return switch (amount) {
+            case ONE -> 1;
+            case MAX -> Integer.MAX_VALUE;
+            case STACK -> unit <= 0 ? 0 : Math.max(1, maxStackSize / unit);
+        };
+    }
+
     /** 일일 한도 게이지 칸 수 (5줄 슬롯 37–43). */
     public static final int GAUGE_SLOTS = 7;
 
