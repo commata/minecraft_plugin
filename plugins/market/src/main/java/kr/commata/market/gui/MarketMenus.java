@@ -77,6 +77,24 @@ public final class MarketMenus {
         new SellMenu(this, player).open(player);
     }
 
+    /** {@code /economy}(EconomyHub)가 켜져 있으면 메인 허브로 돌아가는 버튼을 둘 수 있음 (ECONOMY.md 7.4.3–7.4.5) */
+    public boolean hubAvailable() {
+        return plugin.getServer().getPluginManager().isPluginEnabled("EconomyHub");
+    }
+
+    /** {@code /직업}의 메인 허브 버튼과 같은 모양 (ECONOMY.md 7.4.2) */
+    public ItemStack hubButton() {
+        return Items.of(Material.OAK_DOOR)
+                .name("<#F5C542>메인 허브")
+                .lore("<#AAAAAA>/economy 로 돌아갑니다.", "", "<#55FF55>▶ 클릭하여 돌아가기")
+                .build();
+    }
+
+    /** 클릭 이벤트 안에서 다른 명령을 실행하지 않도록 다음 틱에 {@code /economy} 실행 */
+    public void openHub(Player player) {
+        later(() -> player.performCommand("economy"));
+    }
+
     public ItemStack balanceHead(Player viewer) {
         return Items.of(Material.PLAYER_HEAD)
                 .head(viewer)

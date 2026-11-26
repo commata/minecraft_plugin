@@ -14,14 +14,15 @@ import org.bukkit.inventory.meta.ItemMeta;
 /**
  * /뽑기 9×3 GUI (ECONOMY.md 7.4.4, 13.5).
  *
- * <p>2줄: 1회(11), 10회(13), 확률 정보(15). 3줄: 내 잔액(18), 전설 천장 현황(22), 닫기(26).
+ * <p>2줄: 1회(11), 10회(13), 확률 정보(15). 3줄: 메인 허브(18, EconomyHub 가 켜져 있을 때), 내 잔액(19), 전설 천장 현황(22), 닫기(26).
  */
 final class GachaMenu extends Menu {
 
     private static final int SLOT_PULL_1 = 11;
     private static final int SLOT_PULL_10 = 13;
     private static final int SLOT_RATES = 15;
-    private static final int SLOT_BALANCE = 18;
+    private static final int SLOT_HUB = 18;
+    private static final int SLOT_BALANCE = 19;
     private static final int SLOT_PITY = 22;
     private static final int SLOT_CLOSE = 26;
 
@@ -72,6 +73,9 @@ final class GachaMenu extends Menu {
                         "<#55FF55>▶ 클릭하여 확률표 보기 (/뽑기 확률)")
                 .build(), (player, click) -> menus.later(() -> menus.openGachaRates(player)));
 
+        if (menus.hubAvailable()) {
+            set(SLOT_HUB, menus.hubButton(), (player, click) -> menus.openHub(player));
+        }
         set(SLOT_BALANCE, menus.balanceHead(viewer));
         if (readError) {
             set(SLOT_PITY, Items.of(Material.NETHER_STAR)
