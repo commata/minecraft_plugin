@@ -162,7 +162,8 @@ public final class SkillListener implements Listener {
         if (Tag.LOGS.isTagged(type)) {
             Sapling sapling = SAPLINGS.get(type);
             Material ground = block.getRelative(BlockFace.DOWN).getType();
-            if (sapling != null && sapling.ground().isTagged(ground) && skills.active(player, Skill.LUMBERJACK_REPLANT)) {
+            if (sapling != null && sapling.ground().isTagged(ground) && skills.active(player, Skill.LUMBERJACK_REPLANT)
+                    && hasCanopy(block, type)) {
                 later(1, () -> replantSapling(player, block, sapling.item(), ground));
             }
             if (skills.active(player, Skill.LUMBERJACK_LEAVES)) {
@@ -182,6 +183,27 @@ public final class SkillListener implements Listener {
             later(1, () -> replantCrop(player, block, young, seed));
         }
     }
+
+    /** 같은 줄기를 위로 따라가며 인접 수관을 확인한다. 장식용 잎과 잎 없는 기둥은 제외한다. */
+    private static boolean hasCanopy(Block base, Material log) {
+        for (Block trunk = base; trunk.getY() < base.getWorld().getMaxHeight() && trunk.getType() == log;
+             trunk = trunk.getRelative(BlockFace.UP)) {
+            for (BlockFace face : CANOPY_FACES) {
+                Block near = trunk.getRelative(face);
+                if (!near.getWorld().isChunkLoaded(near.getX() >> 4, near.getZ() >> 4)) continue;
+                if (log == Material.CRIMSON_STEM || log == Material.WARPED_STEM) {
+                    Material canopy = log == Material.CRIMSON_STEM ? Material.NETHER_WART_BLOCK : Material.WARPED_WART_BLOCK;
+                    if (near.getType() == canopy) return true;
+                } else if (near.getBlockData() instanceof Leaves leaves && !leaves.isPersistent()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static final List<BlockFace> CANOPY_FACES = List.of(BlockFace.UP, BlockFace.NORTH, BlockFace.SOUTH,
+            BlockFace.WEST, BlockFace.EAST);
 
     private void replantSapling(Player player, Block block, Material sapling, Material ground) {
         if (!player.isOnline() || !block.getType().isAir() || block.getRelative(BlockFace.DOWN).getType() != ground) {

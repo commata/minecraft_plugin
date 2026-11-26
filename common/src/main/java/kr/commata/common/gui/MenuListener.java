@@ -37,6 +37,11 @@ public final class MenuListener implements Listener {
         if (!(event.getWhoClicked() instanceof Player player) || event.getClickedInventory() != top) {
             return;
         }
+        // 슬롯 교환·버리기·모으기는 버튼 조작으로 전달하지 않는다.
+        switch (event.getClick()) {
+            case LEFT, RIGHT -> { }
+            default -> { return; }
+        }
         int slot = event.getRawSlot();
         if (slot < 0 || slot >= top.getSize()) {
             return;

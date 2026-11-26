@@ -53,8 +53,16 @@ public final class CaveVision implements Listener {
                 applied.add(player.getUniqueId());
             }
         } else if (ours) {
-            player.removePotionEffect(PotionEffectType.NIGHT_VISION);
+            removeSkillEffect(player);
             applied.remove(player.getUniqueId());
+        }
+    }
+
+    private static void removeSkillEffect(Player player) {
+        PotionEffect current = player.getPotionEffect(PotionEffectType.NIGHT_VISION);
+        if (current != null && CaveVisionRule.mayOverwrite(current.isInfinite() ? -1 : current.getDuration())
+                && current.getAmplifier() == 0 && current.isAmbient() && !current.hasParticles() && !current.hasIcon()) {
+            player.removePotionEffect(PotionEffectType.NIGHT_VISION);
         }
     }
 
@@ -68,10 +76,7 @@ public final class CaveVision implements Listener {
         for (UUID uuid : applied) {
             Player player = skills.plugin().getServer().getPlayer(uuid);
             if (player != null) {
-                PotionEffect current = player.getPotionEffect(PotionEffectType.NIGHT_VISION);
-                if (current != null && !current.isInfinite() && current.getDuration() <= CaveVisionRule.EFFECT_TICKS) {
-                    player.removePotionEffect(PotionEffectType.NIGHT_VISION);
-                }
+                removeSkillEffect(player);
             }
         }
         applied.clear();
@@ -81,8 +86,7 @@ public final class CaveVision implements Listener {
     public void onQuit(PlayerQuitEvent event) {
         Player player = event.getPlayer();
         if (applied.remove(player.getUniqueId())) {
-            // 접속 종료 때 남은 15초가 저장되지 않게 지움
-            player.removePotionEffect(PotionEffectType.NIGHT_VISION);
+            removeSkillEffect(player);
         }
         skills.forget(player.getUniqueId());
     }

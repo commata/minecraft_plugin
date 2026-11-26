@@ -91,6 +91,7 @@ final class SkillMenu extends Menu {
                 .name((on ? "<#55FF55>" : "<#AAAAAA>") + skill.displayName() + (on ? " [켜짐]" : " [꺼짐]"))
                 .lore("<#AAAAAA>" + skill.description(), "", on ? "<#FF5555>▶ 클릭하여 끄기" : "<#55FF55>▶ 클릭하여 켜기").build(),
                 (player, click) -> {
+                    if (click != org.bukkit.event.inventory.ClickType.LEFT) return;
                     skills.setOn(player, skill, !skills.isOn(player, skill));
                     if (skill == Skill.MINER_CAVE_VISION) {
                         caveVision.update(player); // 끄면 야간 투시를 바로 지움
