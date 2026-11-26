@@ -5,7 +5,7 @@
 
 > 마지막 갱신: 2026-11-26 (Coordinator: Claude Code)
 
-지금 쓰는 로컬 테스트 서버: `plugins/market/run` (`.\gradlew :plugins:market:runServer`, `localhost:25565`, RCON 127.0.0.1:25575 로컬 전용). 기준 브랜치는 로컬 `test/pr14-pr15`(main + PR #14 + PR #15, push 안 함).
+지금 쓰는 로컬 테스트 서버: `plugins/market/run` (`localhost:25565`, RCON 25575 로컬 테스트 전용). Gradle 데몬이 꺼지면 같이 꺼지므로 `runServer` 대신 `java -jar ~/.gradle/caches/run-task-jars/paper/jars/26.3/263.jar nogui`를 그 폴더에서 직접 실행하고, 플러그인 JAR(bank·economy-hub·market)은 `run/plugins/`에 복사합니다. 종료는 RCON `stop`. 기준 브랜치는 로컬 `test/pr14-pr15`(main + PR #14 + PR #15, push 안 함).
 
 ## 1. 현재 단계: PR #14·#15 안정화
 
@@ -35,8 +35,8 @@
 
 | 접수일 | 내용 | 원인 | 처리 | 상태 |
 | --- | --- | --- | --- | --- |
-| 2026-11-26 | 농부 매입에 사탕수수·선인장·달콤한 열매·버섯 추가 요청 | 기획 14.4가 "성장이 빨라 매입 안 함"으로 확정돼 있었음 | 사용자 결정으로 ECONOMY.md v0.9.3(63097cd), 구현 39c42fd(DEV-B). QA에서 설치 표시 누락(CRITICAL) → DEV-B 보완 중 | 진행 중 |
-| 2026-11-26 | `/economy` 하위 화면에 뒤로가기 없음 | Market 메뉴에 허브 버튼 없음 | `/희귀상점`·`/판매` 45, `/뽑기` 18에 메인 허브(aa3bf4a). 서버 상점(ESGUI)은 하단 바에 명령 동작이 없어 제외 | 구현 완료, 서버 미반영 |
+| 2026-11-26 | 농부 매입에 사탕수수·선인장·달콤한 열매·버섯 추가 요청 | 기획 14.4가 "성장이 빨라 매입 안 함"으로 확정돼 있었음 | 사용자 결정으로 ECONOMY.md v0.9.3(63097cd), 구현 39c42fd·1ab34e4·7899a30(설치 표시·버섯 퍼짐) | PR #15 반영, 테스트 서버 반영, 인게임 확인 대기 |
+| 2026-11-26 | `/economy` 하위 화면에 뒤로가기 없음 | Market 메뉴에 허브 버튼 없음 | `/희귀상점`·`/판매` 45, `/뽑기` 18에 메인 허브(aa3bf4a). 서버 상점(ESGUI)은 하단 바에 명령 동작이 없어 제외 | PR #15 반영, 테스트 서버 반영, 인게임 확인 대기 |
 
 ## 5. 테스트 기록
 
@@ -50,9 +50,12 @@
 | 날짜 | 대상 (기준..검증) | QA 모델 | 결과 | 남은 것 |
 | --- | --- | --- | --- | --- |
 | 2026-11-26 | 통합 리뷰 `9f4da30..fb2ac60` | codex `gpt-6.2-astra` | High 4 · Medium 6 · Low 2 | High 1–4 수정 중 |
-| 2026-11-26 | High #4 `266439f..1871906` | codex `gpt-6.2-astra` | 미해결: 생산자 규격 확인 없음(High), Medium 3, Low 1 | DEV-B 보완 중 |
-| 2026-11-26 | High #1–3 `266439f..acfa576` | codex `gpt-6.2-astra` | H1 통과. H2·H3 잔여 P1 2 · P2 3 | DEV-A 수정 중 |
-| 2026-11-26 | 작물 `1510bd5..39c42fd` | antigravity `gemini-4-neon` (Codex 한도 소진으로 대체) | 가격·API·테스트 65/65 PASS. 신규 작물 설치 mark 누락 CRITICAL | DEV-B 보완 중 |
+| 2026-11-26 | High #4 `266439f..1871906` | codex `gpt-6.2-astra` | 미해결: 생산자 규격 확인 없음(High), Medium 3, Low 1 | → 1ab34e4 |
+| 2026-11-26 | High #1–3 `266439f..acfa576` | codex `gpt-6.2-astra` | H1 통과. H2·H3 잔여 P1 2 · P2 3 | → c70b171 |
+| 2026-11-26 | 작물 `1510bd5..39c42fd` | antigravity `gemini-4-neon` (Codex 한도 소진으로 대체) | 가격·API·테스트 65/65 PASS. 신규 작물 설치 mark 누락 CRITICAL | → 1ab34e4 |
+| 2026-11-26 | High #4·작물 보완 `39c42fd..7899a30` | antigravity `gemini-4-neon` | 이전 발견 1–6 모두 해결, 회귀 없음, 테스트 139 PASS | 없음 |
+| 2026-11-26 | H2·H3 보완 `acfa576..c70b171` | antigravity `gemini-4-neon` | 1·2·3·5 해결, 4 부분(메모리 격리가 거래 진입 검사에 빠짐, P2) | a2b483b 에서 Coordinator 직접 수정(재현 테스트 FAIL→PASS) |
+| 2026-11-26 | **마지막 QA 통과 기준: `a2b483b`** (origin/feat/market-stage-1-7) | — | `.\gradlew build` PASS, 실패 0. 로컬 서버 반영, `/market status` 블록 집계 켜짐 | 인게임 확인 NOT RUN. 이후 재검증은 이 커밋 이후 diff만 |
 
 ## 6. 미해결·기술 부채
 
@@ -61,5 +64,5 @@
 
 ## 7. 다음 작업
 
-- High 1–4·작물 보완 → QA 재검증(차이만) → PR #15 반영 → 로컬 테스트 서버 재시작 반영.
-- 그다음 사용자 인게임 피드백 대기.
+- 사용자 인게임 확인(메인 허브 버튼, 신규 작물 판매 가능량, 직접 놓은 블록 0개) → 피드백 반영.
+- PR #14·#15 병합 여부는 사용자 결정. 운영 배포 시 EconomyHub 와 Market 은 같이 배포.
