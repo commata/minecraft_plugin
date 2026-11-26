@@ -57,7 +57,7 @@ final class JobsMenu extends Menu {
     }
 
     static Component title(int joined, int limit) {
-        return Items.text("<#F5C542>직업 관리 (" + joined + "/" + limit + ")");
+        return Items.text("<#F5C542>직업 가입 및 관리 (" + joined + "/" + limit + ")");
     }
 
     private static int countJoined(VJobsHook vjobs, Player viewer) {
@@ -78,37 +78,48 @@ final class JobsMenu extends Menu {
         String cooldownText = Durations.korean(Duration.ofMillis(cooldownMs));
 
         boolean needsTick = pendingLeave != null;
+        int joinedCount = joined == null ? 0 : joined.size();
         for (MenuSettings.Job job : menus.settings().jobs()) {
             if (joined == null) {
                 // VJobs 가 접속 직후 아직 데이터를 읽는 중
+                List<String> lore = List.of("<#AAAAAA>직업 정보를 불러오는 중입니다...");
                 set(job.slot(), Items.of(Material.GRAY_DYE).name("<#AAAAAA>" + job.name())
-                        .lore("<#AAAAAA>직업 정보를 불러오는 중입니다...").build());
+                        .lore(lore).build());
+                drawStatus(job, JobSlot.StatusKind.LOADING, joinedCount, limit, remaining, lore, null);
                 needsTick = true;
                 continue;
             }
             Progress progress = joined.get(job.id());
-            JobSlot.State state = JobSlot.state(progress != null, joined.size(), limit, remaining);
+            JobSlot.State state = JobSlot.state(progress != null, joinedCount, limit, remaining);
             switch (state) {
-                case JOINED -> drawJoined(job, progress, cooldownText);
-                case FULL -> set(job.slot(), Items.of(Material.GRAY_DYE)
-                        .name("<#FF5555>" + job.name() + " [가입 불가 " + joined.size() + "/" + limit + "]")
-                        .lore("<#AAAAAA>다른 직업을 탈퇴한 뒤 가입할 수 있습니다.").build());
+                case JOINED -> drawJoined(job, progress, joinedCount, limit, remaining, cooldownText);
+                case FULL -> {
+                    List<String> lore = List.of("<#AAAAAA>다른 직업을 탈퇴한 뒤 가입할 수 있습니다.");
+                    set(job.slot(), Items.of(Material.GRAY_DYE)
+                            .name("<#FF5555>" + job.name() + " [가입 불가 " + joinedCount + "/" + limit + "]")
+                            .lore(lore).build());
+                    drawStatus(job, JobSlot.StatusKind.FULL, joinedCount, limit, remaining, lore, null);
+                }
                 case COOLDOWN -> {
+                    List<String> lore = List.of("<#FFDF6B>남은 시간: " + JobSlot.clock(remaining), "",
+                            "<#AAAAAA>탈퇴 후 " + cooldownText + " 동안은 새 직업에 가입할 수 없습니다.");
                     set(job.slot(), Items.of(Material.CLOCK).name("<#FF5555>" + job.name() + " [쿨타임 대기]")
-                            .lore("<#FFDF6B>남은 시간: " + JobSlot.clock(remaining), "",
-                                    "<#AAAAAA>탈퇴 후 " + cooldownText + " 동안은 새 직업에 가입할 수 없습니다.").build());
+                            .lore(lore).build());
+                    drawStatus(job, JobSlot.StatusKind.COOLDOWN, joinedCount, limit, remaining, lore, null);
                     needsTick = true;
                 }
                 case AVAILABLE -> {
                     List<String> lore = new ArrayList<>(rewardLines(job));
                     lore.add("");
                     lore.add("<#55FF55>▶ 좌클릭하여 가입");
+                    Click joinClick = (player, click) -> {
+                        if (click == ClickType.LEFT) {
+                            join(player, job);
+                        }
+                    };
                     set(job.slot(), Items.of(job.icon()).name("<#F5C542>" + job.name() + levelText(viewer, job))
-                            .lore(lore).build(), (player, click) -> {
-                                if (click == ClickType.LEFT) {
-                                    join(player, job);
-                                }
-                            });
+                            .lore(lore).build(), joinClick);
+                    drawStatus(job, JobSlot.StatusKind.AVAILABLE, joinedCount, limit, remaining, lore, joinClick);
                 }
             }
         }
@@ -131,7 +142,8 @@ final class JobsMenu extends Menu {
         }
     }
 
-    private void drawJoined(MenuSettings.Job job, Progress progress, String cooldownText) {
+    private void drawJoined(MenuSettings.Job job, Progress progress, int joinedCount, int limit,
+                            long remaining, String cooldownText) {
         boolean confirming = job.id().equals(pendingLeave);
         List<String> lore = new ArrayList<>(rewardLines(job));
         lore.add("");
@@ -142,13 +154,30 @@ final class JobsMenu extends Menu {
             lore.add("<#FF5555>▶ 우클릭하여 탈퇴 (" + cooldownText + " 쿨타임)");
         }
         boolean glow = job.glowWhenJoined() || confirming;
+        Click leaveClick = (player, click) -> {
+            if (click == ClickType.RIGHT) {
+                leave(player, job);
+            }
+        };
         set(job.slot(), Items.of(job.joinedIcon()).glow(glow)
                 .name("<#55FF55>" + job.name() + " Lv." + progress.level() + " [가입 중]").lore(lore).build(),
-                (player, click) -> {
-                    if (click == ClickType.RIGHT) {
-                        leave(player, job);
-                    }
-                });
+                leaveClick);
+        JobSlot.StatusKind statusKind = confirming ? JobSlot.StatusKind.CONFIRM_LEAVE : JobSlot.StatusKind.JOINED;
+        drawStatus(job, statusKind, joinedCount, limit, remaining, lore, leaveClick);
+    }
+
+    /** 직업 칸 바로 아래 상태 바(색 유리판 1칸, ECONOMY.md 7.4.2). 로어·클릭은 직업 칸과 동일. */
+    private void drawStatus(MenuSettings.Job job, JobSlot.StatusKind kind, int joinedCount, int limit,
+                            long remaining, List<String> lore, Click click) {
+        if (job.statusSlot().isEmpty()) {
+            return;
+        }
+        JobSlot.StatusBar bar = JobSlot.statusBar(kind, joinedCount, limit, remaining);
+        Material pane = Material.matchMaterial(bar.materialId());
+        if (pane == null) {
+            pane = Material.LIGHT_GRAY_STAINED_GLASS_PANE;
+        }
+        set(job.statusSlot().getAsInt(), Items.of(pane).name(bar.name()).lore(lore).build(), click);
     }
 
     /** 가입 안 한 직업의 레벨: VJobs 가 보관 중인 진행도(탈퇴한 직업), 없으면 Lv.1. 읽지 못하면 표시 안 함 */
