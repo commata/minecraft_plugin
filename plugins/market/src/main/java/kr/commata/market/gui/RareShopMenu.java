@@ -25,9 +25,11 @@ final class RareShopMenu extends Menu {
     private static final int SLOT_BALANCE = 45;
     private static final int SLOT_RESET = 49;
     private static final int SLOT_CLOSE = 53;
+    private static final int BOOK_USED_UNKNOWN = -1;
 
     private final MarketMenus menus;
     private int shownBookUsed;
+    private boolean readErrorLogged;
 
     RareShopMenu(MarketMenus menus, Player viewer) {
         this(menus, readBookUsed(menus, viewer));
@@ -40,7 +42,8 @@ final class RareShopMenu extends Menu {
     }
 
     private static Component title(int bookUsed, int bookLimit) {
-        return Items.text("<#F5C542>희귀 상점 (책 " + bookUsed + "/" + bookLimit + "권)");
+        String usedText = bookUsed < 0 ? "?" : String.valueOf(bookUsed);
+        return Items.text("<#F5C542>희귀 상점 (책 " + usedText + "/" + bookLimit + "권)");
     }
 
     private static int readBookUsed(MarketMenus menus, Player viewer) {
@@ -48,7 +51,7 @@ final class RareShopMenu extends Menu {
             return menus.market().store().weeklyUsed(
                     viewer.getUniqueId(), menus.market().currentWeekKey(), RareCatalog.BOOK_LIMIT_KEY);
         } catch (SQLException e) {
-            return 0;
+            return BOOK_USED_UNKNOWN;
         }
     }
 
@@ -57,17 +60,26 @@ final class RareShopMenu extends Menu {
         MarketConfig cfg = menus.market().config();
         RareCatalog catalog = cfg.rare();
         String weekKey = menus.market().currentWeekKey();
-        Map<String, Integer> usedMap;
+        Map<String, Integer> usedMap = null;
+        boolean readError = false;
         try {
             usedMap = menus.market().store().allWeeklyUsed(viewer.getUniqueId(), weekKey);
         } catch (SQLException e) {
-            usedMap = Map.of();
+            readError = true;
+            if (!readErrorLogged) {
+                readErrorLogged = true;
+                menus.plugin().getLogger().warning("희귀 상점 주간 한도 조회 실패 (" + viewer.getName() + "): " + e.getMessage());
+            }
         }
-        int bookUsed = usedMap.getOrDefault(RareCatalog.BOOK_LIMIT_KEY, 0);
-        boolean locked = menus.market().isPlayerLocked(viewer.getUniqueId());
+        int bookUsed = readError ? BOOK_USED_UNKNOWN : usedMap.getOrDefault(RareCatalog.BOOK_LIMIT_KEY, 0);
+        boolean locked = !readError && menus.market().isPlayerLocked(viewer.getUniqueId());
         boolean bankReady = menus.market().bank().available();
 
         for (RareCatalog.Entry entry : catalog.entries()) {
+            if (readError) {
+                set(entry.slot(), menus.readErrorIcon(entry.displayName()));
+                continue;
+            }
             if (locked) {
                 set(entry.slot(), menus.pendingLockIcon(viewer, entry.displayName()));
                 continue;

@@ -34,6 +34,7 @@ final class SellMenu extends Menu {
 
     private final MarketMenus menus;
     private String selectedJobId;
+    private boolean readErrorLogged;
 
     SellMenu(MarketMenus menus, Player viewer) {
         super(6, Items.text("<#F5C542>아이템 판매 (/판매)"));
@@ -59,20 +60,27 @@ final class SellMenu extends Menu {
         MarketConfig cfg = menus.market().config();
         SellCatalog catalog = cfg.sell();
         Set<String> joined = menus.market().vjobs().joinedJobIds(viewer.getUniqueId());
-        Map<String, MarketStore.Quota> quotas = menus.market().quotasOf(viewer.getUniqueId());
         String dayKey = menus.market().currentDayKey();
+
+        Map<String, MarketStore.Quota> quotas = Map.of();
         long todayTotal = 0L;
+        boolean readError = false;
         try {
+            quotas = menus.market().store().allQuotas(viewer.getUniqueId());
             todayTotal = menus.market().store().dailySalesTotal(viewer.getUniqueId(), dayKey);
-        } catch (SQLException ignored) {
-            // 아래에서 처리
+        } catch (SQLException e) {
+            readError = true;
+            if (!readErrorLogged) {
+                readErrorLogged = true;
+                menus.plugin().getLogger().warning("판매 가능량·일일 한도 조회 실패 (" + viewer.getName() + "): " + e.getMessage());
+            }
         }
         long dailyLimit = catalog.dailyLimit();
         long remainingLimit = Math.max(0L, dailyLimit - todayTotal);
-        boolean locked = menus.market().isPlayerLocked(viewer.getUniqueId());
+        boolean locked = !readError && menus.market().isPlayerLocked(viewer.getUniqueId());
         boolean bankReady = menus.market().bank().available();
 
-        // 1줄: 직업 탭
+        // 1줄: 직업 탭 (선택된 탭은 [현재 탭] 로어로만 구분, 광택은 가입한 낚시꾼 등 glowWhenJoined 만 사용)
         SellCatalog.Category activeCat = catalog.category(selectedJobId);
         if (activeCat == null && !catalog.categories().isEmpty()) {
             activeCat = catalog.categories().get(0);
@@ -99,7 +107,7 @@ final class SellMenu extends Menu {
             }
             String titleColor = isJoined ? "<#55FF55>" : "<#F5C542>";
             ItemStack tabIcon = Items.of(iconMat)
-                    .glow(isSelected || (isJoined && cat.glowWhenJoined()))
+                    .glow(isJoined && cat.glowWhenJoined())
                     .name(titleColor + cat.displayName())
                     .lore(lore)
                     .build();
@@ -118,6 +126,10 @@ final class SellMenu extends Menu {
             for (int i = 0; i < items.size() && i < SellCatalog.ITEM_SLOTS.length; i++) {
                 SellCatalog.Item item = items.get(i);
                 int slot = SellCatalog.ITEM_SLOTS[i];
+                if (readError) {
+                    set(slot, menus.readErrorIcon(item.displayName()));
+                    continue;
+                }
                 if (locked) {
                     set(slot, menus.pendingLockIcon(viewer, item.displayName()));
                     continue;
@@ -178,21 +190,31 @@ final class SellMenu extends Menu {
         }
 
         // 5줄: 일일 한도 게이지 7칸 (슬롯 37–43, ECONOMY.md 7.4.5)
-        int filled = SellMath.gaugeFilled(todayTotal, dailyLimit);
-        boolean full = todayTotal >= dailyLimit;
-        String gaugeTitle = full ? "<#FF5555>일일 판매 한도 도달" : "<#F5C542>오늘 판매 한도";
-        String gaugeLore = "<#FFDF6B>오늘 판매액: " + MarketPeriods.won(todayTotal)
-                + " / " + MarketPeriods.won(dailyLimit);
-        for (int i = 0; i < SellMath.GAUGE_SLOTS; i++) {
-            Material pane;
-            if (full) {
-                pane = Material.RED_STAINED_GLASS_PANE;
-            } else if (i < filled) {
-                pane = Material.LIME_STAINED_GLASS_PANE;
-            } else {
-                pane = Material.LIGHT_GRAY_STAINED_GLASS_PANE;
+        if (readError) {
+            ItemStack unknownPane = Items.of(Material.LIGHT_GRAY_STAINED_GLASS_PANE)
+                    .name("<#F5C542>오늘 판매 한도")
+                    .lore("<#FF5555>오늘 판매액: 확인 불가")
+                    .build();
+            for (int i = 0; i < SellMath.GAUGE_SLOTS; i++) {
+                set(GAUGE_START + i, unknownPane);
             }
-            set(GAUGE_START + i, Items.of(pane).name(gaugeTitle).lore(gaugeLore).build());
+        } else {
+            int filled = SellMath.gaugeFilled(todayTotal, dailyLimit);
+            boolean full = todayTotal >= dailyLimit;
+            String gaugeTitle = full ? "<#FF5555>일일 판매 한도 도달" : "<#F5C542>오늘 판매 한도";
+            String gaugeLore = "<#FFDF6B>오늘 판매액: " + MarketPeriods.won(todayTotal)
+                    + " / " + MarketPeriods.won(dailyLimit);
+            for (int i = 0; i < SellMath.GAUGE_SLOTS; i++) {
+                Material pane;
+                if (full) {
+                    pane = Material.RED_STAINED_GLASS_PANE;
+                } else if (i < filled) {
+                    pane = Material.LIME_STAINED_GLASS_PANE;
+                } else {
+                    pane = Material.LIGHT_GRAY_STAINED_GLASS_PANE;
+                }
+                set(GAUGE_START + i, Items.of(pane).name(gaugeTitle).lore(gaugeLore).build());
+            }
         }
 
         // 6줄: 내 잔액, 일일 초기화 안내, 닫기

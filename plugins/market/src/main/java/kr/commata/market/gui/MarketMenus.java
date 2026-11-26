@@ -102,4 +102,13 @@ public final class MarketMenus {
                         "<#AAAAAA>이전 거래가 확정되면 자동으로 풀립니다.")
                 .build();
     }
+
+    /** DB 조회 실패 시 거래 버튼을 대체하는 아이콘 (AGENTS.md 2.8 fail-closed). 클릭 핸들러 없이 사용. */
+    public ItemStack readErrorIcon(String title) {
+        return Items.of(Material.GRAY_DYE)
+                .name("<#AAAAAA>" + title)
+                .lore("<#FF5555>기록을 읽지 못했습니다",
+                        "<#AAAAAA>잠시 후 다시 열어 주세요")
+                .build();
+    }
 }

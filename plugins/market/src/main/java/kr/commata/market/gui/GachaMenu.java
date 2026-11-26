@@ -26,6 +26,7 @@ final class GachaMenu extends Menu {
     private static final int SLOT_CLOSE = 26;
 
     private final MarketMenus menus;
+    private boolean readErrorLogged;
 
     GachaMenu(MarketMenus menus) {
         super(3, Items.text("<#F5C542>인첸트 책 뽑기"));
@@ -38,17 +39,25 @@ final class GachaMenu extends Menu {
         String dayKey = menus.market().currentDayKey();
         int used = 0;
         int pity = 0;
+        boolean readError = false;
         try {
             used = menus.market().store().dailyPullsUsed(viewer.getUniqueId(), dayKey);
             pity = menus.market().store().pity(viewer.getUniqueId());
-        } catch (SQLException ignored) {
-            // 아래에서 잠금/오류로 처리
+        } catch (SQLException e) {
+            readError = true;
+            if (!readErrorLogged) {
+                readErrorLogged = true;
+                menus.plugin().getLogger().warning("뽑기 한도·천장 조회 실패 (" + viewer.getName() + "): " + e.getMessage());
+            }
         }
         int remaining = Math.max(0, gacha.dailyLimit() - used);
-        boolean locked = menus.market().isPlayerLocked(viewer.getUniqueId());
+        boolean locked = !readError && menus.market().isPlayerLocked(viewer.getUniqueId());
         boolean bankReady = menus.market().bank().available();
 
-        if (locked) {
+        if (readError) {
+            set(SLOT_PULL_1, menus.readErrorIcon("1회 뽑기"));
+            set(SLOT_PULL_10, menus.readErrorIcon("10회 뽑기"));
+        } else if (locked) {
             set(SLOT_PULL_1, menus.pendingLockIcon(viewer, "1회 뽑기"));
             set(SLOT_PULL_10, menus.pendingLockIcon(viewer, "10회 뽑기"));
         } else {
@@ -64,14 +73,24 @@ final class GachaMenu extends Menu {
                 .build(), (player, click) -> menus.later(() -> menus.openGachaRates(player)));
 
         set(SLOT_BALANCE, menus.balanceHead(viewer));
-        set(SLOT_PITY, Items.of(Material.NETHER_STAR)
-                .name("<#F5C542>전설 천장 현황")
-                .lore("<#FFDF6B>전설 천장: " + pity + " / " + gacha.pityThreshold(),
-                        "<#FFDF6B>오늘 남은 뽑기: " + remaining + " / " + gacha.dailyLimit() + "회",
-                        "",
-                        "<#AAAAAA>" + gacha.pityThreshold() + "회째 전설 확정 (전설 획득 시에만 초기화)",
-                        "<#AAAAAA>일간 한도는 매일 00:00 KST 초기화")
-                .build());
+        if (readError) {
+            set(SLOT_PITY, Items.of(Material.NETHER_STAR)
+                    .name("<#F5C542>전설 천장 현황")
+                    .lore("<#FF5555>전설 천장: 확인 불가",
+                            "<#FF5555>오늘 남은 뽑기: 확인 불가",
+                            "",
+                            "<#AAAAAA>잠시 후 다시 열어 주세요.")
+                    .build());
+        } else {
+            set(SLOT_PITY, Items.of(Material.NETHER_STAR)
+                    .name("<#F5C542>전설 천장 현황")
+                    .lore("<#FFDF6B>전설 천장: " + pity + " / " + gacha.pityThreshold(),
+                            "<#FFDF6B>오늘 남은 뽑기: " + remaining + " / " + gacha.dailyLimit() + "회",
+                            "",
+                            "<#AAAAAA>" + gacha.pityThreshold() + "회째 전설 확정 (전설 획득 시에만 초기화)",
+                            "<#AAAAAA>일간 한도는 매일 00:00 KST 초기화")
+                    .build());
+        }
         set(SLOT_CLOSE, Items.close(), (player, click) -> menus.later(player::closeInventory));
     }
 
