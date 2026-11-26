@@ -5,6 +5,8 @@
 
 > 마지막 갱신: 2026-11-26 (Coordinator: Claude Code)
 
+지금 쓰는 로컬 테스트 서버: `plugins/market/run` (`.\gradlew :plugins:market:runServer`, `localhost:25565`, RCON 127.0.0.1:25575 로컬 전용). 기준 브랜치는 로컬 `test/pr14-pr15`(main + PR #14 + PR #15, push 안 함).
+
 ## 1. 현재 단계: PR #14·#15 안정화
 
 - 신규 기능 개발은 **멈춘 상태**입니다. 다음 로드맵(2단계 `Trade` 등)은 AGENTS.md 13장의 전환 조건을 채우고 사용자 승인을 받은 뒤 시작합니다.
@@ -33,13 +35,24 @@
 
 | 접수일 | 내용 | 원인 | 처리 | 상태 |
 | --- | --- | --- | --- | --- |
-| — | (아직 이 문서로 접수된 피드백 없음) | | | |
+| 2026-11-26 | 농부 매입에 사탕수수·선인장·달콤한 열매·버섯 추가 요청 | 기획 14.4가 "성장이 빨라 매입 안 함"으로 확정돼 있었음 | 사용자 결정으로 ECONOMY.md v0.9.3(63097cd), 구현 39c42fd(DEV-B). QA에서 설치 표시 누락(CRITICAL) → DEV-B 보완 중 | 진행 중 |
+| 2026-11-26 | `/economy` 하위 화면에 뒤로가기 없음 | Market 메뉴에 허브 버튼 없음 | `/희귀상점`·`/판매` 45, `/뽑기` 18에 메인 허브(aa3bf4a). 서버 상점(ESGUI)은 하단 바에 명령 동작이 없어 제외 | 구현 완료, 서버 미반영 |
 
 ## 5. 테스트 기록
 
 | 날짜 | 기준 커밋 | 명령 | 결과 |
 | --- | --- | --- | --- |
 | 2026-11-26 | `266439f` (feat/market-stage-1-7) | `.\gradlew build` (로컬 Windows, JDK 25) | PASS — 단위 테스트 168개, 실패 0. 인게임 NOT RUN |
+| 2026-11-26 | `fb2ac60` (로컬 `test/pr14-pr15` = main + #14 + #15) | `.\gradlew build`, 로컬 서버 기동(`plugins/market/run`, Paper 26.3-263), RCON 콘솔 점검 | PASS — 7개 플러그인 활성화·ERROR 0, `market status`·`economyhub status` 정상. GUI·채집 인게임 NOT RUN |
+
+### QA 기록 (재검증은 마지막 통과 커밋 이후 차이만, AGENTS.md 13.1)
+
+| 날짜 | 대상 (기준..검증) | QA 모델 | 결과 | 남은 것 |
+| --- | --- | --- | --- | --- |
+| 2026-11-26 | 통합 리뷰 `9f4da30..fb2ac60` | codex `gpt-6.2-astra` | High 4 · Medium 6 · Low 2 | High 1–4 수정 중 |
+| 2026-11-26 | High #4 `266439f..1871906` | codex `gpt-6.2-astra` | 미해결: 생산자 규격 확인 없음(High), Medium 3, Low 1 | DEV-B 보완 중 |
+| 2026-11-26 | High #1–3 `266439f..acfa576` | codex `gpt-6.2-astra` | H1 통과. H2·H3 잔여 P1 2 · P2 3 | DEV-A 수정 중 |
+| 2026-11-26 | 작물 `1510bd5..39c42fd` | antigravity `gemini-4-neon` (Codex 한도 소진으로 대체) | 가격·API·테스트 65/65 PASS. 신규 작물 설치 mark 누락 CRITICAL | DEV-B 보완 중 |
 
 ## 6. 미해결·기술 부채
 
@@ -48,4 +61,5 @@
 
 ## 7. 다음 작업
 
-- 사용자 인게임 피드백 대기.
+- High 1–4·작물 보완 → QA 재검증(차이만) → PR #15 반영 → 로컬 테스트 서버 재시작 반영.
+- 그다음 사용자 인게임 피드백 대기.
