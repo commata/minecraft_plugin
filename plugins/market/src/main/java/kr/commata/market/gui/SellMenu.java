@@ -188,9 +188,18 @@ final class SellMenu extends Menu {
                 } else if (onePlan.isEmpty()) {
                     lore.add("<#FF5555>판매 가능한 수량 또는 한도가 부족합니다.");
                 } else {
-                    lore.add("<#55FF55>▶ 좌클릭: 1묶음 판매");
-                    lore.add("<#55FF55>▶ Shift+좌클릭: 한 칸(최대 " + mat.getMaxStackSize() + "개) 판매");
-                    lore.add("<#55FF55>▶ 우클릭: 최대 판매");
+                    // 클릭별로 지금 실제로 팔리는 양과 금액을 보여 줌 (ECONOMY.md 7.4.5)
+                    int stackCap = SellMath.maxBundles(SellMath.Amount.STACK, mat.getMaxStackSize(), item.unit())
+                            * item.unit();
+                    SellMath.Plan stackPlan = SellMath.calculate(owned, jobAmount, baseAmount, item.unit(),
+                            item.basePrice(), item.bonusPrice(), remainingLimit,
+                            SellMath.maxBundles(SellMath.Amount.STACK, mat.getMaxStackSize(), item.unit()));
+                    SellMath.Plan maxPlan = SellMath.calculate(owned, jobAmount, baseAmount, item.unit(),
+                            item.basePrice(), item.bonusPrice(), remainingLimit, Integer.MAX_VALUE);
+                    lore.add("<#55FF55>▶ 좌클릭: " + item.unit() + "개씩 판매 " + clickResult(onePlan));
+                    lore.add("<#55FF55>▶ Shift+좌클릭: 최대 " + stackCap + "개 판매 " + clickResult(stackPlan));
+                    lore.add("<#55FF55>▶ 우클릭: 팔 수 있는 만큼 전부 판매 " + clickResult(maxPlan));
+                    lore.add("<#AAAAAA>(보유 수량·판매 가능량·오늘 남은 한도 안에서)");
                 }
 
                 ItemStack icon = Items.of(mat)
@@ -263,5 +272,11 @@ final class SellMenu extends Menu {
                         "<#AAAAAA>내 직업 2개 품목은 보너스 가격이 적용됩니다.")
                 .build());
         set(SLOT_CLOSE, Items.close(), (player, click) -> menus.later(player::closeInventory));
+    }
+
+    /** 로어 한 줄 끝에 붙는 "(지금 N개 · +M원)" */
+    private static String clickResult(SellMath.Plan plan) {
+        return "<#AAAAAA>(지금 <white>" + plan.totalAmount() + "개<#AAAAAA> · <#FFDF6B>+"
+                + MarketPeriods.won(plan.totalMoney()) + "<#AAAAAA>)";
     }
 }
