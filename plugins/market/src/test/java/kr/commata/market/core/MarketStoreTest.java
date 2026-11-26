@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.AfterEach;
@@ -171,13 +172,20 @@ class MarketStoreTest {
     @Test
     void quarantineBlocksTransactionsUntilCleared() throws Exception {
         MarketStore s = openStore();
+        assertFalse(s.isQuarantined(alice));
+        assertTrue(s.quarantinedUuids().isEmpty());
+
         s.quarantinePlayer(alice, "seq mismatch", "alice.dat");
         assertTrue(s.isPlayerLocked(alice));
+        assertTrue(s.isQuarantined(alice));
+        assertEquals(Set.of(alice), s.quarantinedUuids());
         assertTrue(s.hasMarketHistory(alice));
         assertEquals(1, s.allQuarantined().size());
 
         assertTrue(s.unquarantinePlayer(alice));
         assertFalse(s.isPlayerLocked(alice));
+        assertFalse(s.isQuarantined(alice));
+        assertTrue(s.quarantinedUuids().isEmpty());
     }
 
     @Test

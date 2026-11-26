@@ -11,10 +11,12 @@ import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.LongSupplier;
@@ -534,6 +536,23 @@ public final class MarketStore implements AutoCloseable {
                 ps.setString(1, uuid.toString());
                 return ps.executeUpdate() > 0;
             }
+        });
+    }
+
+    public boolean isQuarantined(UUID uuid) throws SQLException {
+        return quarantine(uuid).isPresent();
+    }
+
+    public Set<UUID> quarantinedUuids() throws SQLException {
+        return read(() -> {
+            Set<UUID> set = new HashSet<>();
+            try (Statement st = conn.createStatement();
+                 ResultSet rs = st.executeQuery("SELECT uuid FROM quarantined_players")) {
+                while (rs.next()) {
+                    set.add(UUID.fromString(rs.getString(1)));
+                }
+            }
+            return set;
         });
     }
 

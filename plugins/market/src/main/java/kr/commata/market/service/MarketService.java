@@ -691,10 +691,21 @@ public final class MarketService {
             return;
         }
         try {
+            Set<UUID> quarantined = store.quarantinedUuids();
             for (MarketStore.OrderRecord order : store.openOrders()) {
+                if (quarantined.contains(order.uuid())) {
+                    logger.warning("격리된 플레이어(" + order.uuid() + ")의 주문(" + order.txId()
+                            + ") 복구를 보류합니다 (/market pending 확인).");
+                    continue;
+                }
                 reconcileOrderFromDisk(order, null);
             }
             for (MarketStore.SellOrderRecord sale : store.openSales()) {
+                if (quarantined.contains(sale.uuid())) {
+                    logger.warning("격리된 플레이어(" + sale.uuid() + ")의 판매(" + sale.txId()
+                            + ") 복구를 보류합니다 (/market pending 확인).");
+                    continue;
+                }
                 reconcileSaleFromDisk(sale);
             }
         } catch (SQLException e) {
@@ -773,8 +784,9 @@ public final class MarketService {
             return;
         }
         try {
+            Set<UUID> quarantined = store.quarantinedUuids();
             for (MarketStore.OrderRecord order : store.openOrders()) {
-                if (inFlight.contains(order.uuid())) {
+                if (inFlight.contains(order.uuid()) || quarantined.contains(order.uuid())) {
                     continue;
                 }
                 Player online = plugin.getServer().getPlayer(order.uuid());
@@ -791,7 +803,7 @@ public final class MarketService {
                 reconcileOrderFromDisk(order, online);
             }
             for (MarketStore.SellOrderRecord sale : store.openSales()) {
-                if (inFlight.contains(sale.uuid())) {
+                if (inFlight.contains(sale.uuid()) || quarantined.contains(sale.uuid())) {
                     continue;
                 }
                 if (inProcessPendingSales.contains(sale.txId()) && MarketStore.SALE_PENDING.equals(sale.status())) {
@@ -806,6 +818,9 @@ public final class MarketService {
     }
 
     private void reconcileOrderFromDisk(MarketStore.OrderRecord order, Player online) throws SQLException {
+        if (store.isQuarantined(order.uuid())) {
+            return;
+        }
         if (MarketStore.ORDER_PENDING.equals(order.status())) {
             BankBridge.LookupResult lookup = bank.findByExtRef(order.txId());
             switch (lookup.status()) {
@@ -880,6 +895,9 @@ public final class MarketService {
     }
 
     private void reconcileSaleFromDisk(MarketStore.SellOrderRecord sale) throws SQLException {
+        if (store.isQuarantined(sale.uuid())) {
+            return;
+        }
         Player online = plugin.getServer().getPlayer(sale.uuid());
         if (MarketStore.SALE_ITEMS_TAKEN.equals(sale.status())) {
             depositForTakenSale(sale, online);
@@ -994,6 +1012,10 @@ public final class MarketService {
             }
             MarketStore.OrderRecord order = found.get();
             UUID uuid = order.uuid();
+            if (store.isQuarantined(uuid)) {
+                return "해당 플레이어(" + uuid + ")는 데이터 불일치로 격리되어 있어 환불할 수 없습니다. "
+                        + "백업 파일 대조 후 /market resolve " + uuid + " unquarantine 으로 해제한 뒤 다시 실행해 주세요.";
+            }
             boolean isRetry = MarketStore.ORDER_REFUNDING.equals(order.status());
             if (MarketStore.ORDER_PENDING.equals(order.status())) {
                 return "아직 Bank 출금 확인 전(PENDING)입니다. 기동 복구·1분 타이머가 출금을 확인해 CHARGED 로 바꾼 뒤 다시 실행해 주세요.";
