@@ -4,7 +4,7 @@
 사람 개발자도 같은 규칙을 씁니다. 여기 적힌 규칙은 **지금 저장소의 코드에서 실제로 쓰는 방식**을 정리한 것이고,
 외부 자료(예: 사용자가 올린 개발 핸드북 PDF)와 다를 때는 이 문서와 코드가 이깁니다. 다른 점은 [docs/HANDBOOK-REVIEW.md](docs/HANDBOOK-REVIEW.md)에 정리했습니다.
 
-> 기준: 2026-11-26, `main` 3bbc507 + 열린 PR #11(`common.gui`, EconomyHub 메뉴·스킬). PR #11이 머지되기 전에는 `kr.commata.common.gui`가 `main`에 없습니다.
+> 기준: 2026-11-26, `main` 9f88540 (PR #11·#14·#15 머지 후: `common.gui`, EconomyHub 메뉴·스킬·상태 바, Market 1.7). 진행 상황은 [docs/STATUS.md](docs/STATUS.md).
 
 ---
 
@@ -47,9 +47,9 @@
 | `plugins/custom-items/` | `CustomItems` | 커스텀 아이템·스킬(로드맵 1단계) | 운영 배포됨 (0.1.0) |
 | `plugins/travel/` | `Travel` | `/home`, `/sethome`, `/tpa` (예전 `Home`) | 머지됨 |
 | `plugins/pets/` | `Pets` | `/callpet` | 머지됨 |
-| `plugins/bank/` | `Bank` | 화폐(원) 원장, Vault 경제 제공자, `/money` `/pay` `/baltop` `/bank` | 머지됨, 운영 미배포 |
-| `plugins/economy-hub/` | `EconomyHub` | VJobs 보완(탈퇴 후 쿨타임, 피스톤·유체 블록 보상 제외, XP 유지), `/economy`·`/직업` 메뉴, 직업 편의 스킬 | 1b 머지, 1.5 = PR #11 |
-| `plugins/market/` (예정) | `Market` | `/희귀상점`, `/뽑기`, `/판매` (ECONOMY.md 13·14장) | 1.7단계, 미착수 |
+| `plugins/bank/` | `Bank` | 화폐(원) 원장, Vault 경제 제공자, `/money` `/pay` `/baltop` `/bank` | 머지됨(스키마 v3, Market용 멱등 API), 운영 미배포 |
+| `plugins/economy-hub/` | `EconomyHub` | VJobs 보완(탈퇴 후 쿨타임, 피스톤·유체 블록 보상 제외, XP 유지), `/economy`·`/직업` 메뉴, 직업 편의 스킬(2.5a), 설치 블록 기록 규격 v1 | 1b·1.5·2.5a 코드 머지, 운영 미배포 |
+| `plugins/market/` | `Market` | `/희귀상점`, `/뽑기`, `/판매` (ECONOMY.md 13·14장) | 1.7 머지(PR #15), 운영 미배포 |
 | `plugins/trade/` (예정) | `Trade` | `/trade` 1:1 교환 (ECONOMY.md 7.3, 7.4.6) | 2단계, 미착수 |
 | `server-config/economy/` | — | VJobs·EconomyShopGUI 운영 설정, 외부 JAR 버전·SHA-256 | |
 | `scripts/` | — | `deploy.ps1`(Windows), `server/*.sh`(미니PC) | |
@@ -80,7 +80,7 @@
 - 기능을 도메인별 플러그인으로 나눕니다. **같은 상태(전투 태그, 시전 등)를 공유해야 하면 한 플러그인으로 합칩니다** — 예: `/home`과 `/tpa`를 `Travel`로 합친 이유는 "맞은 직후 `/home`은 막히는데 `/tpa`로 도망치는" 구멍을 없애기 위해서입니다.
 - 자체 플러그인끼리 **컴파일 의존을 만들지 않는 것이 기본**입니다. 연동은 다음 중 하나로 합니다.
   - 공통 계약 서비스: 돈은 모두 Vault `Economy` 인터페이스(`ServicesManager`)로. `Bank`를 직접 부르지 않습니다(ECONOMY.md 3장).
-  - 예외(설계 확정): `Market`은 거래번호 멱등성 때문에 `softdepend: [Bank]`로 Bank Java API(`withdraw/deposit/findByExtRef`, 스키마 v3)를 부릅니다 (ECONOMY.md 13.6). **이 API는 아직 구현되지 않았습니다.**
+  - 예외(설계 확정): `Market`은 거래번호 멱등성 때문에 `softdepend: [Bank]`로 Bank Java API(`withdraw/deposit/findByExtRef`, 스키마 v3)를 부릅니다 (ECONOMY.md 13.6). (PR #15에서 구현됨: `withdraw`/`deposit`/`findByExtRef`/`refundByExtRef`, 스키마 v3)
   - 다른 플러그인 기능을 여는 버튼은 그 명령을 실행합니다(`player.performCommand`, 다음 틱). EconomyHub `/economy`가 이 방식입니다.
 - `plugin.yml`의 `depend`/`softdepend`/`loadbefore`로 켜지는 순서를 명시합니다. 예: Bank `depend: [Vault]`, `loadbefore: [VJobs, EconomyShopGUI, EconomyHub]`; EconomyHub `softdepend: [VJobs]`.
 
@@ -179,7 +179,7 @@ permissions:
 | 플레이어 한 명의 작은 상태(집, 쿨타임 시각, 토글) | 플레이어 PDC (`NamespacedKey(plugin, "snake_case")`) | Travel `home:home`, EconomyHub `skill_toggle.<id>` |
 | 블록 좌표 표시 | 청크 PDC 비트맵 (구역별 `long[64]`) | EconomyHub `economyhub:u<구역>` |
 | 크래시에도 잃으면 안 되는 작은 기록 | 플러그인 폴더 파일, **임시 파일 → fsync → 원자적 이동** (`AtomicFiles`) | `job-xp.tsv`, `job-leaves.tsv` |
-| 돈·거래 원장, 여러 표를 한 번에 바꿔야 하는 것 | SQLite 파일 DB | `plugins/Bank/bank.db`, (예정) `market.db` |
+| 돈·거래 원장, 여러 표를 한 번에 바꿔야 하는 것 | SQLite 파일 DB | `plugins/Bank/bank.db`, `plugins/Market/market.db` |
 | 운영 설정 | `config.yml` (JAR 기본값 + 서버 파일) | |
 
 - PDC와 외부 DB는 저장 시점이 다릅니다. **둘 사이 정합성이 필요한 값은 PDC에 두지 않습니다** (EconomyHub XP 기록을 PDC에서 fsync 파일로 옮긴 이유).
