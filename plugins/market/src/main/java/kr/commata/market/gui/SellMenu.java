@@ -1,0 +1,282 @@
+package kr.commata.market.gui;
+
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import kr.commata.common.gui.Items;
+import kr.commata.common.gui.Menu;
+import kr.commata.common.time.Durations;
+import kr.commata.market.MarketConfig;
+import kr.commata.market.core.MarketPeriods;
+import kr.commata.market.core.MarketStore;
+import kr.commata.market.core.SellCatalog;
+import kr.commata.market.core.SellMath;
+import kr.commata.market.service.ItemFactory;
+import org.bukkit.Material;
+import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
+
+/**
+ * /판매 9×6 GUI (ECONOMY.md 7.4.5, 14.3, 14.4).
+ *
+ * <p>1줄 직업 탭(2~6), 2–4줄 품목 21칸(10–16, 19–25, 28–34), 5줄 일일 한도 게이지 7칸(37–43),
+ * 6줄 메인 허브(45, EconomyHub 가 켜져 있을 때)·내 잔액(46)·일일 초기화 안내(49)·닫기(53).
+ */
+final class SellMenu extends Menu {
+
+    private static final int GAUGE_START = 37;
+    private static final int SLOT_HUB = 45;
+    private static final int SLOT_BALANCE = 46;
+    private static final int SLOT_RESET = 49;
+    private static final int SLOT_CLOSE = 53;
+
+    private final MarketMenus menus;
+    private String selectedJobId;
+    private boolean readErrorLogged;
+    /** 직업 정보 로딩 중 1초 뒤 다시 그리기를 이미 예약했는지 */
+    private boolean refreshScheduled;
+
+    SellMenu(MarketMenus menus, Player viewer) {
+        super(6, Items.text("<#F5C542>아이템 판매 (/판매)"));
+        this.menus = menus;
+        this.selectedJobId = initialTab(menus, viewer);
+    }
+
+    private static String initialTab(MarketMenus menus, Player viewer) {
+        SellCatalog catalog = menus.market().config().sell();
+        Set<String> joined = menus.market().vjobs().joinedJobIds(viewer.getUniqueId());
+        if (joined != null) {
+            for (SellCatalog.Category cat : catalog.categories()) {
+                if (joined.contains(cat.jobId())) {
+                    return cat.jobId();
+                }
+            }
+        }
+        return catalog.categories().isEmpty() ? null : catalog.categories().get(0).jobId();
+    }
+
+    @Override
+    protected void draw(Player viewer) {
+        MarketConfig cfg = menus.market().config();
+        SellCatalog catalog = cfg.sell();
+        Set<String> joined = menus.market().vjobs().joinedJobIds(viewer.getUniqueId());
+        String dayKey = menus.market().currentDayKey();
+
+        Map<String, MarketStore.Quota> quotas = Map.of();
+        long todayTotal = 0L;
+        boolean readError = !menus.market().flushQuota(viewer.getUniqueId());
+        if (!readError) {
+            try {
+                quotas = menus.market().store().allQuotas(viewer.getUniqueId());
+                todayTotal = menus.market().store().dailySalesTotal(viewer.getUniqueId(), dayKey);
+            } catch (SQLException e) {
+                readError = true;
+                if (!readErrorLogged) {
+                    readErrorLogged = true;
+                    menus.plugin().getLogger().warning("판매 가능량·일일 한도 조회 실패 (" + viewer.getName() + "): " + e.getMessage());
+                }
+            }
+        }
+        long dailyLimit = catalog.dailyLimit();
+        long remainingLimit = Math.max(0L, dailyLimit - todayTotal);
+        boolean locked = !readError && menus.market().isPlayerLocked(viewer.getUniqueId());
+        boolean bankReady = menus.market().bank().available();
+        // VJobs 는 켜져 있는데 직업 정보를 아직 못 읽음 → 판매 버튼을 막고 1초 뒤 다시 그림 (기본가로 잘못 팔리는 것 방지)
+        boolean jobsLoading = joined == null && menus.market().vjobs().available();
+        if (jobsLoading && !refreshScheduled) {
+            refreshScheduled = true;
+            menus.plugin().getServer().getScheduler().runTaskLater(menus.plugin(), () -> {
+                refreshScheduled = false;
+                if (isViewing(viewer)) {
+                    render(viewer);
+                }
+            }, 20L);
+        }
+
+        // 1줄: 직업 탭 (선택된 탭은 [현재 탭] 로어로만 구분, 광택은 가입한 낚시꾼 등 glowWhenJoined 만 사용)
+        SellCatalog.Category activeCat = catalog.category(selectedJobId);
+        if (activeCat == null && !catalog.categories().isEmpty()) {
+            activeCat = catalog.categories().get(0);
+            selectedJobId = activeCat.jobId();
+        }
+        for (SellCatalog.Category cat : catalog.categories()) {
+            boolean isJoined = joined != null && joined.contains(cat.jobId());
+            boolean isSelected = activeCat != null && cat.jobId().equals(activeCat.jobId());
+            Material iconMat = Material.matchMaterial(isJoined ? cat.joinedIconMaterial() : cat.iconMaterial());
+            if (iconMat == null) {
+                iconMat = Material.CHEST;
+            }
+            List<String> lore = new ArrayList<>();
+            if (isJoined) {
+                lore.add("<#55FF55>[직업 보너스 " + cat.bonusLabel() + " 적용 중]");
+            } else {
+                lore.add("<#AAAAAA>기본가로 판매 가능 (직업 보유 시 " + cat.bonusLabel() + ")");
+            }
+            if (isSelected) {
+                lore.add("<#55FFFF>[현재 탭]");
+            } else {
+                lore.add("");
+                lore.add("<#55FF55>▶ 클릭하여 탭 전환");
+            }
+            String titleColor = isJoined ? "<#55FF55>" : "<#F5C542>";
+            ItemStack tabIcon = Items.of(iconMat)
+                    .glow(isJoined && cat.glowWhenJoined())
+                    .name(titleColor + cat.displayName())
+                    .lore(lore)
+                    .build();
+            set(cat.tabSlot(), tabIcon, (player, click) -> {
+                if (!cat.jobId().equals(selectedJobId)) {
+                    selectedJobId = cat.jobId();
+                    render(player);
+                }
+            });
+        }
+
+        // 2–4줄: 선택된 탭의 품목
+        if (activeCat != null) {
+            boolean hasJob = joined != null && joined.contains(activeCat.jobId());
+            List<SellCatalog.Item> items = activeCat.items();
+            for (int i = 0; i < items.size() && i < SellCatalog.ITEM_SLOTS.length; i++) {
+                SellCatalog.Item item = items.get(i);
+                int slot = SellCatalog.ITEM_SLOTS[i];
+                if (readError) {
+                    set(slot, menus.readErrorIcon(item.displayName()));
+                    continue;
+                }
+                if (locked) {
+                    set(slot, menus.pendingLockIcon(viewer, item.displayName()));
+                    continue;
+                }
+                if (jobsLoading) {
+                    set(slot, Items.of(Material.GRAY_DYE)
+                            .name("<#AAAAAA>" + item.displayName())
+                            .lore("<#FF5555>직업 정보를 불러오는 중", "<#AAAAAA>잠시 후 자동으로 갱신됩니다.")
+                            .build());
+                    continue;
+                }
+                Material mat = Material.matchMaterial(item.id());
+                if (mat == null) {
+                    continue;
+                }
+                int owned = ItemFactory.countSellable(viewer, mat);
+                MarketStore.Quota q = quotas.getOrDefault(item.id(), MarketStore.Quota.ZERO);
+                long jobAmount = hasJob ? q.jobAmount() : 0L;
+                long baseAmount = q.baseAmount();
+                SellMath.Plan onePlan = SellMath.calculate(
+                        owned, jobAmount, baseAmount, item.unit(),
+                        item.basePrice(), item.bonusPrice(), remainingLimit, 1);
+
+                List<String> lore = new ArrayList<>();
+                lore.add("<#AAAAAA>판매 단위: <white>" + item.unit() + "개");
+                if (hasJob) {
+                    lore.add("<#AAAAAA>단가: <white>기본 " + MarketPeriods.won(item.basePrice())
+                            + " → <#55FF55>보너스 " + MarketPeriods.won(item.bonusPrice()));
+                } else {
+                    lore.add("<#AAAAAA>단가: <#FFDF6B>기본 " + MarketPeriods.won(item.basePrice())
+                            + " <#AAAAAA>(직업 보너스 " + MarketPeriods.won(item.bonusPrice()) + ")");
+                }
+                lore.add("");
+                lore.add("<#AAAAAA>보유 수량: <white>" + owned + "개");
+                lore.add("<#AAAAAA>보너스 판매 가능: <#55FF55>" + jobAmount + "개");
+                lore.add("<#AAAAAA>기본 판매 가능: <#FFDF6B>" + baseAmount + "개");
+                lore.add("<#AAAAAA>오늘 남은 한도: <#FFDF6B>" + MarketPeriods.won(remainingLimit));
+                lore.add("");
+                if (!bankReady) {
+                    lore.add("<#FF5555>은행(Bank)과 연결되지 않아 판매할 수 없습니다.");
+                } else if (onePlan.isEmpty()) {
+                    lore.add("<#FF5555>판매 가능한 수량 또는 한도가 부족합니다.");
+                } else {
+                    // 클릭별로 지금 실제로 팔리는 양과 금액을 보여 줌 (ECONOMY.md 7.4.5)
+                    int stackCap = SellMath.maxBundles(SellMath.Amount.STACK, mat.getMaxStackSize(), item.unit())
+                            * item.unit();
+                    SellMath.Plan stackPlan = SellMath.calculate(owned, jobAmount, baseAmount, item.unit(),
+                            item.basePrice(), item.bonusPrice(), remainingLimit,
+                            SellMath.maxBundles(SellMath.Amount.STACK, mat.getMaxStackSize(), item.unit()));
+                    SellMath.Plan maxPlan = SellMath.calculate(owned, jobAmount, baseAmount, item.unit(),
+                            item.basePrice(), item.bonusPrice(), remainingLimit, Integer.MAX_VALUE);
+                    lore.add("<#55FF55>▶ 좌클릭: " + item.unit() + "개씩 판매 " + clickResult(onePlan));
+                    lore.add("<#55FF55>▶ Shift+좌클릭: 최대 " + stackCap + "개 판매 " + clickResult(stackPlan));
+                    lore.add("<#55FF55>▶ 우클릭: 팔 수 있는 만큼 전부 판매 " + clickResult(maxPlan));
+                    lore.add("<#AAAAAA>(보유 수량·판매 가능량·오늘 남은 한도 안에서)");
+                }
+
+                ItemStack icon = Items.of(mat)
+                        .name("<#F5C542>" + item.displayName())
+                        .lore(lore)
+                        .build();
+
+                if (bankReady && !onePlan.isEmpty()) {
+                    // Shift+좌클릭은 이 품목 칸만 받음 (ECONOMY.md 7.4 공통 규칙의 예외, 7.4.5)
+                    setShiftable(slot, icon, (player, click) -> {
+                        SellMath.Amount amount = switch (click) {
+                            case LEFT -> SellMath.Amount.ONE;
+                            case SHIFT_LEFT -> SellMath.Amount.STACK;
+                            case RIGHT -> SellMath.Amount.MAX;
+                            default -> null;
+                        };
+                        if (amount != null) {
+                            menus.market().sellItem(player, item.id(), amount);
+                            if (isViewing(player)) {
+                                render(player);
+                            }
+                        }
+                    });
+                } else {
+                    set(slot, icon);
+                }
+            }
+        }
+
+        // 5줄: 일일 한도 게이지 7칸 (슬롯 37–43, ECONOMY.md 7.4.5)
+        if (readError) {
+            ItemStack unknownPane = Items.of(Material.LIGHT_GRAY_STAINED_GLASS_PANE)
+                    .name("<#F5C542>오늘 판매 한도")
+                    .lore("<#FF5555>오늘 판매액: 확인 불가")
+                    .build();
+            for (int i = 0; i < SellMath.GAUGE_SLOTS; i++) {
+                set(GAUGE_START + i, unknownPane);
+            }
+        } else {
+            int filled = SellMath.gaugeFilled(todayTotal, dailyLimit);
+            boolean full = todayTotal >= dailyLimit;
+            String gaugeTitle = full ? "<#FF5555>일일 판매 한도 도달" : "<#F5C542>오늘 판매 한도";
+            String gaugeLore = "<#FFDF6B>오늘 판매액: " + MarketPeriods.won(todayTotal)
+                    + " / " + MarketPeriods.won(dailyLimit);
+            for (int i = 0; i < SellMath.GAUGE_SLOTS; i++) {
+                Material pane;
+                if (full) {
+                    pane = Material.RED_STAINED_GLASS_PANE;
+                } else if (i < filled) {
+                    pane = Material.LIME_STAINED_GLASS_PANE;
+                } else {
+                    pane = Material.LIGHT_GRAY_STAINED_GLASS_PANE;
+                }
+                set(GAUGE_START + i, Items.of(pane).name(gaugeTitle).lore(gaugeLore).build());
+            }
+        }
+
+        // 6줄: 내 잔액, 일일 초기화 안내, 닫기
+        if (menus.hubAvailable()) {
+            set(SLOT_HUB, menus.hubButton(), (player, click) -> menus.openHub(player));
+        }
+        set(SLOT_BALANCE, menus.balanceHead(viewer));
+        String until = Durations.korean(MarketPeriods.untilNextMidnight(System.currentTimeMillis(), cfg.zone()));
+        set(SLOT_RESET, Items.of(Material.CLOCK)
+                .name("<#F5C542>일일 초기화 안내")
+                .lore("<#AAAAAA>매일 00:00 KST 초기화",
+                        "<#FFDF6B>남은 시간: " + until,
+                        "",
+                        "<#AAAAAA>직접 채집·수확·사냥·낚시로 얻은 수량만 판매 가능합니다.",
+                        "<#AAAAAA>내 직업 2개 품목은 보너스 가격이 적용됩니다.")
+                .build());
+        set(SLOT_CLOSE, Items.close(), (player, click) -> menus.later(player::closeInventory));
+    }
+
+    /** 로어 한 줄 끝에 붙는 "(지금 N개 · +M원)" */
+    private static String clickResult(SellMath.Plan plan) {
+        return "<#AAAAAA>(지금 <white>" + plan.totalAmount() + "개<#AAAAAA> · <#FFDF6B>+"
+                + MarketPeriods.won(plan.totalMoney()) + "<#AAAAAA>)";
+    }
+}

@@ -38,6 +38,51 @@ class BankStoreTest {
         opened.forEach(BankStore::close);
     }
 
+    @Test
+    void externalReferenceSurvivesRestartAndRejectsConflictingReuse() throws Exception {
+        BankStore store = install();
+        store.deposit(alice, "Alice", 100, TxType.DEPOSIT, "Bank", null);
+        var first = store.external(alice, 25, "Market", "order-1", TxType.WITHDRAW);
+        assertEquals(BankStore.ExternalStatus.OK, first.status());
+        store.close();
+        BankStore reopened = reboot("next");
+        assertEquals(first, reopened.external(alice, 25, "Market", "order-1", TxType.WITHDRAW));
+        assertEquals(first.txId(), reopened.findByExtRef("order-1").txId());
+        assertEquals(BankStore.ExternalStatus.REJECTED, reopened.external(alice, 26, "Market", "order-1", TxType.WITHDRAW).status());
+        assertEquals(BankStore.LookupStatus.NOT_FOUND, reopened.findByExtRef("missing").status());
+    }
+
+    @Test
+    void marketWithdrawalRefundsOnlyThroughMarketResolveOnce() throws Exception {
+        BankStore store = install();
+        store.deposit(alice, "Alice", 5000, TxType.DEPOSIT, "VJobs", null);
+        var w1 = store.external(alice, 1500, Sources.MARKET, "m-order-1", TxType.WITHDRAW, "희귀상점 DIAMOND");
+        var w2 = store.external(alice, 2000, Sources.MARKET, "m-order-2", TxType.WITHDRAW, "뽑기 1회");
+        assertEquals(BankStore.ExternalStatus.OK, w1.status());
+        assertEquals(BankStore.ExternalStatus.OK, w2.status());
+        store.close(); // 비정상 종료
+
+        BankStore reopened = reboot("boot-2");
+        // /bank refund 는 Market 출금을 거부 (market.db 주문 상태와 어긋나 상품까지 지급되는 것 방지)
+        assertEquals(Failure.MARKET_ORDER, reopened.refund(w1.txId(), Sources.BANK, "admin=op").failure());
+        assertEquals(1500L, reopened.balance(alice).orElseThrow());
+
+        // /market resolve 경로(refundByExtRef)는 한 번만
+        Outcome byMarket1 = reopened.refundByExtRef("m-order-1", Sources.MARKET, "admin=op");
+        assertTrue(byMarket1.ok(), byMarket1::message);
+        assertEquals(Failure.ALREADY_REFUNDED, reopened.refundByExtRef("m-order-1", Sources.MARKET, "admin=op").failure());
+        Outcome byMarket2 = reopened.refundByExtRef("m-order-2", Sources.MARKET, "admin=op");
+        assertTrue(byMarket2.ok(), byMarket2::message);
+        assertEquals(Failure.MARKET_ORDER, reopened.refund(w2.txId(), Sources.BANK, "admin=op").failure());
+        assertEquals(5000L, reopened.balance(alice).orElseThrow());
+
+        // 외부 입금은 계좌가 아직 없어도 생성 후 입금
+        UUID newcomer = UUID.randomUUID();
+        var dep = reopened.external(newcomer, 300, Sources.MARKET, "m-sell-1", TxType.DEPOSIT, "판매");
+        assertEquals(BankStore.ExternalStatus.OK, dep.status());
+        assertEquals(300L, reopened.balance(newcomer).orElseThrow());
+    }
+
     private Path bankDir() {
         return dir.resolve("Bank");
     }

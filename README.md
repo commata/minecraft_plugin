@@ -14,11 +14,13 @@ AI 에이전트와 사람 모두 따르는 개발 규칙(구조·도메인 분�
 | 경로 | 내용 |
 | --- | --- |
 | `build-logic/` | 공통 빌드 규칙 (`java-conventions`, `paper-plugin-conventions`) |
-| `common/` | 공통 코드 (메시지, 쿨다운). 각 플러그인 JAR에 포함됩니다 |
+| `common/` | 공통 코드 (메시지, 쿨다운, 시간 표기, GUI 기반). 각 플러그인 JAR에 포함됩니다 |
 | `plugins/custom-items/` | 커스텀 아이템·스킬 플러그인 (현재: 접속 환영 메시지, `/ci`) |
 | `plugins/travel/` | `/sethome`, `/home` 귀환 + `/tpa` 이동 요청 플러그인 (예전 `plugins/home`) |
 | `plugins/pets/` | `/callpet` 길들인 펫 불러오기 플러그인 |
 | `plugins/bank/` | 서버 화폐(원). VaultUnlocked 경제 제공자 + `/money` `/pay` `/baltop` `/bank` ([ECONOMY.md 2.1](docs/ECONOMY.md)) |
+| `plugins/economy-hub/` | VJobs 보호(탈퇴 쿨타임·XP 유지·비자연 블록 제외), `/economy`·`/직업` 메뉴, 직업 편의 스킬 ([ECONOMY.md 7.2, 15장](docs/ECONOMY.md)) |
+| `plugins/market/` | 희귀 상점(주간 한도), 인첸트 책 뽑기(확률 공개·천장), 직업별 서버 매입 `/희귀상점` `/뽑기` `/판매` ([ECONOMY.md 13·14장](docs/ECONOMY.md)) |
 | `gradle.properties` | MC / Paper API / Java 버전 (여기서만 관리) |
 
 ## 자주 쓰는 명령 (Windows PowerShell)
@@ -32,6 +34,7 @@ AI 에이전트와 사람 모두 따르는 개발 규칙(구조·도메인 분�
 .\gradlew :plugins:travel:runServer
 .\gradlew :plugins:pets:runServer
 .\gradlew :plugins:bank:runServer   # VaultUnlocked JAR 을 plugins/bank/run/plugins/ 에 먼저 넣어야 켜짐
+.\gradlew :plugins:market:runServer # VaultUnlocked·Bank JAR 을 plugins/market/run/plugins/ 에 넣어야 거래 가능
 ```
 
 - 테스트 서버 파일은 `plugins/custom-items/run/`에 생기며 Git에는 올라가지 않습니다.
@@ -60,8 +63,13 @@ AI 에이전트와 사람 모두 따르는 개발 규칙(구조·도메인 분�
 | `/baltop [쪽]` | 모두 | 잔액 순위 10명씩 (1분마다 갱신) |
 | `/bank give·take·set <닉네임> <금액>` | `bank.admin` (기본 OP) | 관리자 잔액 변경 (기록에 실행자 남음) |
 | `/bank log <닉네임> [쪽]` | `bank.admin` | 거래 기록 (마우스를 올리면 기동 ID·위치·창 제목) |
-| `/bank refund <거래번호>` | `bank.admin` | 비정상 종료된 기동의 EconomyShopGUI 출금만 1회 환불 ([ECONOMY.md 2.4](docs/ECONOMY.md)) |
+| `/bank refund <거래번호>` | `bank.admin` | 비정상 종료된 기동의 EconomyShopGUI 출금만 1회 환불. Market 출금은 `/market resolve <거래 ID> refund` ([ECONOMY.md 2.4](docs/ECONOMY.md)) |
 | `/bank reload` | `bank.admin` | `plugins/Bank/config.yml` 다시 불러오기 |
+| `/희귀상점` (`/market`, `/rareshop`) | 모두 | 희귀 상점 GUI 열기 (자원·고정가 인첸트 책 주간 한도, [ECONOMY.md 13.4](docs/ECONOMY.md)) |
+| `/뽑기` (`/gacha`) `[확률]` | 모두 | 인첸트 책 뽑기 GUI (1회 2,000원·하루 20회·천장 80회) / `확률`: 확률표 ([ECONOMY.md 13.5](docs/ECONOMY.md)) |
+| `/판매` (`/sell`) | 모두 | 직접 채집·획득한 아이템 서버 매입 GUI (기본가 + 내 직업 보너스, 하루 5,000원, [ECONOMY.md 14장](docs/ECONOMY.md)) |
+| `/market claim` | 모두 | 저장 지연·인벤토리 부족으로 보류된 미수령 구매품 받기 |
+| `/market status·reload·log·reset·pending·resolve` | `market.admin` (기본 OP) | 마켓 상태·설정 리로드·거래 로그·한도 초기화·보류 목록·수동 환불/격리 해제 |
 | `/callpet` | 모두 | 내가 길들인 늑대·고양이·앵무새·말·당나귀·노새·라마를 내 옆으로 순간이동 (쿨타임 없음, 다른 차원에서도 가능, 앉은 펫은 앉은 채로). 멀리 두고 온 펫도 마지막 위치의 청크를 불러와서 데려옴 |
 
 ### `/home` 규칙 (시간은 `plugins/travel/src/main/resources/config.yml`에서 변경)

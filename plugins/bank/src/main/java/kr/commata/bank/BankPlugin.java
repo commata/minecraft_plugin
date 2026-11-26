@@ -129,6 +129,40 @@ public final class BankPlugin extends JavaPlugin {
                 + store.accountCount() + "개, 기동 ID " + store.bootId() + ")");
     }
 
+    /** Market의 멱등 거래 API (ECONOMY.md 13.6). */
+    public BankStore.Receipt deposit(UUID who, long amount, String source, String extRef) {
+        return deposit(who, amount, source, extRef, null);
+    }
+
+    public BankStore.Receipt deposit(UUID who, long amount, String source, String extRef, String context) {
+        return store == null ? new BankStore.Receipt(BankStore.ExternalStatus.REJECTED, 0)
+                : store.external(who, amount, source, extRef, kr.commata.bank.core.TxType.DEPOSIT, context);
+    }
+
+    public BankStore.Receipt withdraw(UUID who, long amount, String source, String extRef) {
+        return withdraw(who, amount, source, extRef, null);
+    }
+
+    public BankStore.Receipt withdraw(UUID who, long amount, String source, String extRef, String context) {
+        return store == null ? new BankStore.Receipt(BankStore.ExternalStatus.REJECTED, 0)
+                : store.external(who, amount, source, extRef, kr.commata.bank.core.TxType.WITHDRAW, context);
+    }
+
+    public BankStore.Lookup findByExtRef(String extRef) {
+        return store == null ? new BankStore.Lookup(BankStore.LookupStatus.ERROR, 0) : store.findByExtRef(extRef);
+    }
+
+    /** Market 관리자 수동 환불 (/market resolve refund, 1회 제약 공유, ECONOMY.md 13.6). */
+    public kr.commata.bank.core.Outcome refundByExtRef(String extRef, String source, String context) {
+        return store == null ? new kr.commata.bank.core.Outcome(false, kr.commata.bank.core.Failure.LOCKED, 0, 0, "")
+                : store.refundByExtRef(extRef, source, context);
+    }
+
+    /** Bank 가 잠금 모드인지 여부. */
+    public boolean isLocked() {
+        return store == null || store.isClosed();
+    }
+
     @Override
     public void onDisable() {
         getServer().getServicesManager().unregisterAll(this);

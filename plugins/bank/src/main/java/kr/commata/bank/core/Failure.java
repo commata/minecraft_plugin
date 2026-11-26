@@ -13,6 +13,7 @@ public enum Failure {
     TX_NOT_FOUND("그런 거래번호가 없습니다."),
     NOT_WITHDRAW("출금 거래만 환불할 수 있습니다."),
     NOT_SHOP("EconomyShopGUI 출금만 환불할 수 있습니다."),
+    MARKET_ORDER("Market 출금은 /bank refund 가 아니라 /market resolve <거래 ID> refund 로 환불해야 합니다."),
     CLEAN_BOOT("비정상 종료된 기동의 거래가 아닙니다."),
     ALREADY_REFUNDED("이미 환불한 거래입니다.");
 
