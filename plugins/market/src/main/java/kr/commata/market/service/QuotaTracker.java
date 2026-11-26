@@ -3,11 +3,13 @@ package kr.commata.market.service;
 import java.sql.SQLException;
 import java.util.EnumMap;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Logger;
 import kr.commata.market.bridge.UntrustedBlockReader;
+import kr.commata.market.core.DropFilter;
 import kr.commata.market.core.QuotaBuffer;
 import kr.commata.market.core.SellCatalog;
 import org.bukkit.GameMode;
@@ -27,6 +29,7 @@ import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockDropItemEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.player.PlayerFishEvent;
+import org.bukkit.inventory.EntityEquipment;
 import org.bukkit.inventory.ItemStack;
 
 /**
@@ -182,14 +185,38 @@ public final class QuotaTracker implements Listener {
                 || !(entity instanceof Enemy) || entity instanceof Player || entity.fromMobSpawner()) {
             return;
         }
-        Map<Material, Integer> counts = new EnumMap<>(Material.class);
+        Map<String, Integer> dropCounts = new LinkedHashMap<>();
         for (ItemStack stack : event.getDrops()) {
-            if (stack == null || stack.getType().isAir() || stack.getAmount() <= 0) {
-                continue;
+            addItemCount(dropCounts, stack);
+        }
+        Map<String, Integer> equipCounts = new LinkedHashMap<>();
+        EntityEquipment eq = entity.getEquipment();
+        if (eq != null) {
+            addItemCount(equipCounts, eq.getItemInMainHand());
+            addItemCount(equipCounts, eq.getItemInOffHand());
+            for (ItemStack armor : eq.getArmorContents()) {
+                addItemCount(equipCounts, armor);
             }
-            counts.merge(stack.getType(), stack.getAmount(), Integer::sum);
+        }
+        Map<String, Integer> filtered = DropFilter.subtractEquipment(dropCounts, equipCounts);
+        if (filtered.isEmpty()) {
+            return;
+        }
+        Map<Material, Integer> counts = new EnumMap<>(Material.class);
+        for (Map.Entry<String, Integer> entry : filtered.entrySet()) {
+            Material mat = Material.matchMaterial(entry.getKey());
+            if (mat != null) {
+                counts.put(mat, entry.getValue());
+            }
         }
         recordDrops(killer, "hunter", counts);
+    }
+
+    private static void addItemCount(Map<String, Integer> target, ItemStack stack) {
+        if (stack == null || stack.getType().isAir() || stack.getAmount() <= 0) {
+            return;
+        }
+        target.merge(stack.getType().name(), stack.getAmount(), Integer::sum);
     }
 
     // ------------------------------------------------------------------ 낚시꾼
