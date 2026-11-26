@@ -13,6 +13,7 @@ import kr.commata.market.bridge.UntrustedBlockReader;
 import kr.commata.market.core.BlockTrustState;
 import kr.commata.market.core.BreakLedger;
 import kr.commata.market.core.DropFilter;
+import kr.commata.market.core.FarmerCropRules;
 import kr.commata.market.core.QuotaBuffer;
 import kr.commata.market.core.SeedCrops;
 import kr.commata.market.core.SellCatalog;
@@ -33,6 +34,7 @@ import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockDropItemEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.player.PlayerFishEvent;
+import org.bukkit.event.player.PlayerHarvestBlockEvent;
 import org.bukkit.inventory.EntityEquipment;
 import org.bukkit.inventory.ItemStack;
 
@@ -46,6 +48,8 @@ import org.bukkit.inventory.ItemStack;
  *       뒤에서 다른 플러그인이 취소하면 MONITOR 에서 그 기록을 지웁니다.</li>
  *   <li>{@link BlockDropItemEvent} NORMAL: EconomyHub {@code SkillListener}(HIGHEST)의 재파종·자석이 드롭 목록을
  *       수정하기 전에 실제 드롭 수량을 집계합니다.</li>
+ *   <li>{@link PlayerHarvestBlockEvent} NORMAL: 달콤한 열매 덤불 우클릭 수확 드롭을 {@link BreakLedger}에 저장하고,
+ *       MONITOR 에서 취소되지 않았음이 확인되면 집계합니다. EconomyHub 는 본 이벤트를 가로채지 않습니다.</li>
  *   <li>{@link EntityDeathEvent} NORMAL: {@code SkillListener}(HIGHEST)의 자석보다 먼저 드롭을 집계합니다.</li>
  *   <li>{@link PlayerFishEvent} NORMAL: {@code SkillListener}(다음 틱 자석)보다 먼저 집계하며 VJobs AFK 판정 중에는 제외합니다.</li>
  * </ul>
@@ -62,6 +66,12 @@ public final class QuotaTracker implements Listener {
             Material.OAK_LOG, Material.SPRUCE_LOG, Material.BIRCH_LOG, Material.JUNGLE_LOG,
             Material.ACACIA_LOG, Material.DARK_OAK_LOG, Material.MANGROVE_LOG, Material.CHERRY_LOG,
             Material.PALE_OAK_LOG, Material.CRIMSON_STEM, Material.WARPED_STEM);
+
+    /** 성숙 검사 없이 파괴 시 농부로 집계하는 블록들 (사탕수수·선인장·버섯, ECONOMY.md 14.4 v0.9.3). */
+    private static final Set<Material> DIRECT_FARMER_BLOCKS = EnumSet.of(
+            Material.SUGAR_CANE, Material.CACTUS,
+            Material.BROWN_MUSHROOM, Material.RED_MUSHROOM,
+            Material.BROWN_MUSHROOM_BLOCK, Material.RED_MUSHROOM_BLOCK, Material.MUSHROOM_STEM);
 
     private record BlockKey(UUID worldUid, int x, int y, int z) {
         static BlockKey of(Block block) {
@@ -81,6 +91,9 @@ public final class QuotaTracker implements Listener {
         }
     }
 
+    private record HarvestContext(UUID playerUid, Map<Material, Integer> counts) {
+    }
+
     private final MarketService market;
     private final Logger logger;
     private final BooleanSupplier economyHubAvailable;
@@ -91,6 +104,8 @@ public final class QuotaTracker implements Listener {
     private boolean flushFailing;
     /** BlockBreakEvent 에서 읽은 상태를 같은 블록의 BlockDropItemEvent 까지 보관 (좌표 키, 연쇄 파괴에도 안전). */
     private final BreakLedger<BlockKey, BreakContext> pendingBreaks = new BreakLedger<>();
+    /** PlayerHarvestBlockEvent NORMAL 에서 읽은 상태를 MONITOR(취소 확인)까지 보관. */
+    private final BreakLedger<BlockKey, HarvestContext> pendingHarvests = new BreakLedger<>();
 
     public QuotaTracker(MarketService market, Logger logger) {
         this(market, logger, () -> Bukkit.getPluginManager().isPluginEnabled("EconomyHub"), false);
@@ -120,6 +135,7 @@ public final class QuotaTracker implements Listener {
     public void onBlockBreak(BlockBreakEvent event) {
         // 드롭 이벤트가 오지 않고 남은 지난 틱 기록 정리
         pendingBreaks.purgeBefore(Bukkit.getCurrentTick());
+        pendingHarvests.purgeBefore(Bukkit.getCurrentTick());
         if (market.dbLocked()) {
             return;
         }
@@ -143,12 +159,16 @@ public final class QuotaTracker implements Listener {
             blockTrackingWarned = false;
             logger.info("EconomyHub 가 정상 활성화되어 블록 판매 가능량 집계가 재개되었습니다.");
         }
-        BlockTrustState trustState = UntrustedBlockReader.judge(block);
+        BlockTrustState trustState = FarmerCropRules.isPlacementCheckIgnored(type.name())
+                ? BlockTrustState.NATURAL
+                : UntrustedBlockReader.judge(block);
         ItemStack hand = player.getInventory().getItemInMainHand();
         boolean silkTouch = hand.containsEnchantment(Enchantment.SILK_TOUCH);
         boolean matureCrop = false;
         if (MATURE_CROPS.contains(type) && block.getBlockData() instanceof Ageable ageable) {
             matureCrop = ageable.getAge() >= ageable.getMaximumAge();
+        } else if (type == Material.SWEET_BERRY_BUSH && block.getBlockData() instanceof Ageable ageable) {
+            matureCrop = FarmerCropRules.isMatureBerryBush(ageable.getAge());
         }
         pendingBreaks.put(BlockKey.of(block), Bukkit.getCurrentTick(),
                 new BreakContext(player.getUniqueId(), type, trustState, silkTouch, matureCrop));
@@ -187,6 +207,9 @@ public final class QuotaTracker implements Listener {
             if (stack.getAmount() <= 0 || stack.getType().isAir()) {
                 continue;
             }
+            if (!FarmerCropRules.isEligibleDrop(ctx.blockType().name(), stack.getType().name())) {
+                continue;
+            }
             counts.merge(stack.getType(), stack.getAmount(), Integer::sum);
         }
         if (SeedCrops.replantItem(ctx.blockType().name()) != null) {
@@ -204,13 +227,69 @@ public final class QuotaTracker implements Listener {
         recordDrops(event.getPlayer(), categoryJob, counts);
     }
 
+    // ------------------------------------------------------------------ 우클릭 수확 (달콤한 열매)
+
+    @EventHandler(priority = EventPriority.NORMAL, ignoreCancelled = true)
+    public void onHarvest(PlayerHarvestBlockEvent event) {
+        pendingHarvests.purgeBefore(Bukkit.getCurrentTick());
+        if (market.dbLocked()) {
+            return;
+        }
+        Player player = event.getPlayer();
+        if (!isSurvivalOrAdventure(player)) {
+            return;
+        }
+        if (!isBlockTrackingAvailable()) {
+            if (!blockTrackingWarned) {
+                blockTrackingWarned = true;
+                logger.warning("EconomyHub 가 없거나 꺼져 있어 블록(광부·벌목꾼·농부) 판매 가능량 집계를 차단합니다.");
+            }
+            return;
+        }
+        if (blockTrackingWarned) {
+            blockTrackingWarned = false;
+            logger.info("EconomyHub 가 정상 활성화되어 블록 판매 가능량 집계가 재개되었습니다.");
+        }
+        Block block = event.getHarvestedBlock();
+        if (block.getType() != Material.SWEET_BERRY_BUSH) {
+            return;
+        }
+        Map<Material, Integer> counts = new EnumMap<>(Material.class);
+        for (ItemStack item : event.getItemsHarvested()) {
+            if (item != null && item.getType() == Material.SWEET_BERRIES && item.getAmount() > 0) {
+                counts.merge(item.getType(), item.getAmount(), Integer::sum);
+            }
+        }
+        if (counts.isEmpty()) {
+            return;
+        }
+        pendingHarvests.put(BlockKey.of(block), Bukkit.getCurrentTick(),
+                new HarvestContext(player.getUniqueId(), counts));
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onHarvestResult(PlayerHarvestBlockEvent event) {
+        BlockKey key = BlockKey.of(event.getHarvestedBlock());
+        if (event.isCancelled()) {
+            pendingHarvests.remove(key);
+            return;
+        }
+        HarvestContext ctx = pendingHarvests.take(key);
+        if (ctx == null || !event.getPlayer().getUniqueId().equals(ctx.playerUid())) {
+            return;
+        }
+        recordDrops(event.getPlayer(), "farmer", ctx.counts());
+    }
+
     private static boolean isTrackedBlock(Material type) {
         return type.name().endsWith("_ORE")
                 || type == Material.ANCIENT_DEBRIS
                 || LOG_BLOCKS.contains(type)
                 || MATURE_CROPS.contains(type)
                 || type == Material.PUMPKIN
-                || type == Material.MELON;
+                || type == Material.MELON
+                || DIRECT_FARMER_BLOCKS.contains(type)
+                || type == Material.SWEET_BERRY_BUSH;
     }
 
     private static String resolveBlockCategory(BreakContext ctx) {
@@ -228,6 +307,12 @@ public final class QuotaTracker implements Listener {
         if (type == Material.PUMPKIN || type == Material.MELON) {
             // 실크터치 수박은 MELON 블록이 떨어져 매입 품목(MELON_SLICE)에 매칭되지 않으므로 자동 제외
             return "farmer";
+        }
+        if (DIRECT_FARMER_BLOCKS.contains(type)) {
+            return "farmer";
+        }
+        if (type == Material.SWEET_BERRY_BUSH) {
+            return ctx.matureCrop() ? "farmer" : null;
         }
         return null;
     }
