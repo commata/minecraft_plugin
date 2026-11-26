@@ -16,6 +16,7 @@ import kr.commata.market.Msg;
 import kr.commata.market.bridge.BankBridge;
 import kr.commata.market.bridge.VJobsBridge;
 import kr.commata.market.core.AppliedTxTokens;
+import kr.commata.market.core.DeliveryPolicy;
 import kr.commata.market.core.GachaCatalog;
 import kr.commata.market.core.MarketPeriods;
 import kr.commata.market.core.MarketStore;
@@ -25,6 +26,8 @@ import kr.commata.market.core.RareCatalog;
 import kr.commata.market.core.RefundPolicy;
 import kr.commata.market.core.SellCatalog;
 import kr.commata.market.core.SellMath;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Sound;
@@ -457,30 +460,22 @@ public final class MarketService {
                 return false;
             }
 
+            boolean saveOk = false;
+            String saveError = null;
             try {
                 pdc.set(keyAppliedTx, PersistentDataType.STRING, newApplied);
                 pdc.set(keySeq, PersistentDataType.LONG, nextSeq);
                 player.saveData();
+                saveOk = true;
             } catch (Throwable e) {
-                // 인벤토리 제거 후 저장 중 예외 발생 시 같은 틱 안에서 인벤토리 및 PDC 복원, 판매 취소
-                player.getInventory().setStorageContents(invSnapshot);
-                if (prevApplied.isEmpty()) {
-                    pdc.remove(keyAppliedTx);
-                } else {
-                    pdc.set(keyAppliedTx, PersistentDataType.STRING, prevApplied);
-                }
-                if (prevSeq == 0L) {
-                    pdc.remove(keySeq);
-                } else {
-                    pdc.set(keySeq, PersistentDataType.LONG, prevSeq);
-                }
-                store.abortSale(txId, "저장 중 오류로 판매 취소: " + e.getMessage());
-                logger.severe("판매 처리 중 예외 발생, 인벤토리 복구 완료 (" + txId + "): " + e);
-                Msg.error(player, "판매 저장 중 오류가 발생하여 아이템을 복구했습니다.");
-                return false;
+                saveError = e.getMessage();
+                logger.severe("판매 saveData() 중 예외 (" + txId + "): " + e);
             }
 
-            PlayerDatReader.MarkerCheck check = PlayerDatReader.checkExact(worldRoot, uuid, txId, 1);
+            PlayerDatReader.MarkerCheck check = saveOk
+                    ? PlayerDatReader.checkExact(worldRoot, uuid, txId, 1)
+                    : new PlayerDatReader.MarkerCheck(PlayerDatReader.MarkerStatus.UNREADABLE, null, 0L, "저장 중 예외: " + saveError);
+
             if (check.status() != PlayerDatReader.MarkerStatus.FOUND) {
                 // ECONOMY.md 14.3 5번: 아이템을 돌려주지 않고 보류 (메모리는 아이템 빠짐 + 표시 있음 그대로)
                 inProcessPendingSales.add(txId);
@@ -537,6 +532,21 @@ public final class MarketService {
      */
     private boolean deliverOrderInTick(Player player, MarketStore.OrderRecord order) throws SQLException {
         UUID uuid = player.getUniqueId();
+        if (store.isQuarantined(uuid)) {
+            return false;
+        }
+
+        // [P1] 사전 디스크 확인: 이미 과거 시도에서 디스크에 지급 표시가 쓰여 있다면 중복 지급 방지
+        PlayerDatReader.MarkerCheck existing = PlayerDatReader.checkAnyAttempt(worldRoot, uuid, order.txId());
+        DeliveryPolicy.Decision preDecision = DeliveryPolicy.checkPreDelivery(existing.status() == PlayerDatReader.MarkerStatus.FOUND);
+        if (preDecision != null && preDecision.action() == DeliveryPolicy.Action.ALREADY_DELIVERED) {
+            inProcessChargedOrders.remove(order.txId());
+            store.raisePlayerSeq(uuid, existing.seq());
+            store.markOrderDelivered(order.txId());
+            logger.info("주문 " + order.txId() + " 이미 디스크에 지급 기록 존재함(DELIVERED 갱신 완료, 중복 지급 방지)");
+            return true;
+        }
+
         List<ItemStack> items;
         try {
             items = ItemFactory.itemsForOrder(order.kind(), order.payload());
@@ -570,52 +580,46 @@ public final class MarketService {
             return false;
         }
 
+        boolean saveOk = false;
+        String saveError = null;
         try {
             pdc.set(keyAppliedTx, PersistentDataType.STRING, newApplied);
             pdc.set(keySeq, PersistentDataType.LONG, nextSeq);
             player.saveData();
+            saveOk = true;
         } catch (Throwable e) {
-            // 인벤토리 지급 후 저장 중 예외 발생 시 같은 틱 안에서 아이템 회수 및 PDC 복원
-            player.getInventory().setStorageContents(invSnapshot);
-            if (prevApplied.isEmpty()) {
-                pdc.remove(keyAppliedTx);
-            } else {
-                pdc.set(keyAppliedTx, PersistentDataType.STRING, prevApplied);
-            }
-            if (prevSeq == 0L) {
-                pdc.remove(keySeq);
-            } else {
-                pdc.set(keySeq, PersistentDataType.LONG, prevSeq);
-            }
-            inProcessChargedOrders.add(order.txId());
-            logger.severe("주문 지급 중 예외 발생, 아이템 회수 완료 (" + order.txId() + "): " + e);
-            Msg.error(player, "구매품 저장 중 오류가 발생하여 지급을 보류했습니다. /market claim 으로 다시 받아 주세요.");
-            return false;
+            saveError = e.getMessage();
+            logger.severe("주문 지급 saveData() 중 예외 (" + order.txId() + "): " + e);
         }
 
-        PlayerDatReader.MarkerCheck check = PlayerDatReader.checkExact(worldRoot, uuid, order.txId(), attempt);
+        PlayerDatReader.MarkerCheck check = saveOk
+                ? PlayerDatReader.checkExact(worldRoot, uuid, order.txId(), attempt)
+                : new PlayerDatReader.MarkerCheck(PlayerDatReader.MarkerStatus.UNREADABLE, null, 0L, "저장 중 예외: " + saveError);
+
         if (check.status() == PlayerDatReader.MarkerStatus.FOUND) {
-            store.savePlayerSeq(uuid, nextSeq);
-            store.markOrderDelivered(order.txId());
+            // [P1] 디스크 FOUND 는 지급 확정 -> 메모리 재지급 플래그 즉시 해제
             inProcessChargedOrders.remove(order.txId());
+            try {
+                store.savePlayerSeq(uuid, nextSeq);
+                store.markOrderDelivered(order.txId());
+            } catch (SQLException e) {
+                logger.severe("주문 " + order.txId() + " 디스크 지급 확인됐으나 DB DELIVERED 갱신 실패 (재시도 시 DB만 갱신): " + e.getMessage());
+            }
             return true;
         }
 
         // ECONOMY.md 13.6: FOUND 가 아니면 같은 틱 안에서 방금 지급한 아이템과 PDC 표시를 회수
-        player.getInventory().setStorageContents(invSnapshot);
-        if (prevApplied.isEmpty()) {
-            pdc.remove(keyAppliedTx);
-        } else {
-            pdc.set(keyAppliedTx, PersistentDataType.STRING, prevApplied);
-        }
-        if (prevSeq == 0L) {
-            pdc.remove(keySeq);
-        } else {
-            pdc.set(keySeq, PersistentDataType.LONG, prevSeq);
+        boolean reverted = restoreInventoryQuietly(player, invSnapshot, prevApplied, prevSeq);
+        DeliveryPolicy.Decision postDecision = DeliveryPolicy.decidePostDelivery(
+                check.status() == PlayerDatReader.MarkerStatus.FOUND, !saveOk, reverted, check.reason());
+
+        if (postDecision.action() == DeliveryPolicy.Action.CORRUPTED) {
+            handleInventoryCorruption(player, order.txId(), "지급 후 디스크 미검출 회수 실패");
+            return false;
         }
 
         inProcessChargedOrders.add(order.txId());
-        String reason = check.reason() != null ? check.reason() : "저장 확인 미검출(ABSENT)";
+        String reason = postDecision.reason();
         store.bumpOrderAttempt(order.txId(), reason);
         if (check.status() == PlayerDatReader.MarkerStatus.UNREADABLE) {
             int count = store.incrementOrderUnreadable(order.txId(), reason);
@@ -628,6 +632,40 @@ public final class MarketService {
         return false;
     }
 
+    private boolean restoreInventoryQuietly(Player player, ItemStack[] snapshot, String prevApplied, long prevSeq) {
+        try {
+            player.getInventory().setStorageContents(snapshot);
+            PersistentDataContainer pdc = player.getPersistentDataContainer();
+            if (prevApplied == null || prevApplied.isEmpty()) {
+                pdc.remove(keyAppliedTx);
+            } else {
+                pdc.set(keyAppliedTx, PersistentDataType.STRING, prevApplied);
+            }
+            if (prevSeq == 0L) {
+                pdc.remove(keySeq);
+            } else {
+                pdc.set(keySeq, PersistentDataType.LONG, prevSeq);
+            }
+            return true;
+        } catch (Throwable t) {
+            logger.severe("인벤토리 복원 실패 (" + player.getName() + "): " + t);
+            return false;
+        }
+    }
+
+    private void handleInventoryCorruption(Player player, String txId, String reason) {
+        UUID uuid = player.getUniqueId();
+        logger.severe("치명적 인벤토리 오염 감지 (" + player.getName() + ", txId=" + txId + "): " + reason);
+        try {
+            store.quarantinePlayer(uuid, "인벤토리 복원 실패 (" + txId + "): " + reason, null);
+        } catch (SQLException e) {
+            logger.severe("인벤토리 복원 실패 후 격리 기록도 실패 (" + uuid + "): " + e.getMessage());
+        }
+        inProcessChargedOrders.remove(txId);
+        inProcessPendingSales.remove(txId);
+        player.kick(Component.text("플레이어 인벤토리 상태를 확인 중입니다. 관리자에게 문의해 주세요.", NamedTextColor.RED));
+    }
+
     // ------------------------------------------------------------------ /market claim
 
     public void claimPendingOrders(Player player) {
@@ -636,6 +674,15 @@ public final class MarketService {
             return;
         }
         UUID uuid = player.getUniqueId();
+        try {
+            if (store.isQuarantined(uuid)) {
+                Msg.error(player, "데이터 불일치로 마켓 거래가 격리되어 있습니다. 관리자에게 문의해 주세요.");
+                return;
+            }
+        } catch (SQLException e) {
+            Msg.error(player, "상태 확인 중 오류가 발생했습니다.");
+            return;
+        }
         if (!inFlight.add(uuid)) {
             Msg.warn(player, "이미 거래를 처리 중입니다.");
             return;
@@ -720,6 +767,9 @@ public final class MarketService {
         }
         UUID uuid = player.getUniqueId();
         try {
+            if (store.isQuarantined(uuid)) {
+                return;
+            }
             for (MarketStore.OrderRecord order : store.openOrdersOf(uuid)) {
                 if (!inProcessChargedOrders.contains(order.txId())) {
                     reconcileOrderFromDisk(order, player);
@@ -784,6 +834,11 @@ public final class MarketService {
             return;
         }
         try {
+            store.retryPendingQuarantines();
+            Set<UUID> pendingDb = store.pendingDbQuarantineUuids();
+            if (!pendingDb.isEmpty()) {
+                logger.warning("격리 DB 기록 대기 중: " + pendingDb.size() + "명 (" + pendingDb + ")");
+            }
             Set<UUID> quarantined = store.quarantinedUuids();
             for (MarketStore.OrderRecord order : store.openOrders()) {
                 if (inFlight.contains(order.uuid()) || quarantined.contains(order.uuid())) {

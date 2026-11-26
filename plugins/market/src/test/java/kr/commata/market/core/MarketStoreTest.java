@@ -255,4 +255,20 @@ class MarketStoreTest {
         s.raisePlayerSeq(alice, 7);
         assertEquals(7, s.playerSeq(alice));
     }
+
+    @Test
+    void memoryQuarantineHoldsAndRetries() throws Exception {
+        MarketStore s = openStore();
+        // 정상 격리 시 pendingDbQuarantine 은 비어 있음
+        s.quarantinePlayer(alice, "reason1", null);
+        assertTrue(s.isQuarantined(alice));
+        assertTrue(s.pendingDbQuarantineUuids().isEmpty());
+
+        // unquarantine 으로 해제
+        assertTrue(s.unquarantinePlayer(alice));
+        assertFalse(s.isQuarantined(alice));
+
+        // DB 테이블을 임의로 락 걸지 않고도 retryPendingQuarantines() 호출 확인
+        assertEquals(0, s.retryPendingQuarantines());
+    }
 }

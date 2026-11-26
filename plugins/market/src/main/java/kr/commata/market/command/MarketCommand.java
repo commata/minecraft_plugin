@@ -107,6 +107,12 @@ public final class MarketCommand implements BasicCommand {
         Msg.info(sender, "Market 상태");
         Msg.raw(sender, "<#AAAAAA>  DB: " + (market.dbLocked()
                 ? "<#FF5555>잠금 (" + market.dbLockReason() + ")" : "<#55FF55>정상"));
+        if (!market.dbLocked()) {
+            Set<UUID> pendingDb = market.store().pendingDbQuarantineUuids();
+            if (!pendingDb.isEmpty()) {
+                Msg.raw(sender, "<#FF5555>  격리 DB 쓰기 대기: " + pendingDb.size() + "명 (재시도 중)");
+            }
+        }
         Msg.raw(sender, "<#AAAAAA>  Bank: " + (market.bank().available()
                 ? "<#55FF55>" + market.bank().statusText() : "<#FF5555>" + market.bank().statusText()));
         Msg.raw(sender, "<#AAAAAA>  VJobs: " + (market.vjobs().available() ? "<#55FF55>연결됨" : "<#FFDF6B>미연결"));
@@ -198,6 +204,7 @@ public final class MarketCommand implements BasicCommand {
             List<MarketStore.SellOrderRecord> sales = market.store().openSales();
             List<MarketStore.QuarantineRecord> quarantined = market.store().allQuarantined();
             Set<UUID> quarantinedUuids = market.store().quarantinedUuids();
+            Set<UUID> pendingDb = market.store().pendingDbQuarantineUuids();
             Map<UUID, String> preUnreadable = guard.unreadablePlayers();
 
             Msg.info(sender, "보류·확인 대기 목록 (주문 " + orders.size() + "건, 판매 " + sales.size()
@@ -224,7 +231,9 @@ public final class MarketCommand implements BasicCommand {
                         + qTag);
             }
             for (MarketStore.QuarantineRecord q : quarantined) {
+                String pendingTag = pendingDb.contains(q.uuid()) ? " <#FF5555>[격리DB미반영]" : "";
                 Msg.raw(sender, "<#FF5555>[격리] <white>" + playerName(q.uuid()) + " (" + q.uuid() + ")"
+                        + pendingTag
                         + " <#AAAAAA>| " + q.reason()
                         + (q.backupFile() != null ? " | 백업: " + q.backupFile() : ""));
             }

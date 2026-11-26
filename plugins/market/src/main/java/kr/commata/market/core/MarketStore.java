@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.LongSupplier;
 import org.sqlite.SQLiteConfig;
@@ -257,6 +258,8 @@ public final class MarketStore implements AutoCloseable {
     private volatile boolean closed;
     private volatile String brokenReason;
     private boolean inTx;
+    private final Map<UUID, QuarantineRecord> memoryQuarantine = new ConcurrentHashMap<>();
+    private final Set<UUID> pendingDbQuarantine = ConcurrentHashMap.newKeySet();
 
     private MarketStore(Connection conn, LongSupplier clock) throws SQLException {
         this.conn = conn;
@@ -499,6 +502,10 @@ public final class MarketStore implements AutoCloseable {
     }
 
     public Optional<QuarantineRecord> quarantine(UUID uuid) throws SQLException {
+        QuarantineRecord mem = memoryQuarantine.get(uuid);
+        if (mem != null) {
+            return Optional.of(mem);
+        }
         return read(() -> {
             try (PreparedStatement ps = conn.prepareStatement(
                     "SELECT uuid, time_ms, reason, backup_file FROM quarantined_players WHERE uuid = ?")) {
@@ -515,22 +522,71 @@ public final class MarketStore implements AutoCloseable {
     }
 
     public void quarantinePlayer(UUID uuid, String reason, String backupFile) throws SQLException {
-        write(() -> {
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "INSERT INTO quarantined_players (uuid, time_ms, reason, backup_file) VALUES (?, ?, ?, ?)"
-                            + " ON CONFLICT (uuid) DO UPDATE SET time_ms = excluded.time_ms,"
-                            + " reason = excluded.reason, backup_file = excluded.backup_file")) {
-                ps.setString(1, uuid.toString());
-                ps.setLong(2, clock.getAsLong());
-                ps.setString(3, reason);
-                setNullable(ps, 4, backupFile);
-                ps.executeUpdate();
+        QuarantineRecord rec = new QuarantineRecord(uuid, clock.getAsLong(), reason, backupFile);
+        memoryQuarantine.put(uuid, rec);
+        try {
+            write(() -> {
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "INSERT INTO quarantined_players (uuid, time_ms, reason, backup_file) VALUES (?, ?, ?, ?)"
+                                + " ON CONFLICT (uuid) DO UPDATE SET time_ms = excluded.time_ms,"
+                                + " reason = excluded.reason, backup_file = excluded.backup_file")) {
+                    ps.setString(1, uuid.toString());
+                    ps.setLong(2, clock.getAsLong());
+                    ps.setString(3, reason);
+                    setNullable(ps, 4, backupFile);
+                    ps.executeUpdate();
+                }
+                return null;
+            });
+            pendingDbQuarantine.remove(uuid);
+        } catch (SQLException e) {
+            pendingDbQuarantine.add(uuid);
+            throw e;
+        }
+    }
+
+    /** DB 쓰기 실패로 메모리에만 남아있는 격리 목록을 DB에 재시도. */
+    public int retryPendingQuarantines() {
+        if (pendingDbQuarantine.isEmpty()) {
+            return 0;
+        }
+        int succeeded = 0;
+        for (UUID uuid : new ArrayList<>(pendingDbQuarantine)) {
+            QuarantineRecord rec = memoryQuarantine.get(uuid);
+            if (rec == null) {
+                pendingDbQuarantine.remove(uuid);
+                continue;
             }
-            return null;
-        });
+            try {
+                write(() -> {
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "INSERT INTO quarantined_players (uuid, time_ms, reason, backup_file) VALUES (?, ?, ?, ?)"
+                                    + " ON CONFLICT (uuid) DO UPDATE SET time_ms = excluded.time_ms,"
+                                    + " reason = excluded.reason, backup_file = excluded.backup_file")) {
+                        ps.setString(1, uuid.toString());
+                        ps.setLong(2, rec.timeMs());
+                        ps.setString(3, rec.reason());
+                        setNullable(ps, 4, rec.backupFile());
+                        ps.executeUpdate();
+                    }
+                    return null;
+                });
+                pendingDbQuarantine.remove(uuid);
+                succeeded++;
+            } catch (SQLException ignored) {
+                // 다음 주기에 다시 시도
+            }
+        }
+        return succeeded;
+    }
+
+    public Set<UUID> pendingDbQuarantineUuids() {
+        return Set.copyOf(pendingDbQuarantine);
     }
 
     public boolean unquarantinePlayer(UUID uuid) throws SQLException {
+        memoryQuarantine.remove(uuid);
+        pendingDbQuarantine.remove(uuid);
         return write(() -> {
             try (PreparedStatement ps = conn.prepareStatement("DELETE FROM quarantined_players WHERE uuid = ?")) {
                 ps.setString(1, uuid.toString());
@@ -540,35 +596,59 @@ public final class MarketStore implements AutoCloseable {
     }
 
     public boolean isQuarantined(UUID uuid) throws SQLException {
+        if (memoryQuarantine.containsKey(uuid)) {
+            return true;
+        }
         return quarantine(uuid).isPresent();
     }
 
     public Set<UUID> quarantinedUuids() throws SQLException {
-        return read(() -> {
-            Set<UUID> set = new HashSet<>();
-            try (Statement st = conn.createStatement();
-                 ResultSet rs = st.executeQuery("SELECT uuid FROM quarantined_players")) {
-                while (rs.next()) {
-                    set.add(UUID.fromString(rs.getString(1)));
+        Set<UUID> set = new HashSet<>(memoryQuarantine.keySet());
+        try {
+            set.addAll(read(() -> {
+                Set<UUID> out = new HashSet<>();
+                try (Statement st = conn.createStatement();
+                     ResultSet rs = st.executeQuery("SELECT uuid FROM quarantined_players")) {
+                    while (rs.next()) {
+                        out.add(UUID.fromString(rs.getString(1)));
+                    }
                 }
-            }
-            return set;
-        });
+                return out;
+            }));
+        } catch (SQLException ignored) {
+            // DB 읽기 실패 시에도 메모리 격리 집합 유지
+        }
+        return set;
     }
 
     public List<QuarantineRecord> allQuarantined() throws SQLException {
-        return read(() -> {
-            List<QuarantineRecord> out = new ArrayList<>();
-            try (Statement st = conn.createStatement();
-                 ResultSet rs = st.executeQuery(
-                         "SELECT uuid, time_ms, reason, backup_file FROM quarantined_players ORDER BY time_ms DESC")) {
-                while (rs.next()) {
-                    out.add(new QuarantineRecord(
-                            UUID.fromString(rs.getString(1)), rs.getLong(2), rs.getString(3), rs.getString(4)));
+        List<QuarantineRecord> out = new ArrayList<>();
+        try {
+            out.addAll(read(() -> {
+                List<QuarantineRecord> list = new ArrayList<>();
+                try (Statement st = conn.createStatement();
+                     ResultSet rs = st.executeQuery(
+                             "SELECT uuid, time_ms, reason, backup_file FROM quarantined_players ORDER BY time_ms DESC")) {
+                    while (rs.next()) {
+                        list.add(new QuarantineRecord(
+                                UUID.fromString(rs.getString(1)), rs.getLong(2), rs.getString(3), rs.getString(4)));
+                    }
                 }
+                return list;
+            }));
+        } catch (SQLException ignored) {
+            // DB 읽기 실패 시에도 메모리 격리 목록은 반환
+        }
+        Set<UUID> seen = new HashSet<>();
+        for (QuarantineRecord r : out) {
+            seen.add(r.uuid());
+        }
+        for (QuarantineRecord r : memoryQuarantine.values()) {
+            if (seen.add(r.uuid())) {
+                out.add(r);
             }
-            return out;
-        });
+        }
+        return out;
     }
 
     // ------------------------------------------------------------------ 한도·천장 조회
