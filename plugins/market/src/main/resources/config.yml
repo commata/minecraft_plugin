@@ -267,6 +267,11 @@ sell:
         NETHER_WART: { name: "네더 사마귀", unit: 16, base-price: 4, bonus-price: 8, max-price: 0 }
         COCOA_BEANS: { name: "코코아 콩", unit: 16, base-price: 4, bonus-price: 8, max-price: 0 }
         MELON_SLICE: { name: "수박 조각", unit: 16, base-price: 3, bonus-price: 6, max-price: 0 }
+        SUGAR_CANE: { name: "사탕수수", unit: 16, base-price: 2, bonus-price: 4, max-price: 120 }
+        CACTUS: { name: "선인장", unit: 16, base-price: 2, bonus-price: 4, max-price: 120 }
+        SWEET_BERRIES: { name: "달콤한 열매", unit: 16, base-price: 4, bonus-price: 8, max-price: 120 }
+        BROWN_MUSHROOM: { name: "갈색 버섯", unit: 16, base-price: 4, bonus-price: 8, max-price: 0 }
+        RED_MUSHROOM: { name: "빨간 버섯", unit: 16, base-price: 4, bonus-price: 8, max-price: 0 }
     hunter:
       name: "사냥꾼"
       bonus-label: "+100%"

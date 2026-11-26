@@ -7,6 +7,8 @@ author: commata
 # VJobs 클래스(이벤트)를 찾으려면 VJobs 가 먼저 켜져야 함. Vault 는 잔액 표시용(없어도 직업 보호는 동작해서 depend 로 두지 않음).
 # /economy 버튼이 여는 플러그인(Market·Trade 등)은 누를 때 켜져 있는지만 보므로 순서 의존이 필요 없음
 softdepend: [VJobs, Vault]
+# Market 등 타 플러그인이 런타임에 설치 블록 기록 규격(v1) 지원 여부를 식별할 수 있도록 provides 선언
+provides: [economyhub-block-marks-v1]
 permissions:
   economyhub.admin:
     description: /economyhub reload·status

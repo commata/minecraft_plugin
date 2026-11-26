@@ -64,4 +64,12 @@ class MarksTest {
         assertNull(Marks.clear(cleared, b), "다 지우면 null");
         assertFalse(Marks.get(null, a));
     }
+
+    @Test
+    void corruptedArrayPreservedWithoutOverwriting() {
+        long[] corrupted = new long[32]; // 64가 아닌 손상된 배열
+        assertSame(corrupted, Marks.set(corrupted, 5), "손상된 배열은 덮어쓰지 않고 원본 반환");
+        assertSame(corrupted, Marks.clear(corrupted, 5), "손상된 배열은 변경하지 않고 원본 반환");
+        assertFalse(Marks.get(corrupted, 5), "손상된 배열 조회는 false");
+    }
 }

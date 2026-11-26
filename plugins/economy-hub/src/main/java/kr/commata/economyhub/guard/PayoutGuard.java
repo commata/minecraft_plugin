@@ -19,6 +19,7 @@ import org.bukkit.event.block.BlockGrowEvent;
 import org.bukkit.event.block.BlockPistonExtendEvent;
 import org.bukkit.event.block.BlockPistonRetractEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.block.BlockSpreadEvent;
 import org.bukkit.event.world.StructureGrowEvent;
 
 /**
@@ -110,13 +111,12 @@ public final class PayoutGuard implements Listener {
         }
     }
 
-    /** 직접 채집한 품목만 매입하도록 설치 좌표를 기존 청크 기록에 남긴다 (ECONOMY.md 14.2). */
+    /** 직접 채집한 품목만 매입하도록 설치 좌표를 기존 청크 기록에 남긴다 (ECONOMY.md 14.2, 14.4 v0.9.3). */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onPlace(BlockPlaceEvent event) {
         Block placed = event.getBlockPlaced();
         Material type = placed.getType();
-        if (Tag.LOGS.isTagged(type) || type.name().endsWith("_ORE") || type == Material.ANCIENT_DEBRIS
-                || type == Material.PUMPKIN || type == Material.MELON) {
+        if (PlacedBlockFilter.isMarkedOnPlace(type.name(), Tag.LOGS.isTagged(type))) {
             marks.mark(placed);
         } else {
             marks.unmark(placed);
@@ -126,6 +126,12 @@ public final class PayoutGuard implements Listener {
     /** 작물·호박·수박·사탕수수가 새로 자란 자리는 자연 블록. 예전 표시가 남아 있으면 지움. */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onGrow(BlockGrowEvent event) {
+        marks.unmark(event.getBlock());
+    }
+
+    /** 버섯 퍼짐 등 자연 확산으로 새로 생긴 블록은 자연 블록. 예전 표시가 남아 있으면 지움 (ECONOMY.md 14.2). */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onSpread(BlockSpreadEvent event) {
         marks.unmark(event.getBlock());
     }
 

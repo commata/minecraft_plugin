@@ -31,18 +31,26 @@ public final class Marks {
         return (bits[index >>> 6] & (1L << (index & 63))) != 0;
     }
 
-    /** 표시. 이미 표시돼 있으면 같은 배열을 그대로 돌려줌(저장을 건너뛸 수 있게). */
+    /** 표시. 이미 표시돼 있거나 손상된 배열이면 원본을 그대로 돌려줌(손상 덮어쓰기 방지). */
     public static long[] set(long[] bits, int index) {
+        if (bits != null && bits.length != WORDS) {
+            // 손상된 배열(길이 불일치)은 기존 표시 유실을 방지하기 위해 덮어쓰지 않고 보존
+            return bits;
+        }
         if (get(bits, index)) {
             return bits;
         }
-        long[] out = bits == null || bits.length != WORDS ? new long[WORDS] : Arrays.copyOf(bits, WORDS);
+        long[] out = bits == null ? new long[WORDS] : Arrays.copyOf(bits, WORDS);
         out[index >>> 6] |= 1L << (index & 63);
         return out;
     }
 
-    /** 표시 지움. 표시가 없으면 같은 배열을 그대로, 다 지워지면 null 을 돌려줌(PDC 키 삭제). */
+    /** 표시 지움. 표시가 없거나 손상된 배열이면 원본을 그대로, 다 지워지면 null 을 돌려줌(PDC 키 삭제). */
     public static long[] clear(long[] bits, int index) {
+        if (bits != null && bits.length != WORDS) {
+            // 손상된 배열은 건드리지 않고 보존
+            return bits;
+        }
         if (!get(bits, index)) {
             return bits;
         }
