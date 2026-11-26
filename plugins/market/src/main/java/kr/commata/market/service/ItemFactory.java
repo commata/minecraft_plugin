@@ -11,7 +11,6 @@ import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.inventory.meta.EnchantmentStorageMeta;
-import org.bukkit.inventory.meta.ItemMeta;
 
 /**
  * 희귀 상점·뽑기 지급 아이템 생성과 인벤토리 빈칸·매입 품목 매칭/제거 도우미.
@@ -105,22 +104,16 @@ public final class ItemFactory {
         return true;
     }
 
-    /** 매입 대상인 순수 바닐라 아이템인지 (이름·로어·인첸트·PDC가 붙은 소중한 아이템은 실수 매입 방지). */
+    /**
+     * 매입 대상인 순수 바닐라 아이템인지. 같은 재질의 새 아이템과 데이터 컴포넌트까지 같아야 합니다({@code isSimilar},
+     * 개수는 비교 안 함). 이름·로어·인첸트·PDC뿐 아니라 광택 덮어쓰기·커스텀 모델 데이터·속성 수정자 등이 붙은
+     * 커스텀 아이템도 실수로 매입하지 않습니다.
+     */
     public static boolean isSellableVanilla(ItemStack stack, Material material) {
         if (stack == null || stack.getType() != material || stack.getAmount() <= 0) {
             return false;
         }
-        if (!stack.hasItemMeta()) {
-            return true;
-        }
-        ItemMeta meta = stack.getItemMeta();
-        if (meta == null) {
-            return true;
-        }
-        return !meta.hasDisplayName()
-                && !meta.hasLore()
-                && !meta.hasEnchants()
-                && meta.getPersistentDataContainer().getKeys().isEmpty();
+        return stack.isSimilar(new ItemStack(material));
     }
 
     /** 보관함(0~35)에서 매입 가능한 바닐라 아이템 총 수량. */

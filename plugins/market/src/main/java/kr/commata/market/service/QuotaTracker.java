@@ -9,11 +9,13 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Logger;
 import kr.commata.market.bridge.UntrustedBlockReader;
+import kr.commata.market.core.BreakLedger;
 import kr.commata.market.core.DropFilter;
 import kr.commata.market.core.QuotaBuffer;
+import kr.commata.market.core.SeedCrops;
 import kr.commata.market.core.SellCatalog;
+import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
-import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.Ageable;
@@ -38,7 +40,8 @@ import org.bukkit.inventory.ItemStack;
  * <p>이벤트 순서 (ECONOMY.md 15.5, PayoutGuard):
  * <ul>
  *   <li>{@link BlockBreakEvent} NORMAL: EconomyHub {@code PayoutGuard.onBreakLate}(MONITOR)가 청크 PDC 표시를
- *       지우기 전에 자연 블록 여부·실크터치 여부·작물 성숙 여부를 읽어 둡니다.</li>
+ *       지우기 전에 자연 블록 여부·실크터치 여부·작물 성숙 여부를 블록 좌표별로 읽어 둡니다({@link BreakLedger}).
+ *       뒤에서 다른 플러그인이 취소하면 MONITOR 에서 그 기록을 지웁니다.</li>
  *   <li>{@link BlockDropItemEvent} NORMAL: EconomyHub {@code SkillListener}(HIGHEST)의 재파종·자석이 드롭 목록을
  *       수정하기 전에 실제 드롭 수량을 집계합니다.</li>
  *   <li>{@link EntityDeathEvent} NORMAL: {@code SkillListener}(HIGHEST)의 자석보다 먼저 드롭을 집계합니다.</li>
@@ -58,22 +61,19 @@ public final class QuotaTracker implements Listener {
             Material.ACACIA_LOG, Material.DARK_OAK_LOG, Material.MANGROVE_LOG, Material.CHERRY_LOG,
             Material.PALE_OAK_LOG, Material.CRIMSON_STEM, Material.WARPED_STEM);
 
+    private record BlockKey(UUID worldUid, int x, int y, int z) {
+        static BlockKey of(Block block) {
+            return new BlockKey(block.getWorld().getUID(), block.getX(), block.getY(), block.getZ());
+        }
+    }
+
     private record BreakContext(
-            UUID worldUid,
-            int x,
-            int y,
-            int z,
             UUID playerUid,
             Material blockType,
             boolean untrusted,
             boolean silkTouch,
             boolean matureCrop
     ) {
-        boolean matches(Block block, Player player) {
-            return block.getWorld().getUID().equals(worldUid)
-                    && block.getX() == x && block.getY() == y && block.getZ() == z
-                    && player.getUniqueId().equals(playerUid);
-        }
     }
 
     private final MarketService market;
@@ -81,8 +81,8 @@ public final class QuotaTracker implements Listener {
     private final QuotaBuffer buffer = new QuotaBuffer();
     /** 연속 반영 실패 중인지 (첫 실패와 회복 시에만 로그 출력). */
     private boolean flushFailing;
-    /** 메인 스레드에서 BlockBreakEvent 직후 바로 이어지는 BlockDropItemEvent 와 매칭. */
-    private BreakContext pendingBreak;
+    /** BlockBreakEvent 에서 읽은 상태를 같은 블록의 BlockDropItemEvent 까지 보관 (좌표 키, 연쇄 파괴에도 안전). */
+    private final BreakLedger<BlockKey, BreakContext> pendingBreaks = new BreakLedger<>();
 
     public QuotaTracker(MarketService market, Logger logger) {
         this.market = market;
@@ -93,7 +93,8 @@ public final class QuotaTracker implements Listener {
 
     @EventHandler(priority = EventPriority.NORMAL, ignoreCancelled = true)
     public void onBlockBreak(BlockBreakEvent event) {
-        pendingBreak = null;
+        // 드롭 이벤트가 오지 않고 남은 지난 틱 기록 정리
+        pendingBreaks.purgeBefore(Bukkit.getCurrentTick());
         if (market.dbLocked()) {
             return;
         }
@@ -113,17 +114,25 @@ public final class QuotaTracker implements Listener {
         if (MATURE_CROPS.contains(type) && block.getBlockData() instanceof Ageable ageable) {
             matureCrop = ageable.getAge() >= ageable.getMaximumAge();
         }
-        Location loc = block.getLocation();
-        pendingBreak = new BreakContext(
-                loc.getWorld().getUID(), loc.getBlockX(), loc.getBlockY(), loc.getBlockZ(),
-                player.getUniqueId(), type, untrusted, silkTouch, matureCrop);
+        pendingBreaks.put(BlockKey.of(block), Bukkit.getCurrentTick(),
+                new BreakContext(player.getUniqueId(), type, untrusted, silkTouch, matureCrop));
+    }
+
+    /**
+     * NORMAL 뒤에 다른 플러그인이 파괴를 취소했거나 드롭을 껐으면 기록을 지웁니다. 결과만 읽으므로 MONITOR,
+     * 취소된 이벤트도 받아야 하므로 {@code ignoreCancelled = false}.
+     */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onBlockBreakResult(BlockBreakEvent event) {
+        if (event.isCancelled() || !event.isDropItems()) {
+            pendingBreaks.remove(BlockKey.of(event.getBlock()));
+        }
     }
 
     @EventHandler(priority = EventPriority.NORMAL, ignoreCancelled = true)
     public void onBlockDrop(BlockDropItemEvent event) {
-        BreakContext ctx = pendingBreak;
-        pendingBreak = null;
-        if (ctx == null || !ctx.matches(event.getBlock(), event.getPlayer())) {
+        BreakContext ctx = pendingBreaks.take(BlockKey.of(event.getBlock()));
+        if (ctx == null || !event.getPlayer().getUniqueId().equals(ctx.playerUid())) {
             return;
         }
         if (ctx.untrusted()) {
@@ -140,6 +149,18 @@ public final class QuotaTracker implements Listener {
                 continue;
             }
             counts.merge(stack.getType(), stack.getAmount(), Integer::sum);
+        }
+        if (SeedCrops.replantItem(ctx.blockType().name()) != null) {
+            // 감자·당근·네더 사마귀·코코아 콩: 다시 심을 1개를 빼고 기록 (ECONOMY.md 14.2)
+            Map<String, Integer> byName = new LinkedHashMap<>();
+            counts.forEach((mat, n) -> byName.put(mat.name(), n));
+            counts.clear();
+            SeedCrops.harvestQuota(ctx.blockType().name(), byName).forEach((name, n) -> {
+                Material mat = Material.matchMaterial(name);
+                if (mat != null) {
+                    counts.put(mat, n);
+                }
+            });
         }
         recordDrops(event.getPlayer(), categoryJob, counts);
     }

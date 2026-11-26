@@ -35,6 +35,8 @@ final class SellMenu extends Menu {
     private final MarketMenus menus;
     private String selectedJobId;
     private boolean readErrorLogged;
+    /** 직업 정보 로딩 중 1초 뒤 다시 그리기를 이미 예약했는지 */
+    private boolean refreshScheduled;
 
     SellMenu(MarketMenus menus, Player viewer) {
         super(6, Items.text("<#F5C542>아이템 판매 (/판매)"));
@@ -81,6 +83,17 @@ final class SellMenu extends Menu {
         long remainingLimit = Math.max(0L, dailyLimit - todayTotal);
         boolean locked = !readError && menus.market().isPlayerLocked(viewer.getUniqueId());
         boolean bankReady = menus.market().bank().available();
+        // VJobs 는 켜져 있는데 직업 정보를 아직 못 읽음 → 판매 버튼을 막고 1초 뒤 다시 그림 (기본가로 잘못 팔리는 것 방지)
+        boolean jobsLoading = joined == null && menus.market().vjobs().available();
+        if (jobsLoading && !refreshScheduled) {
+            refreshScheduled = true;
+            menus.plugin().getServer().getScheduler().runTaskLater(menus.plugin(), () -> {
+                refreshScheduled = false;
+                if (isViewing(viewer)) {
+                    render(viewer);
+                }
+            }, 20L);
+        }
 
         // 1줄: 직업 탭 (선택된 탭은 [현재 탭] 로어로만 구분, 광택은 가입한 낚시꾼 등 glowWhenJoined 만 사용)
         SellCatalog.Category activeCat = catalog.category(selectedJobId);
@@ -134,6 +147,13 @@ final class SellMenu extends Menu {
                 }
                 if (locked) {
                     set(slot, menus.pendingLockIcon(viewer, item.displayName()));
+                    continue;
+                }
+                if (jobsLoading) {
+                    set(slot, Items.of(Material.GRAY_DYE)
+                            .name("<#AAAAAA>" + item.displayName())
+                            .lore("<#FF5555>직업 정보를 불러오는 중", "<#AAAAAA>잠시 후 자동으로 갱신됩니다.")
+                            .build());
                     continue;
                 }
                 Material mat = Material.matchMaterial(item.id());
