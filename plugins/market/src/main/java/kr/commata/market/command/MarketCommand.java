@@ -10,6 +10,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import kr.commata.market.MarketConfig;
 import kr.commata.market.Msg;
@@ -98,7 +99,7 @@ public final class MarketCommand implements BasicCommand {
         Msg.raw(sender, "<#AAAAAA>  /market log <닉네임> [개수]");
         Msg.raw(sender, "<#AAAAAA>  /market reset <닉네임>  (이번 주·오늘 한도 초기화)");
         Msg.raw(sender, "<#AAAAAA>  /market resolve <tx_id> refund");
-        Msg.raw(sender, "<#AAAAAA>  /market resolve <닉네임|UUID> unquarantine");
+        Msg.raw(sender, "<#AAAAAA>  /market resolve <닉네임|UUID> unquarantine  (백업 파일 대조 후 해제)");
     }
 
     private void status(CommandSender sender) {
@@ -106,6 +107,12 @@ public final class MarketCommand implements BasicCommand {
         Msg.info(sender, "Market 상태");
         Msg.raw(sender, "<#AAAAAA>  DB: " + (market.dbLocked()
                 ? "<#FF5555>잠금 (" + market.dbLockReason() + ")" : "<#55FF55>정상"));
+        if (!market.dbLocked()) {
+            Set<UUID> pendingDb = market.store().pendingDbQuarantineUuids();
+            if (!pendingDb.isEmpty()) {
+                Msg.raw(sender, "<#FF5555>  격리 DB 쓰기 대기: " + pendingDb.size() + "명 (재시도 중)");
+            }
+        }
         Msg.raw(sender, "<#AAAAAA>  Bank: " + (market.bank().available()
                 ? "<#55FF55>" + market.bank().statusText() : "<#FF5555>" + market.bank().statusText()));
         Msg.raw(sender, "<#AAAAAA>  VJobs: " + (market.vjobs().available() ? "<#55FF55>연결됨" : "<#FFDF6B>미연결"));
@@ -211,29 +218,37 @@ public final class MarketCommand implements BasicCommand {
             List<MarketStore.OrderRecord> orders = market.store().unresolvedOrders();
             List<MarketStore.SellOrderRecord> sales = market.store().openSales();
             List<MarketStore.QuarantineRecord> quarantined = market.store().allQuarantined();
+            Set<UUID> quarantinedUuids = market.store().quarantinedUuids();
+            Set<UUID> pendingDb = market.store().pendingDbQuarantineUuids();
             Map<UUID, String> preUnreadable = guard.unreadablePlayers();
 
             Msg.info(sender, "보류·확인 대기 목록 (주문 " + orders.size() + "건, 판매 " + sales.size()
                     + "건, 격리 " + quarantined.size() + "명, 접속불가 " + preUnreadable.size() + "명)");
 
             for (MarketStore.OrderRecord o : orders) {
+                String qTag = quarantinedUuids.contains(o.uuid()) ? " <#FF5555>[플레이어 격리됨 - 복구 보류]" : "";
                 Msg.raw(sender, "<#F5C542>[주문:" + o.status() + "] <white>" + o.txId()
                         + " <#AAAAAA>| " + playerName(o.uuid())
                         + " | " + OrderPayload.summary(o.kind(), o.payload())
                         + " (" + MarketPeriods.won(o.price()) + ")"
                         + " | 시도 " + o.attempt() + ", 실패 " + o.unreadableCount()
-                        + (o.reason() != null ? " | 사유: " + o.reason() : ""));
+                        + (o.reason() != null ? " | 사유: " + o.reason() : "")
+                        + qTag);
             }
             for (MarketStore.SellOrderRecord s : sales) {
+                String qTag = quarantinedUuids.contains(s.uuid()) ? " <#FF5555>[플레이어 격리됨 - 복구 보류]" : "";
                 Msg.raw(sender, "<#55FFFF>[판매:" + s.status() + "] <white>" + s.txId()
                         + " <#AAAAAA>| " + playerName(s.uuid())
                         + " | " + s.item() + " x" + (s.bonusAmount() + s.baseAmount())
                         + " (" + MarketPeriods.won(s.total()) + ")"
                         + " | 실패 " + s.unreadableCount()
-                        + (s.reason() != null ? " | 사유: " + s.reason() : ""));
+                        + (s.reason() != null ? " | 사유: " + s.reason() : "")
+                        + qTag);
             }
             for (MarketStore.QuarantineRecord q : quarantined) {
+                String pendingTag = pendingDb.contains(q.uuid()) ? " <#FF5555>[격리DB미반영]" : "";
                 Msg.raw(sender, "<#FF5555>[격리] <white>" + playerName(q.uuid()) + " (" + q.uuid() + ")"
+                        + pendingTag
                         + " <#AAAAAA>| " + q.reason()
                         + (q.backupFile() != null ? " | 백업: " + q.backupFile() : ""));
             }
@@ -251,7 +266,7 @@ public final class MarketCommand implements BasicCommand {
 
     private void resolve(CommandSender sender, String[] args) {
         if (args.length != 3) {
-            Msg.error(sender, "사용법: /market resolve <tx_id> refund 또는 /market resolve <닉네임|UUID> unquarantine");
+            Msg.error(sender, "사용법: /market resolve <tx_id> refund 또는 /market resolve <닉네임|UUID> unquarantine (백업 파일 대조 후 해제)");
             return;
         }
         String action = args[2].toLowerCase(Locale.ROOT);
@@ -274,7 +289,7 @@ public final class MarketCommand implements BasicCommand {
                 boolean removed = market.store().unquarantinePlayer(uuid);
                 guard.clearUnreadable(uuid);
                 if (removed) {
-                    Msg.success(sender, playerName(uuid) + "의 접속 격리를 해제했습니다.");
+                    Msg.success(sender, playerName(uuid) + "의 접속 격리를 해제했습니다 (백업 파일 대조 후 해제 완료).");
                 } else {
                     Msg.warn(sender, playerName(uuid) + "은(는) 격리 목록에 없었습니다 (접속 불가 캐시만 정리됨).");
                 }

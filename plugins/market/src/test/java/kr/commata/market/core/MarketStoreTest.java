@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.AfterEach;
@@ -171,13 +172,20 @@ class MarketStoreTest {
     @Test
     void quarantineBlocksTransactionsUntilCleared() throws Exception {
         MarketStore s = openStore();
+        assertFalse(s.isQuarantined(alice));
+        assertTrue(s.quarantinedUuids().isEmpty());
+
         s.quarantinePlayer(alice, "seq mismatch", "alice.dat");
         assertTrue(s.isPlayerLocked(alice));
+        assertTrue(s.isQuarantined(alice));
+        assertEquals(Set.of(alice), s.quarantinedUuids());
         assertTrue(s.hasMarketHistory(alice));
         assertEquals(1, s.allQuarantined().size());
 
         assertTrue(s.unquarantinePlayer(alice));
         assertFalse(s.isPlayerLocked(alice));
+        assertFalse(s.isQuarantined(alice));
+        assertTrue(s.quarantinedUuids().isEmpty());
     }
 
     @Test
@@ -246,5 +254,21 @@ class MarketStoreTest {
         assertEquals(5, s.playerSeq(alice));
         s.raisePlayerSeq(alice, 7);
         assertEquals(7, s.playerSeq(alice));
+    }
+
+    @Test
+    void memoryQuarantineHoldsAndRetries() throws Exception {
+        MarketStore s = openStore();
+        // 정상 격리 시 pendingDbQuarantine 은 비어 있음
+        s.quarantinePlayer(alice, "reason1", null);
+        assertTrue(s.isQuarantined(alice));
+        assertTrue(s.pendingDbQuarantineUuids().isEmpty());
+
+        // unquarantine 으로 해제
+        assertTrue(s.unquarantinePlayer(alice));
+        assertFalse(s.isQuarantined(alice));
+
+        // DB 테이블을 임의로 락 걸지 않고도 retryPendingQuarantines() 호출 확인
+        assertEquals(0, s.retryPendingQuarantines());
     }
 }

@@ -115,7 +115,7 @@ public final class PlayerDataGuard implements Listener {
                 try {
                     store.quarantinePlayer(uuid, reason, backupName);
                 } catch (SQLException e) {
-                    logger.severe("격리 기록 실패 (" + uuid + "): " + e.getMessage());
+                    logger.severe("격리 DB 기록 실패, 메모리 격리 집합에 등록됨 (" + uuid + "): " + e.getMessage());
                 }
                 logger.severe("플레이어 .dat 불일치 감지! " + player.getName() + " (" + uuid + ") "
                         + reason + (backupName != null ? " / 백업: plugins/Market/recovery/" + backupName : ""));

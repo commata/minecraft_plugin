@@ -140,7 +140,7 @@ public final class BankBridge {
     public RefundResult refundByExtRef(String extRef, String context) {
         Plugin raw = server.getPluginManager().getPlugin("Bank");
         if (raw == null || !raw.isEnabled()) {
-            return new RefundResult(RefundStatus.REJECTED, 0L, 0L, "Bank 플러그인이 꺼져 있습니다.");
+            return new RefundResult(RefundStatus.UNKNOWN, 0L, 0L, "Bank 플러그인이 꺼져 있습니다.");
         }
         try {
             return Direct.refundByExtRef(raw, extRef, context);
@@ -187,7 +187,10 @@ public final class BankBridge {
 
         static RefundResult refundByExtRef(Plugin raw, String extRef, String context) {
             if (!(raw instanceof BankPlugin bank)) {
-                return new RefundResult(RefundStatus.REJECTED, 0L, 0L, "Bank 플러그인 타입 불일치");
+                return new RefundResult(RefundStatus.UNKNOWN, 0L, 0L, "Bank 플러그인 타입 불일치");
+            }
+            if (bank.isLocked()) {
+                return new RefundResult(RefundStatus.UNKNOWN, 0L, 0L, "Bank 플러그인이 잠금 모드입니다.");
             }
             Outcome o = bank.refundByExtRef(extRef, SOURCE, context);
             RefundStatus status;
@@ -195,7 +198,7 @@ public final class BankBridge {
                 status = RefundStatus.OK;
             } else if (o.failure() == Failure.ALREADY_REFUNDED) {
                 status = RefundStatus.ALREADY_REFUNDED;
-            } else if (o.failure() == Failure.STORAGE_ERROR) {
+            } else if (o.failure() == Failure.STORAGE_ERROR || o.failure() == Failure.LOCKED || o.failure() == Failure.CLOSED) {
                 status = RefundStatus.UNKNOWN;
             } else {
                 status = RefundStatus.REJECTED;
