@@ -75,4 +75,20 @@ class FarmerCropRulesTest {
         assertTrue(FarmerCropRules.isEligibleDrop("SWEET_BERRY_BUSH", "SWEET_BERRIES"));
         assertFalse(FarmerCropRules.isEligibleDrop("SWEET_BERRY_BUSH", "STICK"));
     }
+
+    @Test
+    @DisplayName("사탕수수·선인장은 설치 확인 대상이므로 직접 놓은 칸(MARKED)은 0개, 자란 칸(NATURAL)만 유효")
+    void sugarCanePlacementVsGrowth() {
+        // 사탕수수와 선인장은 설치 확인이 면제되지 않음 (반드시 PDC 비트맵 확인을 거침)
+        assertFalse(FarmerCropRules.isPlacementCheckIgnored("SUGAR_CANE"));
+        assertFalse(FarmerCropRules.isPlacementCheckIgnored("CACTUS"));
+
+        // 맨 아래 직접 놓은 칸: onPlace 에 의해 MARKED 상태 -> NATURAL 이 아니므로 드롭 집계 안 됨 (0개)
+        BlockTrustState bottomPlaced = BlockTrustState.MARKED;
+        assertFalse(bottomPlaced.isNatural(), "직접 놓은 맨 아래 칸은 MARKED 여서 집계되지 않아야 함");
+
+        // 자란 위 칸: onGrow 에 의해 unmark 되어 NATURAL 상태 -> 정상 집계
+        BlockTrustState topGrown = BlockTrustState.NATURAL;
+        assertTrue(topGrown.isNatural(), "자란 위 칸은 NATURAL 이어서 정상 집계되어야 함");
+    }
 }

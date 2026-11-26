@@ -36,6 +36,7 @@ import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockDropItemEvent;
 import org.bukkit.event.block.BlockGrowEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.block.BlockSpreadEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.player.PlayerFishEvent;
 import org.bukkit.event.player.PlayerHarvestBlockEvent;
@@ -245,6 +246,14 @@ public final class QuotaTracker implements Listener {
      */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onBlockGrow(BlockGrowEvent event) {
+        UntrustedBlockReader.unmarkMarket(event.getBlock());
+    }
+
+    /**
+     * 버섯 퍼짐 등 자연 확산으로 새로 생긴 블록의 비트맵 표시를 정리합니다.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onBlockSpread(BlockSpreadEvent event) {
         UntrustedBlockReader.unmarkMarket(event.getBlock());
     }
 
