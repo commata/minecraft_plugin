@@ -1,10 +1,13 @@
 package kr.commata.economyhub.menu;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.OptionalInt;
+import java.util.Set;
 import java.util.logging.Logger;
 import org.bukkit.Material;
 import org.bukkit.configuration.Configuration;
@@ -22,12 +25,12 @@ public record MenuSettings(Map<String, Button> buttons, List<String> payGuide, L
     public record Reward(String action, String key, String label) {
     }
 
-    public record Job(String id, String name, int slot, Material icon, Material joinedIcon, boolean glowWhenJoined,
-                      List<Reward> rewards) {
+    public record Job(String id, String name, int slot, OptionalInt statusSlot, Material icon, Material joinedIcon,
+                      boolean glowWhenJoined, List<Reward> rewards) {
     }
 
     /** /직업 에서 직업을 놓을 수 있는 칸 (9×5 의 위 4줄) */
-    static final int JOB_SLOT_LIMIT = 36;
+    static final int JOB_SLOT_LIMIT = JobSlot.GRID_LIMIT;
 
     public static MenuSettings read(FileConfiguration config, Logger log) {
         Map<String, Button> buttons = new LinkedHashMap<>();
@@ -45,7 +48,8 @@ public record MenuSettings(Map<String, Button> buttons, List<String> payGuide, L
             }
         }
 
-        List<Job> jobs = new ArrayList<>();
+        List<Job> rawJobs = new ArrayList<>();
+        Set<Integer> occupied = new HashSet<>();
         ConfigurationSection jobSection = section(config, "menus.jobs");
         if (jobSection != null) {
             for (String id : jobSection.getKeys(false)) {
@@ -58,7 +62,7 @@ public record MenuSettings(Map<String, Button> buttons, List<String> payGuide, L
                     log.warning("menus.jobs." + id + ".slot 은 0–35 여야 함 (지금 " + slot + "), 이 직업은 표시하지 않음");
                     continue;
                 }
-                if (jobs.stream().anyMatch(other -> other.slot() == slot)) {
+                if (!occupied.add(slot)) {
                     log.warning("menus.jobs." + id + ".slot " + slot + " 이 다른 직업과 겹침, 이 직업은 표시하지 않음");
                     continue;
                 }
@@ -71,12 +75,27 @@ public record MenuSettings(Map<String, Button> buttons, List<String> payGuide, L
                         rewards.add(new Reward(action.toString(), key.toString(), label.toString()));
                     }
                 }
-                jobs.add(new Job(id, job.getString("name", id), slot,
+                rawJobs.add(new Job(id, job.getString("name", id), slot, OptionalInt.empty(),
                         material(job.getString("icon"), Material.IRON_PICKAXE, "menus.jobs." + id + ".icon", log),
                         material(job.getString("joined-icon"), Material.DIAMOND_PICKAXE, "menus.jobs." + id + ".joined-icon", log),
                         job.getBoolean("glow-when-joined", false), List.copyOf(rewards)));
             }
         }
+
+        // 모든 직업 칸을 먼저 채운 뒤 상태 바 칸(slot + 9)을 계산해 다른 직업 칸·다른 상태 바와 겹치지 않게 함 (ECONOMY.md 7.4.2)
+        List<Job> jobs = new ArrayList<>(rawJobs.size());
+        for (Job job : rawJobs) {
+            OptionalInt statusSlot = JobSlot.statusSlot(job.slot(), occupied);
+            if (statusSlot.isPresent()) {
+                occupied.add(statusSlot.getAsInt());
+            } else {
+                log.warning("menus.jobs." + job.id() + " 상태 바 칸(" + (job.slot() + JobSlot.ROW_WIDTH)
+                        + ")이 0–35 밖이거나 다른 칸과 겹쳐 상태 바 없이 표시합니다.");
+            }
+            jobs.add(new Job(job.id(), job.name(), job.slot(), statusSlot,
+                    job.icon(), job.joinedIcon(), job.glowWhenJoined(), job.rewards()));
+        }
+
         return new MenuSettings(Map.copyOf(buttons), List.copyOf(config.getStringList("menus.economy.pay-guide")),
                 List.copyOf(config.getStringList("menus.economy.guide")), List.copyOf(jobs));
     }
