@@ -11,6 +11,7 @@ import kr.commata.economyhub.skills.Skill;
 import kr.commata.economyhub.skills.Skills;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
+import org.bukkit.event.inventory.ClickType;
 
 /**
  * 직업 스킬 관리 9×3 (ECONOMY.md 15.5). 가입 중인 직업 2개의 스킬을 한 줄씩 보여 주고, 해금된 스킬은 클릭으로 켜고 끕니다.
@@ -91,7 +92,9 @@ final class SkillMenu extends Menu {
                 .name((on ? "<#55FF55>" : "<#AAAAAA>") + skill.displayName() + (on ? " [켜짐]" : " [꺼짐]"))
                 .lore("<#AAAAAA>" + skill.description(), "", on ? "<#FF5555>▶ 클릭하여 끄기" : "<#55FF55>▶ 클릭하여 켜기").build(),
                 (player, click) -> {
-                    if (click != org.bukkit.event.inventory.ClickType.LEFT) return;
+                    if (click != ClickType.LEFT) {
+                        return;
+                    }
                     skills.setOn(player, skill, !skills.isOn(player, skill));
                     if (skill == Skill.MINER_CAVE_VISION) {
                         caveVision.update(player); // 끄면 야간 투시를 바로 지움

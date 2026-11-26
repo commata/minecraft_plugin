@@ -105,7 +105,7 @@ final class JobsMenu extends Menu {
                     lore.add("<#55FF55>▶ 좌클릭하여 가입");
                     set(job.slot(), Items.of(job.icon()).name("<#F5C542>" + job.name() + levelText(viewer, job))
                             .lore(lore).build(), (player, click) -> {
-                                if (click == ClickType.LEFT || click == ClickType.SHIFT_LEFT) {
+                                if (click == ClickType.LEFT) {
                                     join(player, job);
                                 }
                             });
@@ -145,7 +145,7 @@ final class JobsMenu extends Menu {
         set(job.slot(), Items.of(job.joinedIcon()).glow(glow)
                 .name("<#55FF55>" + job.name() + " Lv." + progress.level() + " [가입 중]").lore(lore).build(),
                 (player, click) -> {
-                    if (click == ClickType.RIGHT || click == ClickType.SHIFT_RIGHT) {
+                    if (click == ClickType.RIGHT) {
                         leave(player, job);
                     }
                 });

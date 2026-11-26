@@ -184,26 +184,42 @@ public final class SkillListener implements Listener {
         }
     }
 
-    /** 같은 줄기를 위로 따라가며 인접 수관을 확인한다. 장식용 잎과 잎 없는 기둥은 제외한다. */
+    /** 수관 확인 때 따라갈 원목 수 상한 (큰 참나무·정글나무 한 그루가 들어가는 정도) */
+    private static final int CANOPY_SCAN_LIMIT = 64;
+
+    /**
+     * 밑동과 이어진 같은 종류의 원목(대각선 포함, 밑동보다 아래로는 가지 않음)을 따라가며 자연 수관이 붙어 있는지 확인한다.
+     * 아카시아·벚나무처럼 줄기가 대각선으로 꺾이는 나무도 잡고, 잎 없는 건축 기둥·장식용(persistent) 잎은 제외한다.
+     */
     private static boolean hasCanopy(Block base, Material log) {
-        for (Block trunk = base; trunk.getY() < base.getWorld().getMaxHeight() && trunk.getType() == log;
-             trunk = trunk.getRelative(BlockFace.UP)) {
-            for (BlockFace face : CANOPY_FACES) {
-                Block near = trunk.getRelative(face);
-                if (!near.getWorld().isChunkLoaded(near.getX() >> 4, near.getZ() >> 4)) continue;
-                if (log == Material.CRIMSON_STEM || log == Material.WARPED_STEM) {
-                    Material canopy = log == Material.CRIMSON_STEM ? Material.NETHER_WART_BLOCK : Material.WARPED_WART_BLOCK;
-                    if (near.getType() == canopy) return true;
-                } else if (near.getBlockData() instanceof Leaves leaves && !leaves.isPersistent()) {
-                    return true;
+        Material wart = log == Material.CRIMSON_STEM ? Material.NETHER_WART_BLOCK
+                : log == Material.WARPED_STEM ? Material.WARPED_WART_BLOCK : null;
+        java.util.ArrayDeque<Block> queue = new java.util.ArrayDeque<>();
+        Set<Block> seen = new java.util.HashSet<>();
+        queue.add(base);
+        seen.add(base);
+        while (!queue.isEmpty()) {
+            Block trunk = queue.poll();
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dy = -1; dy <= 1; dy++) {
+                    for (int dz = -1; dz <= 1; dz++) {
+                        Block near = trunk.getRelative(dx, dy, dz);
+                        if (near.getY() < base.getY() || !near.getWorld().isChunkLoaded(near.getX() >> 4, near.getZ() >> 4)) {
+                            continue;
+                        }
+                        if (wart != null ? near.getType() == wart
+                                : near.getBlockData() instanceof Leaves leaves && !leaves.isPersistent()) {
+                            return true;
+                        }
+                        if (near.getType() == log && seen.size() < CANOPY_SCAN_LIMIT && seen.add(near)) {
+                            queue.add(near);
+                        }
+                    }
                 }
             }
         }
         return false;
     }
-
-    private static final List<BlockFace> CANOPY_FACES = List.of(BlockFace.UP, BlockFace.NORTH, BlockFace.SOUTH,
-            BlockFace.WEST, BlockFace.EAST);
 
     private void replantSapling(Player player, Block block, Material sapling, Material ground) {
         if (!player.isOnline() || !block.getType().isAir() || block.getRelative(BlockFace.DOWN).getType() != ground) {
