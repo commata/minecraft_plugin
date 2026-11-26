@@ -18,6 +18,7 @@
 | 4 | [docs/DEPLOY.md](docs/DEPLOY.md) | 운영 서버 백업·배포·되돌리기 |
 | 5 | [server-config/economy/README.md](server-config/economy/README.md), `VERSIONS.md` | 외부 플러그인 설정과 고정 버전 |
 | 6 | [docs/HANDBOOK-REVIEW.md](docs/HANDBOOK-REVIEW.md) | 개발 핸드북 PDF를 코드와 대조한 결과 (채택·불채택·미검증) |
+| 7 | [docs/STATUS.md](docs/STATUS.md) | **지금 진행 상황**: 현재 단계, PR 상태, 인게임 피드백·버그 기록, 테스트 기록, 미해결 사항 (규칙 아님) |
 
 충돌하면 이 순서로 따릅니다.
 
@@ -305,3 +306,23 @@ permissions:
 - [ ] `onDisable`에서 메뉴 닫기·작업 취소·저장소 닫기
 - [ ] 순수 로직 단위 테스트 추가, 인게임 확인 항목을 PR에 적음
 - [ ] README·docs·config 기본값 갱신
+
+---
+
+## 13. 다중 에이전트 운영 (Orca Orchestration, 2026-11-26 사용자 결정)
+
+영구 Bot(CTO-Claude, DEV-Neon, QA-Astra)은 쓰지 않고, Orca Orchestration으로 실제 Worker를 띄워 일을 나눕니다.
+
+| 역할 | 에이전트 (Orca `--agent`) | 확인된 모델 (2026-11-26) | 맡는 일 |
+| --- | --- | --- | --- |
+| Coordinator | Claude Code | `claude-opus-5-5` | 피드백 분석, 원인 파악, 설계·범위 결정, 위임, 통합, 최종 리뷰, 문서·커밋·PR, 사용자 보고 |
+| DEV Worker | `antigravity` | `gemini-4-neon` | 구현·버그 수정·리팩터링·GUI·단위 테스트, QA 지적 수정 |
+| QA Worker | `codex` | `gpt-6.2-astra` | 독립 코드 리뷰, 회귀·경계·동시성·경제 악용 검증. DEV 보고를 믿지 않고 실제 diff·테스트로 판단 |
+
+- **규모별 투입**: 소규모(오타·메시지·설정값·원인이 뻔한 버그)는 Coordinator가 직접. 중규모(이벤트·GUI·여러 클래스)는 DEV 또는 QA 중 하나. 대규모·고위험(Bank·거래·DB 구조·동시성·복사 방지·여러 플러그인)은 셋 다.
+- **충돌 방지**: 같은 파일을 두 Worker가 동시에 고치지 않습니다. 코드를 고치는 Worker는 별도 worktree(`--worktree new-child`)에서, 읽기 전용 검증은 같은 worktree에서 해도 됩니다. Spec에 수정 가능 파일과 완료 조건(증거)을 적습니다.
+- **검증**: QA는 DEV의 커밋·diff 기준으로 검증합니다. 검증되지 않은 작업은 완료가 아닙니다. 테스트 결과는 PASS / FAIL / NOT RUN으로 나누고, 빌드 통과와 인게임 확인을 구분합니다.
+- **모델 대체 금지**: 지정한 Worker·모델을 쓸 수 없으면 다른 모델로 바꾸지 않고 사용자에게 보고합니다.
+- **피드백 처리**: 분석 → 코드·이벤트 흐름·기획 확인 → 근본 원인 → 영향 판단 → 수정(직접/위임) → 테스트 → (필요시) QA → 통합 → 사용자에게 인게임 확인 방법 안내. 관련 없는 문제는 [docs/STATUS.md](docs/STATUS.md) 6장에 기록만, 기획·밸런스 변경은 사용자 확인 후.
+- **진행 기록**: 접수한 피드백, 테스트 결과, PR·배포 상태는 `docs/STATUS.md`에 갱신합니다.
+- **단계 전환**: PR #14·#15 안정화(피드백 처리 완료, 회귀 테스트 통과, 악용 문제 없음, 문서 갱신) 전에는 다음 로드맵 기능에 착수하지 않고, 조건을 채우면 사용자에게 제안합니다.
