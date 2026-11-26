@@ -2,6 +2,7 @@
 
 Ubuntu 미니PC의 Docker Paper 서버(MC 26.3)에서 사용할 자체 개발 Paper 플러그인 모음입니다.
 설계와 배포 방식은 [docs/PLAN.md](docs/PLAN.md), 경제·직업 기획은 [docs/ECONOMY.md](docs/ECONOMY.md)를 참고하세요.
+AI 에이전트와 사람 모두 따르는 개발 규칙(구조·도메인 분리·컨벤션)은 [AGENTS.md](AGENTS.md)에 있습니다.
 
 ## 요구 사항
 
