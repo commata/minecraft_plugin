@@ -1,0 +1,301 @@
+# Market 설정 (docs/ECONOMY.md 13·14장). 수정 후 /market reload
+# 금액·한도·단위는 모두 정수만 허용합니다 (ECONOMY.md 2.2, 13.6, 14.7).
+
+timezone: Asia/Seoul
+
+# ------------------------------------------------------------------
+# 희귀 상점 (/희귀상점, ECONOMY.md 13.4, 7.4.3)
+# 주간 한도는 매주 월요일 00:00 KST 초기화.
+# ------------------------------------------------------------------
+rare-shop:
+  enabled: true
+  book-weekly-limit: 5
+  resources:
+    DIAMOND:
+      name: "다이아몬드"
+      slot: 11
+      price: 1500
+      weekly-limit: 16
+    EMERALD:
+      name: "에메랄드"
+      slot: 12
+      price: 300
+      weekly-limit: 64
+    EXPERIENCE_BOTTLE:
+      name: "경험치 병"
+      slot: 13
+      price: 60
+      weekly-limit: 128
+    GOLDEN_APPLE:
+      name: "황금 사과"
+      slot: 14
+      price: 2500
+      weekly-limit: 16
+    ENDER_PEARL:
+      name: "엔더 진주"
+      slot: 15
+      price: 300
+      weekly-limit: 32
+  books:
+    efficiency_4:
+      name: "효율 IV"
+      enchant: efficiency
+      level: 4
+      slot: 19
+      price: 3000
+    unbreaking_3:
+      name: "내구성 III"
+      enchant: unbreaking
+      level: 3
+      slot: 20
+      price: 4000
+    protection_4:
+      name: "보호 IV"
+      enchant: protection
+      level: 4
+      slot: 21
+      price: 4000
+    sharpness_4:
+      name: "날카로움 IV"
+      enchant: sharpness
+      level: 4
+      slot: 23
+      price: 3000
+    fortune_2:
+      name: "행운 II"
+      enchant: fortune
+      level: 2
+      slot: 24
+      price: 4000
+    looting_2:
+      name: "약탈 II"
+      enchant: looting
+      level: 2
+      slot: 25
+      price: 3000
+    silk_touch_1:
+      name: "섬세한 손길"
+      enchant: silk_touch
+      level: 1
+      slot: 29
+      price: 5000
+    feather_falling_4:
+      name: "가벼운 착지 IV"
+      enchant: feather_falling
+      level: 4
+      slot: 30
+      price: 3000
+    power_4:
+      name: "힘 IV"
+      enchant: power
+      level: 4
+      slot: 31
+      price: 3000
+    respiration_3:
+      name: "호흡 III"
+      enchant: respiration
+      level: 3
+      slot: 32
+      price: 2000
+    aqua_affinity_1:
+      name: "친수성"
+      enchant: aqua_affinity
+      level: 1
+      slot: 33
+      price: 2000
+
+# ------------------------------------------------------------------
+# 인첸트 책 뽑기 (/뽑기, ECONOMY.md 13.5, 13.6, 7.4.4)
+# 모든 등급의 weight 합은 반드시 10000 (= 100.00%)이어야 하며, 어긋나면 뽑기가 잠깁니다.
+# ------------------------------------------------------------------
+gacha:
+  enabled: true
+  price: 2000
+  daily-limit: 20
+  pity-threshold: 80
+  tiers:
+    common:
+      name: "일반"
+      weight: 6000
+      color: "#AAAAAA"
+      icon: BOOK
+      slot: 10
+      pity-target: false
+      books:
+        - { enchant: protection, level: 1, name: "보호 I" }
+        - { enchant: protection, level: 2, name: "보호 II" }
+        - { enchant: fire_protection, level: 1, name: "화염으로부터 보호 I" }
+        - { enchant: fire_protection, level: 2, name: "화염으로부터 보호 II" }
+        - { enchant: blast_protection, level: 1, name: "폭발로부터 보호 I" }
+        - { enchant: blast_protection, level: 2, name: "폭발로부터 보호 II" }
+        - { enchant: projectile_protection, level: 1, name: "발사체로부터 보호 I" }
+        - { enchant: projectile_protection, level: 2, name: "발사체로부터 보호 II" }
+        - { enchant: efficiency, level: 1, name: "효율 I" }
+        - { enchant: efficiency, level: 2, name: "효율 II" }
+        - { enchant: unbreaking, level: 1, name: "내구성 I" }
+        - { enchant: unbreaking, level: 2, name: "내구성 II" }
+        - { enchant: sharpness, level: 1, name: "날카로움 I" }
+        - { enchant: sharpness, level: 2, name: "날카로움 II" }
+        - { enchant: smite, level: 1, name: "강타 I" }
+        - { enchant: smite, level: 2, name: "강타 II" }
+        - { enchant: smite, level: 3, name: "강타 III" }
+        - { enchant: bane_of_arthropods, level: 1, name: "살충 I" }
+        - { enchant: bane_of_arthropods, level: 2, name: "살충 II" }
+        - { enchant: bane_of_arthropods, level: 3, name: "살충 III" }
+        - { enchant: power, level: 1, name: "힘 I" }
+        - { enchant: power, level: 2, name: "힘 II" }
+        - { enchant: knockback, level: 1, name: "밀치기 I" }
+        - { enchant: lure, level: 1, name: "미끼 I" }
+        - { enchant: luck_of_the_sea, level: 1, name: "바다의 행운 I" }
+    rare:
+      name: "희귀"
+      weight: 3000
+      color: "#55FFFF"
+      icon: ENCHANTED_BOOK
+      slot: 12
+      pity-target: false
+      books:
+        - { enchant: efficiency, level: 3, name: "효율 III" }
+        - { enchant: efficiency, level: 4, name: "효율 IV" }
+        - { enchant: protection, level: 3, name: "보호 III" }
+        - { enchant: unbreaking, level: 3, name: "내구성 III" }
+        - { enchant: sharpness, level: 3, name: "날카로움 III" }
+        - { enchant: sharpness, level: 4, name: "날카로움 IV" }
+        - { enchant: fortune, level: 1, name: "행운 I" }
+        - { enchant: fortune, level: 2, name: "행운 II" }
+        - { enchant: looting, level: 1, name: "약탈 I" }
+        - { enchant: looting, level: 2, name: "약탈 II" }
+        - { enchant: feather_falling, level: 3, name: "가벼운 착지 III" }
+        - { enchant: feather_falling, level: 4, name: "가벼운 착지 IV" }
+        - { enchant: respiration, level: 3, name: "호흡 III" }
+        - { enchant: aqua_affinity, level: 1, name: "친수성" }
+        - { enchant: silk_touch, level: 1, name: "섬세한 손길" }
+        - { enchant: flame, level: 1, name: "화염 I" }
+        - { enchant: loyalty, level: 1, name: "충절 I" }
+        - { enchant: loyalty, level: 2, name: "충절 II" }
+    epic:
+      name: "영웅"
+      weight: 900
+      color: "#D47BFF"
+      icon: AMETHYST_SHARD
+      slot: 14
+      pity-target: false
+      books:
+        - { enchant: efficiency, level: 5, name: "효율 V" }
+        - { enchant: protection, level: 4, name: "보호 IV" }
+        - { enchant: sharpness, level: 5, name: "날카로움 V" }
+        - { enchant: fortune, level: 3, name: "행운 III" }
+        - { enchant: looting, level: 3, name: "약탈 III" }
+        - { enchant: power, level: 5, name: "힘 V" }
+        - { enchant: infinity, level: 1, name: "무한" }
+        - { enchant: thorns, level: 3, name: "가시 III" }
+        - { enchant: sweeping_edge, level: 3, name: "휩쓸기 III" }
+        - { enchant: depth_strider, level: 3, name: "물갈퀴 III" }
+        - { enchant: lure, level: 3, name: "미끼 III" }
+        - { enchant: luck_of_the_sea, level: 3, name: "바다의 행운 III" }
+    legendary:
+      name: "전설"
+      weight: 100
+      color: "#F5C542"
+      icon: NETHER_STAR
+      slot: 16
+      pity-target: true
+      books:
+        - { enchant: mending, level: 1, name: "수선" }
+        - { enchant: swift_sneak, level: 3, name: "신속한 잠행 III" }
+        - { enchant: soul_speed, level: 3, name: "영혼 가속 III" }
+
+# ------------------------------------------------------------------
+# 직업별 서버 매입 (/판매, ECONOMY.md 14.4, 14.7, 7.4.5)
+# 가격은 배율을 곱하지 않고 최종 정수값만 적습니다.
+# base-price <= bonus-price <= max-price (max-price > 0 일 때) 검증 실패 시 매입이 잠깁니다.
+# ------------------------------------------------------------------
+sell:
+  enabled: true
+  daily-limit: 5000
+  categories:
+    miner:
+      name: "광부"
+      bonus-label: "+100%"
+      tab-slot: 2
+      icon: IRON_PICKAXE
+      joined-icon: DIAMOND_PICKAXE
+      glow-when-joined: false
+      items:
+        DIAMOND: { name: "다이아몬드", unit: 1, base-price: 75, bonus-price: 150, max-price: 375 }
+        EMERALD: { name: "에메랄드", unit: 1, base-price: 25, bonus-price: 50, max-price: 75 }
+        ANCIENT_DEBRIS: { name: "고대 잔해", unit: 1, base-price: 150, bonus-price: 300, max-price: 0 }
+        RAW_IRON: { name: "철 원석", unit: 1, base-price: 5, bonus-price: 10, max-price: 0 }
+        RAW_GOLD: { name: "금 원석", unit: 1, base-price: 8, bonus-price: 16, max-price: 0 }
+        COAL: { name: "석탄", unit: 1, base-price: 1, bonus-price: 2, max-price: 10 }
+        RAW_COPPER: { name: "구리 원석", unit: 2, base-price: 1, bonus-price: 2, max-price: 0 }
+        REDSTONE: { name: "레드스톤 가루", unit: 2, base-price: 1, bonus-price: 2, max-price: 20 }
+        LAPIS_LAZULI: { name: "청금석", unit: 2, base-price: 1, bonus-price: 2, max-price: 40 }
+        QUARTZ: { name: "네더 석영", unit: 2, base-price: 1, bonus-price: 2, max-price: 30 }
+    lumberjack:
+      name: "벌목꾼"
+      bonus-label: "+200%"
+      tab-slot: 3
+      icon: IRON_AXE
+      joined-icon: DIAMOND_AXE
+      glow-when-joined: false
+      items:
+        OAK_LOG: { name: "참나무 원목", unit: 1, base-price: 1, bonus-price: 3, max-price: 5 }
+        SPRUCE_LOG: { name: "가문비나무 원목", unit: 1, base-price: 1, bonus-price: 3, max-price: 5 }
+        BIRCH_LOG: { name: "자작나무 원목", unit: 1, base-price: 1, bonus-price: 3, max-price: 5 }
+        JUNGLE_LOG: { name: "정글나무 원목", unit: 1, base-price: 1, bonus-price: 3, max-price: 5 }
+        ACACIA_LOG: { name: "아카시아나무 원목", unit: 1, base-price: 1, bonus-price: 3, max-price: 5 }
+        DARK_OAK_LOG: { name: "짙은 참나무 원목", unit: 1, base-price: 1, bonus-price: 3, max-price: 5 }
+        MANGROVE_LOG: { name: "맹그로브 원목", unit: 1, base-price: 1, bonus-price: 3, max-price: 5 }
+        CHERRY_LOG: { name: "벚나무 원목", unit: 1, base-price: 1, bonus-price: 3, max-price: 5 }
+        PALE_OAK_LOG: { name: "창백한 참나무 원목", unit: 1, base-price: 1, bonus-price: 3, max-price: 5 }
+        CRIMSON_STEM: { name: "진홍빛 줄기", unit: 1, base-price: 1, bonus-price: 3, max-price: 5 }
+        WARPED_STEM: { name: "뒤틀린 줄기", unit: 1, base-price: 1, bonus-price: 3, max-price: 5 }
+    farmer:
+      name: "농부"
+      bonus-label: "+100%"
+      tab-slot: 4
+      icon: IRON_HOE
+      joined-icon: DIAMOND_HOE
+      glow-when-joined: false
+      items:
+        WHEAT: { name: "밀", unit: 1, base-price: 1, bonus-price: 2, max-price: 0 }
+        BEETROOT: { name: "비트", unit: 1, base-price: 1, bonus-price: 2, max-price: 0 }
+        PUMPKIN: { name: "호박", unit: 2, base-price: 3, bonus-price: 6, max-price: 0 }
+        POTATO: { name: "감자", unit: 16, base-price: 4, bonus-price: 8, max-price: 80 }
+        CARROT: { name: "당근", unit: 16, base-price: 4, bonus-price: 8, max-price: 80 }
+        NETHER_WART: { name: "네더 사마귀", unit: 16, base-price: 4, bonus-price: 8, max-price: 0 }
+        COCOA_BEANS: { name: "코코아 콩", unit: 16, base-price: 4, bonus-price: 8, max-price: 0 }
+        MELON_SLICE: { name: "수박 조각", unit: 16, base-price: 3, bonus-price: 6, max-price: 0 }
+    hunter:
+      name: "사냥꾼"
+      bonus-label: "+100%"
+      tab-slot: 5
+      icon: IRON_SWORD
+      joined-icon: DIAMOND_SWORD
+      glow-when-joined: false
+      items:
+        GUNPOWDER: { name: "화약", unit: 1, base-price: 1, bonus-price: 2, max-price: 0 }
+        SLIME_BALL: { name: "슬라임 볼", unit: 1, base-price: 1, bonus-price: 2, max-price: 0 }
+        BONE: { name: "뼈", unit: 2, base-price: 1, bonus-price: 2, max-price: 0 }
+        STRING: { name: "실", unit: 2, base-price: 1, bonus-price: 2, max-price: 0 }
+        SPIDER_EYE: { name: "거미 눈", unit: 2, base-price: 1, bonus-price: 2, max-price: 0 }
+        BLAZE_ROD: { name: "블레이즈 막대", unit: 1, base-price: 5, bonus-price: 10, max-price: 0 }
+        ENDER_PEARL: { name: "엔더 진주", unit: 1, base-price: 5, bonus-price: 10, max-price: 75 }
+        GHAST_TEAR: { name: "가스트 눈물", unit: 1, base-price: 15, bonus-price: 30, max-price: 0 }
+        WITHER_SKELETON_SKULL: { name: "위더 스켈레톤 해골", unit: 1, base-price: 150, bonus-price: 300, max-price: 0 }
+    fisherman:
+      name: "낚시꾼"
+      bonus-label: "+150%"
+      tab-slot: 6
+      icon: FISHING_ROD
+      joined-icon: FISHING_ROD
+      glow-when-joined: true
+      items:
+        COD: { name: "생대구", unit: 1, base-price: 4, bonus-price: 10, max-price: 0 }
+        SALMON: { name: "생연어", unit: 1, base-price: 6, bonus-price: 15, max-price: 0 }
+        PUFFERFISH: { name: "복어", unit: 1, base-price: 6, bonus-price: 15, max-price: 0 }
+        TROPICAL_FISH: { name: "열대어", unit: 1, base-price: 10, bonus-price: 25, max-price: 0 }
+        NAUTILUS_SHELL: { name: "앵무조개 껍데기", unit: 1, base-price: 60, bonus-price: 150, max-price: 0 }
+        NAME_TAG: { name: "이름표", unit: 1, base-price: 100, bonus-price: 250, max-price: 375 }
+        SADDLE: { name: "안장", unit: 1, base-price: 80, bonus-price: 200, max-price: 300 }

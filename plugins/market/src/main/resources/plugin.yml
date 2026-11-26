@@ -1,0 +1,12 @@
+name: Market
+version: '${version}'
+main: kr.commata.market.MarketPlugin
+api-version: '${apiVersion}'
+description: 희귀 상점(주간 한도), 인첸트 책 뽑기(확률 공개·천장), 직업별 서버 매입 (/희귀상점, /뽑기, /판매) (ECONOMY.md 13·14장)
+author: commata
+depend: [Vault]
+softdepend: [Bank, VJobs, EconomyHub]
+permissions:
+  market.admin:
+    description: /market reload·log·reset·pending·resolve·status
+    default: op
