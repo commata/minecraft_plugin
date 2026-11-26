@@ -18,6 +18,7 @@
 | 4 | [docs/DEPLOY.md](docs/DEPLOY.md) | 운영 서버 백업·배포·되돌리기 |
 | 5 | [server-config/economy/README.md](server-config/economy/README.md), `VERSIONS.md` | 외부 플러그인 설정과 고정 버전 |
 | 6 | [docs/HANDBOOK-REVIEW.md](docs/HANDBOOK-REVIEW.md) | 개발 핸드북 PDF를 코드와 대조한 결과 (채택·불채택·미검증) |
+| 7 | [docs/STATUS.md](docs/STATUS.md) | **지금 진행 상황**: 현재 단계, PR 상태, 인게임 피드백·버그 기록, 테스트 기록, 미해결 사항 (규칙 아님) |
 
 충돌하면 이 순서로 따릅니다.
 
@@ -305,3 +306,63 @@ permissions:
 - [ ] `onDisable`에서 메뉴 닫기·작업 취소·저장소 닫기
 - [ ] 순수 로직 단위 테스트 추가, 인게임 확인 항목을 PR에 적음
 - [ ] README·docs·config 기본값 갱신
+
+---
+
+## 13. 다중 에이전트 운영 (Orca Orchestration, 2026-11-26 사용자 결정)
+
+영구 Bot(CTO-Claude, DEV-Neon, QA-Astra)은 쓰지 않고, Orca Orchestration으로 실제 Worker를 띄워 일을 나눕니다.
+
+| 역할 | 에이전트 (Orca `--agent`) | 확인된 모델 (2026-11-26) | 맡는 일 |
+| --- | --- | --- | --- |
+| Coordinator | Claude Code | `claude-opus-5-5` | 피드백 분석, 원인 파악, 설계·범위 결정, 위임, 통합, 최종 리뷰, 문서·커밋·PR, 사용자 보고 |
+| DEV Worker | `antigravity` | `gemini-4-neon` | 구현·버그 수정·리팩터링·GUI·단위 테스트, QA 지적 수정 |
+| QA Worker | `codex` | 기본 `gpt-6.2-sol` medium (아래 13.1) | 독립 코드 리뷰, 회귀·경계·동시성·경제 악용 검증. DEV 보고를 믿지 않고 실제 diff·테스트로 판단 |
+
+- **규모별 투입**: 소규모(오타·메시지·설정값·원인이 뻔한 버그)는 Coordinator가 직접. 중규모(이벤트·GUI·여러 클래스)는 DEV 또는 QA 중 하나. 대규모·고위험(Bank·거래·DB 구조·동시성·복사 방지·여러 플러그인)은 셋 다.
+- **충돌 방지**: 같은 파일을 두 Worker가 동시에 고치지 않습니다. 코드를 고치는 Worker는 별도 worktree(`--worktree new-child`)에서, 읽기 전용 검증은 같은 worktree에서 해도 됩니다. Spec에 수정 가능 파일과 완료 조건(증거)을 적습니다.
+- **검증**: QA는 DEV의 커밋·diff 기준으로 검증합니다. 검증되지 않은 작업은 완료가 아닙니다. 테스트 결과는 PASS / FAIL / NOT RUN으로 나누고, 빌드 통과와 인게임 확인을 구분합니다.
+- **모델 대체**: 13.1에 적힌 승인 목록 안에서는 사용자 승인 없이 대체할 수 있고, 목록 밖 모델로는 바꾸지 않습니다. 대체했으면 보고에 이유를 적습니다. **Astra 계열은 자동 대체 대상이 아닙니다**(13.2).
+- **피드백 처리**: 분석 → 코드·이벤트 흐름·기획 확인 → 근본 원인 → 영향 판단 → 수정(직접/위임) → 테스트 → (필요시) QA → 통합 → 사용자에게 인게임 확인 방법 안내. 관련 없는 문제는 [docs/STATUS.md](docs/STATUS.md) 6장에 기록만, 기획·밸런스 변경은 사용자 확인 후.
+- **진행 기록**: 접수한 피드백, 테스트 결과, PR·배포 상태는 `docs/STATUS.md`에 갱신합니다.
+- **단계 전환**: PR #14·#15 안정화(피드백 처리 완료, 회귀 테스트 통과, 악용 문제 없음, 문서 갱신) 전에는 다음 로드맵 기능에 착수하지 않고, 조건을 채우면 사용자에게 제안합니다.
+
+### 13.1 QA 모델 선택 (2026-11-26 사용자 결정, 이전 13.1을 대체)
+
+원칙: 검증 품질을 지키면서 토큰·구독 사용량을 최소화합니다. 모델 성능보다 **테스트 코드·정적 분석·실제 실행 결과**로 품질을 확보합니다. 구독 범위 안에서만 쓰고 추가 결제·유료 API는 쓰지 않습니다. 속도는 Standard(Fast/priority 안 씀).
+
+Orca 지정: `worker-start --agent <codex|antigravity> --model <id> --effort <level>`. 모델 ID·강도는 Codex `~/.codex/models_cache.json`, Antigravity Orca `agent-model-catalog.db`에서 확인(2026-11-26). Antigravity의 "Thinking" 변형은 별도 ID가 없어 `--effort`로 정합니다(아래 표의 강도).
+
+| Level | 대상 | 우선순위 (`agent` `model` / `effort`) |
+| --- | --- | --- |
+| 0 | 오타·메시지·설정값·단순 조건문, 영향이 명확한 소규모 | QA Worker 없음. Coordinator가 직접 검토 + 관련 테스트 |
+| 1 경량 | 빌드·테스트 실행, 단순 변경·명령·권한·설정 검증, 정적 분석, 기존 버그 수정 여부, 간단한 테스트 작성 | ① codex `gpt-6-luna` / high ② antigravity `gemini-4-hydrogen` / medium |
+| **2 일반 (기본)** | 일반 PR 리뷰, 인게임 버그·GUI·직업·스킬 검증, 리팩터링, 회귀, 일반 예외, 클래스 간 의존 | ① codex `gpt-6.2-sol` / medium ② antigravity `claude-sonnet-5-5` / high ③ codex `gpt-6.1-terra` / medium ④ antigravity `gemini-4-hydrogen` / high |
+| 3 심층 | 복잡한 이벤트 처리, 플러그인 간 충돌, 대규모 리팩터링, 복합 원인 분석, 성능 병목, Level 2로 못 푼 문제 | ① codex `gpt-6.2-sol` / high ② antigravity `claude-sonnet-5-5` / high ③ antigravity `gemini-4-neon` / high ④ antigravity `claude-opus-5-5` / high |
+| 4 고위험 | 아이템·재화 복사, 데이터 손상·유실, 거래 정합성, Bank 트랜잭션, 동시성, DB 마이그레이션, 비정상 종료 복구, 정식 배포 전 중요 기능 | ① codex `gpt-6.2-sol` / high ② antigravity `claude-opus-5-5` / high ③ antigravity `gemini-4-carbon` / high ④ 다른 모델로 필요한 부분만 제한적 교차 검증 |
+
+- PR #14·#15 안정화는 Level 2가 기본입니다. 경제·거래 경계 변경은 Level 4.
+- 고위험이라도 상위 모델을 바로 부르지 않습니다. 먼저 문제를 작게 나누고 재현 테스트를 추가하고, 승인 목록 안의 다른 모델로 교차 검증합니다.
+- DEV(`antigravity` `gemini-4-neon`)와 QA는 가능하면 다른 모델 계열을 씁니다. 같은 모델이라도 독립 세션·독립 검증으로 돌립니다.
+
+### 13.2 Astra 계열 사용 제한
+
+`gpt-6.2-astra` 등 **Astra 계열은 기본 사용 금지**이고 자동 대체 목록에도 없습니다. 다른 모델 사용량을 모두 소진해도 Astra로 넘어가지 않습니다.
+검토 조건(전부 충족): ① 심각한 문제로 진행이 막힘 ② Sol High와 Antigravity 상위 모델로 충분히 시도함 ③ 테스트·코드 분석만으로 해결이 어려움 ④ Astra의 추가 이점이 명확함 ⑤ **사용자가 명시적으로 승인**.
+승인 요청 때 보고: 해결 안 된 문제, 지금까지 쓴 모델, 수행한 분석·테스트, 기존 모델로 못 푼 이유, Astra가 검증할 범위, 예상 추가 사용량. 승인 전에는 Astra Worker를 만들거나 부르지 않습니다.
+승인 후: medium·Standard 우선, 해결 못 한 문제만 전달, 이미 검증한 영역 재분석 안 함, 작업 단위 하나, 추가 호출은 다시 승인.
+
+### 13.3 사용량 초과와 대체 순서
+
+- Codex 사용량을 모두 쓰면 Antigravity로 옮깁니다. 일반 순서: ① `claude-sonnet-5-5` / high ② `gemini-4-hydrogen` / high ③ `gemini-4-neon` / medium ④ Coordinator 직접 검증. 고위험은 Sonnet·Neon·Opus·Carbon + 강화된 테스트.
+- 실제 환경의 모델 ID·강도와 계정 권한·남은 사용량을 확인합니다. 잠긴 모델·한도 초과 서비스는 반복 호출·재시도하지 않습니다.
+- 모든 대체 모델을 못 쓰면 검증 가능한 범위까지만 하고 미검증 항목을 보고합니다.
+
+### 13.4 QA 컨텍스트·반복 검증·사용량
+
+- **QA에 넘기는 것**: 사용자 요청·재현 조건, 기준 SHA·검증 SHA, 변경 파일 목록·diff 범위, 필요한 기획 절, 기대 동작, 핵심 검증 항목, 테스트 명령. QA는 변경과 직접 영향 범위부터 보고, 필요할 때만 더 탐색합니다.
+- **하지 않는 것**: 매번 전체 저장소·전체 문서 재분석, 이미 검증한 코드 재검토, 같은 로그·파일 반복 읽기, 불필요한 Worker 중복, 같은 분석을 여러 모델에 무조건 요청, 긴 보고서, 전체 로그 출력, Fast 모드.
+- **반복 검증**: 마지막 QA 통과 SHA를 [docs/STATUS.md](docs/STATUS.md) 5장 "QA 기록"에 남기고 그 뒤 diff만 봅니다. 이전 발견의 수정 여부를 먼저 확인하고, 관련 회귀 테스트를 돌립니다. 공통 모듈·DB·경제처럼 영향이 넓으면 범위를 넓히고, 기존 결과를 무효로 만드는 구조 변경이면 전체 검증. 정식 배포 전에는 모델의 전체 재분석보다 **자동화된 전체 회귀 테스트**를 우선합니다.
+- **품질은 그대로**: 실제 코드·테스트 근거, 정상·실패 경로, 경계·예외, 아이템·재화 복사, 데이터 정합성, 회귀, 플러그인 호환, 인게임과 모의 테스트 구분, 실행 안 한 테스트는 NOT RUN.
+- **QA 작업 중 금지**: `gradlew --stop`(같은 PC의 모든 Gradle 데몬과 로컬 테스트 서버까지 꺼짐, 2026-11-26 실제 발생), 사용자 작업 폴더·DEV worktree에서 Gradle 실행.
+- **보고 (간결하게)**: 에이전트·모델·강도와 선택 이유, 검증 커밋·범위, 발견, 수정·재검증 결과, 실행한/못 한 테스트, 대체 여부와 이유, 사용량(확인 가능하면), 남은 위험.

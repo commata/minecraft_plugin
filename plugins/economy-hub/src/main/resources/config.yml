@@ -35,6 +35,7 @@ menus:
       - "<#AAAAAA>· 메뉴 다시 열기: <white>/economy"
 
   # /직업 에 보일 직업. 키는 VJobs 직업 id (VJobs config.yml jobs.<id>). slot 은 0–35 (위 4줄)
+  # slot 바로 아래 칸(slot+9)은 상태 바로 쓰입니다 (0–35 밖이거나 다른 칸과 겹치면 상태 바 없이 표시).
   # rewards: VJobs config 의 jobs.<id>.actions.<action>.<key>.money 를 읽어 "주요 보상: 다이아 400원, 철 60원" 처럼 표시
   jobs:
     miner:
