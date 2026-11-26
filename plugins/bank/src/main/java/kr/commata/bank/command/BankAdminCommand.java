@@ -81,7 +81,7 @@ public final class BankAdminCommand implements BasicCommand {
         Msg.info(sender, "관리자 명령");
         Msg.plain(sender, "/bank give|take|set <닉네임> <금액>");
         Msg.plain(sender, "/bank log <닉네임> [쪽]");
-        Msg.plain(sender, "/bank refund <거래번호>  (비정상 종료된 기동의 EconomyShopGUI 출금만, 한 번만)");
+        Msg.plain(sender, "/bank refund <거래번호>  (비정상 종료된 기동의 EconomyShopGUI·Market 출금만, 한 번만)");
         Msg.plain(sender, "/bank reload");
     }
 

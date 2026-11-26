@@ -727,7 +727,7 @@ public final class BankStore implements AutoCloseable {
             if (orig.type() != TxType.WITHDRAW || orig.from() == null) {
                 throw new Rejected(Failure.NOT_WITHDRAW, 0, orig.type().label());
             }
-            if (!Sources.SHOP.equals(orig.source())) {
+            if (!Sources.SHOP.equals(orig.source()) && !Sources.MARKET.equals(orig.source())) {
                 throw new Rejected(Failure.NOT_SHOP, 0, "source=" + orig.source());
             }
             if (!BootStatus.UNCLEAN.equals(orig.bootStatus())) {
@@ -807,6 +807,11 @@ public final class BankStore implements AutoCloseable {
 
     /** 같은 요청의 재시도는 첫 거래번호를 반환한다. 거래번호의 용도를 바꾸는 요청은 거절한다. */
     public Receipt external(UUID who, long amount, String source, String extRef, TxType type) {
+        return external(who, amount, source, extRef, type, null);
+    }
+
+    /** 거래 상황(context)을 함께 남기는 외부 멱등 입출금 API (ECONOMY.md 13.6). */
+    public Receipt external(UUID who, long amount, String source, String extRef, TxType type, String context) {
         if (who == null || amount <= 0 || amount > Amounts.MAX || source == null || source.isBlank()
                 || extRef == null || extRef.isBlank() || (type != TxType.DEPOSIT && type != TxType.WITHDRAW)) {
             return new Receipt(ExternalStatus.REJECTED, 0);
@@ -827,13 +832,13 @@ public final class BankStore implements AutoCloseable {
                         }
                     }
                 }
-                long balance = balanceForUpdate(who, null, false);
+                long balance = balanceForUpdate(who, null, credit);
                 if (balance < 0 || (!credit && balance < amount)) throw new Rejected(Failure.INSUFFICIENT_FUNDS, 0);
                 long next = credit ? balance + amount : balance - amount;
                 if (next > Amounts.MAX) throw new Rejected(Failure.LIMIT_EXCEEDED, balance);
                 setBalance(who, next);
                 long id = insertTx(type, credit ? null : who, credit ? who : null, amount,
-                        credit ? null : next, credit ? next : null, source, null, null);
+                        credit ? null : next, credit ? next : null, source, context, null);
                 try (PreparedStatement ps = conn.prepareStatement("UPDATE transactions SET ext_ref=? WHERE id=?")) {
                     ps.setString(1, extRef);
                     ps.setLong(2, id);
@@ -845,6 +850,52 @@ public final class BankStore implements AutoCloseable {
         } catch (SQLException | Rejected e) {
             return new Receipt(brokenReason == null ? ExternalStatus.REJECTED : ExternalStatus.UNKNOWN, 0);
         }
+    }
+
+    /**
+     * Market 관리자 수동 환불(/market resolve &lt;tx_id&gt; refund, ECONOMY.md 13.6).
+     * {@code transactions.ref} 유일 제약을 함께 써서 /bank refund 와 합쳐 최대 한 번만 환불됩니다.
+     */
+    public Outcome refundByExtRef(String extRef, String source, String context) {
+        if (extRef == null || extRef.isBlank()) {
+            return Outcome.fail(Failure.TX_NOT_FOUND, 0);
+        }
+        return change(() -> {
+            long origId;
+            try (PreparedStatement ps = conn.prepareStatement("SELECT id FROM transactions WHERE ext_ref = ?")) {
+                ps.setString(1, extRef);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        throw new Rejected(Failure.TX_NOT_FOUND, 0);
+                    }
+                    origId = rs.getLong(1);
+                }
+            }
+            TxRecord orig = findTx(origId).orElseThrow(() -> new Rejected(Failure.TX_NOT_FOUND, 0));
+            if (orig.type() != TxType.WITHDRAW || orig.from() == null) {
+                throw new Rejected(Failure.NOT_WITHDRAW, 0, orig.type().label());
+            }
+            if (!Sources.MARKET.equals(orig.source())) {
+                throw new Rejected(Failure.NOT_SHOP, 0, "source=" + orig.source());
+            }
+            try (PreparedStatement ps = conn.prepareStatement("SELECT id FROM transactions WHERE ref = ?")) {
+                ps.setLong(1, origId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        throw new Rejected(Failure.ALREADY_REFUNDED, 0, "환불 거래 #" + rs.getLong(1));
+                    }
+                }
+            }
+            UUID who = orig.from();
+            long cur = balanceForUpdate(who, null, true);
+            long next = cur + orig.amount();
+            if (next > Amounts.MAX) {
+                throw new Rejected(Failure.LIMIT_EXCEEDED, cur);
+            }
+            setBalance(who, next);
+            long id = insertTx(TxType.REFUND, null, who, orig.amount(), null, next, source, context, origId);
+            return new Applied(id, next, Map.of(who, next));
+        });
     }
 
     private Outcome change(SqlWork<Applied> work) {
