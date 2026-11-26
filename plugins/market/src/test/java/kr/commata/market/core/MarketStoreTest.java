@@ -179,4 +179,20 @@ class MarketStoreTest {
         assertTrue(s.unquarantinePlayer(alice));
         assertFalse(s.isPlayerLocked(alice));
     }
+
+    @Test
+    void addQuotaBatchCommitsMultipleEntriesInOneTransaction() throws Exception {
+        MarketStore s = openStore();
+        QuotaBuffer buf = new QuotaBuffer();
+        buf.add(alice, "OAK_LOG", 12, true);
+        buf.add(alice, "OAK_LOG", 8, true);
+        buf.add(alice, "OAK_LOG", 5, false);
+        buf.add(alice, "DIAMOND", 2, true);
+        s.addQuotaBatch(buf.drainAll());
+        s.closeClean();
+
+        MarketStore reopened = openStore();
+        assertEquals(new MarketStore.Quota(20, 5), reopened.quota(alice, "OAK_LOG"));
+        assertEquals(new MarketStore.Quota(2, 0), reopened.quota(alice, "DIAMOND"));
+    }
 }

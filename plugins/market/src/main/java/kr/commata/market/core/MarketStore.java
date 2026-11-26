@@ -869,19 +869,32 @@ public final class MarketStore implements AutoCloseable {
         if (amount <= 0) {
             return;
         }
+        addQuotaBatch(Map.of(new QuotaBuffer.Key(uuid, item, hasJob), amount));
+    }
+
+    /** 메모리 버퍼에 모인 판매 가능량을 한 트랜잭션으로 일괄 반영합니다 (ECONOMY.md 14.2). */
+    public void addQuotaBatch(Map<QuotaBuffer.Key, Long> batch) throws SQLException {
+        if (batch == null || batch.isEmpty()) {
+            return;
+        }
         write(() -> {
-            long addJob = hasJob ? amount : 0L;
-            long addBase = hasJob ? 0L : amount;
             try (PreparedStatement ps = conn.prepareStatement(
                     "INSERT INTO sell_quota (uuid, item, job_amount, base_amount) VALUES (?, ?, ?, ?)"
                             + " ON CONFLICT (uuid, item) DO UPDATE SET"
                             + " job_amount = job_amount + excluded.job_amount,"
                             + " base_amount = base_amount + excluded.base_amount")) {
-                ps.setString(1, uuid.toString());
-                ps.setString(2, item);
-                ps.setLong(3, addJob);
-                ps.setLong(4, addBase);
-                ps.executeUpdate();
+                for (Map.Entry<QuotaBuffer.Key, Long> entry : batch.entrySet()) {
+                    long amount = entry.getValue();
+                    if (amount <= 0) {
+                        continue;
+                    }
+                    QuotaBuffer.Key key = entry.getKey();
+                    ps.setString(1, key.uuid().toString());
+                    ps.setString(2, key.item());
+                    ps.setLong(3, key.hasJob() ? amount : 0L);
+                    ps.setLong(4, key.hasJob() ? 0L : amount);
+                    ps.executeUpdate();
+                }
             }
             return null;
         });

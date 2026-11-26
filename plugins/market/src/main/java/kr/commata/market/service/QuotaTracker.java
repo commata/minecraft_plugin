@@ -8,6 +8,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Logger;
 import kr.commata.market.bridge.UntrustedBlockReader;
+import kr.commata.market.core.QuotaBuffer;
 import kr.commata.market.core.SellCatalog;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
@@ -74,6 +75,9 @@ public final class QuotaTracker implements Listener {
 
     private final MarketService market;
     private final Logger logger;
+    private final QuotaBuffer buffer = new QuotaBuffer();
+    /** 연속 반영 실패 중인지 (첫 실패와 회복 시에만 로그 출력). */
+    private boolean flushFailing;
     /** 메인 스레드에서 BlockBreakEvent 직후 바로 이어지는 BlockDropItemEvent 와 매칭. */
     private BreakContext pendingBreak;
 
@@ -212,8 +216,9 @@ public final class QuotaTracker implements Listener {
         recordDrops(player, "fisherman", Map.of(stack.getType(), stack.getAmount()));
     }
 
-    // ------------------------------------------------------------------ 공통 기록
+    // ------------------------------------------------------------------ 공통 기록·일괄 반영
 
+    /** 메모리 버퍼에 합산합니다(20틱마다 한 트랜잭션으로 일괄 반영, ECONOMY.md 14.2). */
     private void recordDrops(Player player, String expectedJob, Map<Material, Integer> drops) {
         if (drops.isEmpty()) {
             return;
@@ -227,11 +232,42 @@ public final class QuotaTracker implements Listener {
             if (item == null || !expectedJob.equals(item.jobId())) {
                 continue;
             }
-            try {
-                market.store().addQuota(player.getUniqueId(), item.id(), entry.getValue(), hasJob);
-            } catch (SQLException e) {
-                logger.warning("판매 가능량 기록 실패 (" + player.getName() + ", " + itemId + "): " + e.getMessage());
+            buffer.add(player.getUniqueId(), item.id(), entry.getValue(), hasJob);
+        }
+    }
+
+    /** 20틱 주기 타이머·서버 종료 시 버퍼 전체를 한 트랜잭션으로 DB 에 반영합니다. */
+    public boolean flushAll() {
+        return flush(buffer.drainAll());
+    }
+
+    /** 판매 시작·메뉴 열기·탈퇴 보정·퇴장 시 해당 플레이어의 버퍼만 먼저 DB 에 반영합니다. */
+    public boolean flushPlayer(UUID uuid) {
+        return flush(buffer.drainPlayer(uuid));
+    }
+
+    private boolean flush(Map<QuotaBuffer.Key, Long> drained) {
+        if (drained.isEmpty()) {
+            return true;
+        }
+        if (market.dbLocked()) {
+            buffer.restore(drained);
+            return false;
+        }
+        try {
+            market.store().addQuotaBatch(drained);
+            if (flushFailing) {
+                flushFailing = false;
+                logger.info("판매 가능량 일괄 반영이 정상 회복되었습니다.");
             }
+            return true;
+        } catch (SQLException e) {
+            buffer.restore(drained);
+            if (!flushFailing) {
+                flushFailing = true;
+                logger.warning("판매 가능량 일괄 반영 실패 (버퍼 보존, 다음 주기에 재시도): " + e.getMessage());
+            }
+            return false;
         }
     }
 

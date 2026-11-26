@@ -62,6 +62,8 @@ public final class MarketService {
     private final Set<String> inProcessChargedOrders = ConcurrentHashMap.newKeySet();
     /** 이번 기동에서 저장 미확인으로 아이템 제거 상태 보류 중인 판매. */
     private final Set<String> inProcessPendingSales = ConcurrentHashMap.newKeySet();
+    /** 플레이어별 판매 가능량 버퍼를 DB 에 즉시 반영하는 콜백 (QuotaTracker 연결). */
+    private volatile java.util.function.Predicate<UUID> quotaFlusher = uuid -> true;
 
     public MarketService(Plugin plugin, MarketStore store, String storeLockReason,
                          BankBridge bank, VJobsBridge vjobs, Path worldRoot, MarketConfig config) {
@@ -79,6 +81,15 @@ public final class MarketService {
 
     public void updateConfig(MarketConfig newConfig) {
         this.config = newConfig;
+    }
+
+    public void setQuotaFlusher(java.util.function.Predicate<UUID> quotaFlusher) {
+        this.quotaFlusher = quotaFlusher == null ? uuid -> true : quotaFlusher;
+    }
+
+    /** 해당 플레이어의 메모리 판매 가능량 버퍼를 DB 에 먼저 반영합니다. 실패하면 false. */
+    public boolean flushQuota(UUID uuid) {
+        return quotaFlusher.test(uuid);
     }
 
     public MarketConfig config() {
@@ -368,6 +379,11 @@ public final class MarketService {
         try {
             if (store.isPlayerLocked(uuid)) {
                 notifyPlayerLocked(player);
+                return false;
+            }
+            // 판매 시작 전 메모리 버퍼의 판매 가능량을 먼저 DB 에 반영 (ECONOMY.md 14.2)
+            if (!flushQuota(uuid)) {
+                Msg.error(player, "판매 가능량 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.");
                 return false;
             }
             // 판매 직전 탈퇴 이관 보정 (ECONOMY.md 14.2)
@@ -669,6 +685,7 @@ public final class MarketService {
         if (dbLocked()) {
             return;
         }
+        flushQuota(uuid);
         try {
             for (MarketStore.OrderRecord o : store.openOrdersOf(uuid)) {
                 inProcessChargedOrders.remove(o.txId());
@@ -837,6 +854,7 @@ public final class MarketService {
         if (dbLocked()) {
             return;
         }
+        flushQuota(player.getUniqueId());
         Set<String> joined = vjobs.joinedJobIds(player.getUniqueId());
         if (joined == null) {
             return;
@@ -857,6 +875,7 @@ public final class MarketService {
         if (dbLocked() || jobId == null) {
             return;
         }
+        flushQuota(uuid);
         List<String> items = config.sell().itemIdsOfJob(jobId);
         if (items.isEmpty()) {
             return;

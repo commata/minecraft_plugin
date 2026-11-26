@@ -64,15 +64,17 @@ final class SellMenu extends Menu {
 
         Map<String, MarketStore.Quota> quotas = Map.of();
         long todayTotal = 0L;
-        boolean readError = false;
-        try {
-            quotas = menus.market().store().allQuotas(viewer.getUniqueId());
-            todayTotal = menus.market().store().dailySalesTotal(viewer.getUniqueId(), dayKey);
-        } catch (SQLException e) {
-            readError = true;
-            if (!readErrorLogged) {
-                readErrorLogged = true;
-                menus.plugin().getLogger().warning("판매 가능량·일일 한도 조회 실패 (" + viewer.getName() + "): " + e.getMessage());
+        boolean readError = !menus.market().flushQuota(viewer.getUniqueId());
+        if (!readError) {
+            try {
+                quotas = menus.market().store().allQuotas(viewer.getUniqueId());
+                todayTotal = menus.market().store().dailySalesTotal(viewer.getUniqueId(), dayKey);
+            } catch (SQLException e) {
+                readError = true;
+                if (!readErrorLogged) {
+                    readErrorLogged = true;
+                    menus.plugin().getLogger().warning("판매 가능량·일일 한도 조회 실패 (" + viewer.getName() + "): " + e.getMessage());
+                }
             }
         }
         long dailyLimit = catalog.dailyLimit();

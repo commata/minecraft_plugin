@@ -30,9 +30,12 @@ public final class MarketPlugin extends JavaPlugin {
 
     /** 미완료 거래 재확인·재지급·재입금 주기: 1분 (ECONOMY.md 13.6, 14.3). */
     private static final long RECOVERY_PERIOD_TICKS = 20L * 60;
+    /** 판매 가능량 메모리 버퍼 일괄 반영 주기: 20틱(1초, ECONOMY.md 14.2). */
+    private static final long QUOTA_FLUSH_PERIOD_TICKS = 20L;
 
     private MarketStore store;
     private MarketService market;
+    private QuotaTracker quotaTracker;
 
     @Override
     public void onEnable() {
@@ -64,10 +67,12 @@ public final class MarketPlugin extends JavaPlugin {
         market = new MarketService(this, store, lockReason, bank, vjobs, worldRoot, config);
         MarketMenus menus = new MarketMenus(this, market);
         PlayerDataGuard dataGuard = new PlayerDataGuard(this, store, market, worldRoot);
+        quotaTracker = new QuotaTracker(market, getLogger());
+        market.setQuotaFlusher(quotaTracker::flushPlayer);
 
         getServer().getPluginManager().registerEvents(new MenuListener(), this);
         getServer().getPluginManager().registerEvents(dataGuard, this);
-        getServer().getPluginManager().registerEvents(new QuotaTracker(market, getLogger()), this);
+        getServer().getPluginManager().registerEvents(quotaTracker, this);
 
         if (vjobs.available()) {
             String err = vjobs.listenLeave((player, jobId) -> market.onJobLeave(player.getUniqueId(), jobId));
@@ -79,10 +84,12 @@ public final class MarketPlugin extends JavaPlugin {
         }
 
         if (store != null) {
-            // 이전 기동의 미완료 주문·판매 복구 및 1분 주기 복구 타이머 시작
+            // 이전 기동의 미완료 주문·판매 복구 및 1분 주기 복구 타이머, 20틱 판매 가능량 일괄 반영 타이머 시작
             market.reconcileOnStartup();
             getServer().getScheduler().runTaskTimer(this, market::tickRecovery,
                     RECOVERY_PERIOD_TICKS, RECOVERY_PERIOD_TICKS);
+            getServer().getScheduler().runTaskTimer(this, quotaTracker::flushAll,
+                    QUOTA_FLUSH_PERIOD_TICKS, QUOTA_FLUSH_PERIOD_TICKS);
         }
 
         registerCommands(menus, dataGuard);
@@ -133,6 +140,9 @@ public final class MarketPlugin extends JavaPlugin {
         // 리스너가 풀린 뒤 메뉴에서 아이템을 꺼내지 못하게 먼저 닫음 (AGENTS.md 3.4, 7)
         MenuListener.closeAll(getServer());
         getServer().getScheduler().cancelTasks(this);
+        if (quotaTracker != null) {
+            quotaTracker.flushAll();
+        }
         if (store != null) {
             store.closeClean();
         }
