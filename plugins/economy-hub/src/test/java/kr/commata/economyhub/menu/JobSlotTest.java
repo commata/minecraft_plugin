@@ -79,8 +79,11 @@ class JobSlotTest {
         assertEquals(OptionalInt.of(35), JobSlot.statusSlot(26, Set.of(26)));
         // 겹침: 직업 11과 20이 함께 있음 → 11의 상태 바(20) 없음
         assertEquals(OptionalInt.empty(), JobSlot.statusSlot(11, Set.of(11, 20)));
-        // 다른 직업의 상태 바와 겹침
-        assertEquals(OptionalInt.empty(), JobSlot.statusSlot(11, Set.of(11, 20)));
+        // 이미 놓인 상태 바와 겹침: 직업 11·13과 상태 바 20·22가 차 있음 → 11의 상태 바 없음, 2의 상태 바(11)도 없음
+        Set<Integer> placed = Set.of(11, 13, 20, 22);
+        assertEquals(OptionalInt.empty(), JobSlot.statusSlot(11, placed));
+        assertEquals(OptionalInt.empty(), JobSlot.statusSlot(2, placed));
+        assertEquals(OptionalInt.of(24), JobSlot.statusSlot(15, placed));
     }
 
     @Test
