@@ -112,9 +112,21 @@ public final class MarketCommand implements BasicCommand {
         Msg.raw(sender, "<#AAAAAA>  희귀 상점: " + featureState(cfg.rare().available(), cfg.rare().lockReason()));
         Msg.raw(sender, "<#AAAAAA>  인첸트 뽑기: " + featureState(cfg.gacha().available(), cfg.gacha().lockReason()));
         Msg.raw(sender, "<#AAAAAA>  서버 매입: " + featureState(cfg.sell().available(), cfg.sell().lockReason()));
-        boolean hubEnabled = server.getPluginManager().isPluginEnabled("EconomyHub");
-        Msg.raw(sender, "<#AAAAAA>  블록 판매 가능량 집계: " + (hubEnabled
-                ? "<#55FF55>켜짐" : "<#FF5555>꺼짐 (EconomyHub 없음/꺼짐)"));
+        String trackingStatus;
+        if (market.dbLocked()) {
+            trackingStatus = "<#FF5555>꺼짐 (Market DB 잠금)";
+        } else {
+            org.bukkit.plugin.Plugin hub = server.getPluginManager().getPlugin("EconomyHub");
+            if (hub == null || !hub.isEnabled()) {
+                trackingStatus = "<#FF5555>꺼짐 (EconomyHub 없음/꺼짐)";
+            } else if (hub.getDescription() == null || hub.getDescription().getProvides() == null
+                    || !hub.getDescription().getProvides().contains("economyhub-block-marks-v1")) {
+                trackingStatus = "<#FF5555>꺼짐 (EconomyHub 버전이 설치 블록 기록을 지원하지 않음)";
+            } else {
+                trackingStatus = "<#55FF55>켜짐";
+            }
+        }
+        Msg.raw(sender, "<#AAAAAA>  블록 판매 가능량 집계: " + trackingStatus);
     }
 
     private static String featureState(boolean available, String reason) {

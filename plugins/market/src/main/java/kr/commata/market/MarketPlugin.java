@@ -12,6 +12,7 @@ import kr.commata.common.gui.MenuListener;
 import kr.commata.market.bridge.BankBridge;
 import kr.commata.market.bridge.VJobsBridge;
 import kr.commata.market.command.MarketCommand;
+import kr.commata.market.core.HubStatus;
 import kr.commata.market.core.MarketBootstrap;
 import kr.commata.market.core.MarketStore;
 import kr.commata.market.core.PlayerDatReader;
@@ -67,9 +68,27 @@ public final class MarketPlugin extends JavaPlugin {
         market = new MarketService(this, store, lockReason, bank, vjobs, worldRoot, config);
         MarketMenus menus = new MarketMenus(this, market);
         PlayerDataGuard dataGuard = new PlayerDataGuard(this, store, market, worldRoot);
-        boolean hubAvailable = getServer().getPluginManager().isPluginEnabled("EconomyHub");
-        quotaTracker = new QuotaTracker(market, getLogger(),
-                () -> getServer().getPluginManager().isPluginEnabled("EconomyHub"), !hubAvailable);
+        Plugin hubPlugin = getServer().getPluginManager().getPlugin("EconomyHub");
+        boolean hubEnabled = hubPlugin != null && hubPlugin.isEnabled();
+        boolean hubSpecV1 = hubEnabled && hubPlugin.getDescription() != null
+                && hubPlugin.getDescription().getProvides() != null
+                && hubPlugin.getDescription().getProvides().contains("economyhub-block-marks-v1");
+
+        HubStatus initialHubStatus = !hubEnabled
+                ? HubStatus.DISABLED
+                : (!hubSpecV1 ? HubStatus.UNSUPPORTED_SPEC : HubStatus.AVAILABLE);
+
+        quotaTracker = new QuotaTracker(market, getLogger(), () -> {
+            Plugin hub = getServer().getPluginManager().getPlugin("EconomyHub");
+            if (hub == null || !hub.isEnabled()) {
+                return HubStatus.DISABLED;
+            }
+            if (hub.getDescription() == null || hub.getDescription().getProvides() == null
+                    || !hub.getDescription().getProvides().contains("economyhub-block-marks-v1")) {
+                return HubStatus.UNSUPPORTED_SPEC;
+            }
+            return HubStatus.AVAILABLE;
+        }, initialHubStatus.isAvailable() ? null : initialHubStatus);
         market.setQuotaFlusher(quotaTracker::flushPlayer);
 
         getServer().getPluginManager().registerEvents(new MenuListener(), this);
@@ -85,8 +104,10 @@ public final class MarketPlugin extends JavaPlugin {
             getLogger().warning("VJobs 가 없거나 꺼져 있어 직업 보너스는 적용되지 않습니다.");
         }
 
-        if (!hubAvailable) {
+        if (initialHubStatus == HubStatus.DISABLED) {
             getLogger().warning("EconomyHub 가 없거나 꺼져 있어 블록(광부·벌목꾼·농부) 판매 가능량 집계가 차단됩니다.");
+        } else if (initialHubStatus == HubStatus.UNSUPPORTED_SPEC) {
+            getLogger().warning("EconomyHub 버전이 설치 블록 기록 규격(v1)을 지원하지 않아 블록 판매 가능량 집계가 차단됩니다.");
         }
 
         if (store != null) {

@@ -110,13 +110,17 @@ public final class PayoutGuard implements Listener {
         }
     }
 
-    /** 직접 채집한 품목만 매입하도록 설치 좌표를 기존 청크 기록에 남긴다 (ECONOMY.md 14.2). */
+    /** 직접 채집한 품목만 매입하도록 설치 좌표를 기존 청크 기록에 남긴다 (ECONOMY.md 14.2, 14.4 v0.9.3). */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onPlace(BlockPlaceEvent event) {
         Block placed = event.getBlockPlaced();
         Material type = placed.getType();
         if (Tag.LOGS.isTagged(type) || type.name().endsWith("_ORE") || type == Material.ANCIENT_DEBRIS
-                || type == Material.PUMPKIN || type == Material.MELON) {
+                || type == Material.PUMPKIN || type == Material.MELON
+                || type == Material.SUGAR_CANE || type == Material.CACTUS
+                || type == Material.BROWN_MUSHROOM || type == Material.RED_MUSHROOM
+                || type == Material.BROWN_MUSHROOM_BLOCK || type == Material.RED_MUSHROOM_BLOCK
+                || type == Material.MUSHROOM_STEM) {
             marks.mark(placed);
         } else {
             marks.unmark(placed);

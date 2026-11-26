@@ -14,6 +14,7 @@ import kr.commata.market.core.BlockTrustState;
 import kr.commata.market.core.BreakLedger;
 import kr.commata.market.core.DropFilter;
 import kr.commata.market.core.FarmerCropRules;
+import kr.commata.market.core.HubStatus;
 import kr.commata.market.core.QuotaBuffer;
 import kr.commata.market.core.SeedCrops;
 import kr.commata.market.core.SellCatalog;
@@ -22,6 +23,7 @@ import org.bukkit.GameMode;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.Ageable;
+import org.bukkit.block.BlockState;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Enemy;
 import org.bukkit.entity.Item;
@@ -32,9 +34,12 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockDropItemEvent;
+import org.bukkit.event.block.BlockGrowEvent;
+import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.player.PlayerFishEvent;
 import org.bukkit.event.player.PlayerHarvestBlockEvent;
+import org.bukkit.event.world.StructureGrowEvent;
 import org.bukkit.inventory.EntityEquipment;
 import org.bukkit.inventory.ItemStack;
 
@@ -96,9 +101,9 @@ public final class QuotaTracker implements Listener {
 
     private final MarketService market;
     private final Logger logger;
-    private final BooleanSupplier economyHubAvailable;
-    /** EconomyHub 꺼짐 경고가 이미 출력되었는지 (연속 로그 폭주 방지). */
-    private boolean blockTrackingWarned;
+    private final java.util.function.Supplier<HubStatus> hubStatusSupplier;
+    /** 마지막으로 경고한 Hub 상태 (중복 경고 방지). */
+    private HubStatus lastWarnedStatus;
     private final QuotaBuffer buffer = new QuotaBuffer();
     /** 연속 반영 실패 중인지 (첫 실패와 회복 시에만 로그 출력). */
     private boolean flushFailing;
@@ -108,25 +113,68 @@ public final class QuotaTracker implements Listener {
     private final BreakLedger<BlockKey, HarvestContext> pendingHarvests = new BreakLedger<>();
 
     public QuotaTracker(MarketService market, Logger logger) {
-        this(market, logger, () -> Bukkit.getPluginManager().isPluginEnabled("EconomyHub"), false);
+        this(market, logger, defaultHubStatusSupplier(), null);
     }
 
     public QuotaTracker(MarketService market, Logger logger, BooleanSupplier economyHubAvailable) {
-        this(market, logger, economyHubAvailable, false);
+        this(market, logger, () -> economyHubAvailable.getAsBoolean() ? HubStatus.AVAILABLE : HubStatus.DISABLED, null);
     }
 
     public QuotaTracker(MarketService market, Logger logger, BooleanSupplier economyHubAvailable, boolean initialWarned) {
-        this.market = market;
-        this.logger = logger;
-        this.economyHubAvailable = economyHubAvailable != null
-                ? economyHubAvailable
-                : () -> Bukkit.getPluginManager().isPluginEnabled("EconomyHub");
-        this.blockTrackingWarned = initialWarned;
+        this(market, logger, () -> economyHubAvailable.getAsBoolean() ? HubStatus.AVAILABLE : HubStatus.DISABLED,
+                initialWarned ? HubStatus.DISABLED : null);
     }
 
-    /** 블록 판매 가능량 집계가 가능한 상태인지 (EconomyHub 활성화 여부). */
+    public QuotaTracker(MarketService market, Logger logger, java.util.function.Supplier<HubStatus> hubStatusSupplier, HubStatus initialWarned) {
+        this.market = market;
+        this.logger = logger;
+        this.hubStatusSupplier = hubStatusSupplier != null ? hubStatusSupplier : defaultHubStatusSupplier();
+        this.lastWarnedStatus = initialWarned;
+    }
+
+    private static java.util.function.Supplier<HubStatus> defaultHubStatusSupplier() {
+        return () -> {
+            org.bukkit.plugin.Plugin hub = Bukkit.getPluginManager().getPlugin("EconomyHub");
+            if (hub == null || !hub.isEnabled()) {
+                return HubStatus.DISABLED;
+            }
+            if (hub.getDescription() == null || hub.getDescription().getProvides() == null
+                    || !hub.getDescription().getProvides().contains("economyhub-block-marks-v1")) {
+                return HubStatus.UNSUPPORTED_SPEC;
+            }
+            return HubStatus.AVAILABLE;
+        };
+    }
+
+    /** 현재 EconomyHub 규격 지원 상태를 반환합니다. */
+    public HubStatus hubStatus() {
+        return hubStatusSupplier.get();
+    }
+
+    /** 블록 판매 가능량 집계가 가능한 상태인지 (EconomyHub 활성화 및 v1 규격 지원 여부). */
     public boolean isBlockTrackingAvailable() {
-        return economyHubAvailable.getAsBoolean();
+        return hubStatus().isAvailable();
+    }
+
+    private boolean checkTrackingAvailableAndLog() {
+        HubStatus status = hubStatus();
+        if (status.isAvailable()) {
+            if (lastWarnedStatus != null) {
+                lastWarnedStatus = null;
+                logger.info("EconomyHub 설치 블록 기록 규격(v1)이 확인되어 블록 판매 가능량 집계가 재개되었습니다.");
+            }
+            return true;
+        }
+
+        if (lastWarnedStatus != status) {
+            lastWarnedStatus = status;
+            if (status == HubStatus.DISABLED) {
+                logger.warning("EconomyHub 가 없거나 꺼져 있어 블록(광부·벌목꾼·농부) 판매 가능량 집계를 차단합니다.");
+            } else if (status == HubStatus.UNSUPPORTED_SPEC) {
+                logger.warning("EconomyHub 버전이 설치 블록 기록 규격(v1)을 지원하지 않아 블록 판매 가능량 집계를 차단합니다.");
+            }
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------ 블록 (광부·벌목꾼·농부)
@@ -148,16 +196,8 @@ public final class QuotaTracker implements Listener {
         if (!isTrackedBlock(type)) {
             return;
         }
-        if (!isBlockTrackingAvailable()) {
-            if (!blockTrackingWarned) {
-                blockTrackingWarned = true;
-                logger.warning("EconomyHub 가 없거나 꺼져 있어 블록(광부·벌목꾼·농부) 판매 가능량 집계를 차단합니다.");
-            }
+        if (!checkTrackingAvailableAndLog()) {
             return;
-        }
-        if (blockTrackingWarned) {
-            blockTrackingWarned = false;
-            logger.info("EconomyHub 가 정상 활성화되어 블록 판매 가능량 집계가 재개되었습니다.");
         }
         BlockTrustState trustState = FarmerCropRules.isPlacementCheckIgnored(type.name())
                 ? BlockTrustState.NATURAL
@@ -182,6 +222,39 @@ public final class QuotaTracker implements Listener {
     public void onBlockBreakResult(BlockBreakEvent event) {
         if (event.isCancelled() || !event.isDropItems()) {
             pendingBreaks.remove(BlockKey.of(event.getBlock()));
+            return;
+        }
+        // 정상 파괴 시 Market 자체 비트맵 표시 해제
+        UntrustedBlockReader.unmarkMarket(event.getBlock());
+    }
+
+    /**
+     * 플레이어가 블록을 설치했을 때 Market 자체 청크 비트맵에 표시합니다 (MONITOR).
+     * EconomyHub 가 꺼져 있거나 재시작 중단 상태에서 설치된 블록도 추후 채광 시 자연산으로 집계되지 않도록 방지합니다.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onBlockPlace(BlockPlaceEvent event) {
+        Block block = event.getBlock();
+        if (isTrackedBlock(block.getType())) {
+            UntrustedBlockReader.markMarket(block);
+        }
+    }
+
+    /**
+     * 작물이나 호박·수박·선인장·사탕수수 등이 자연 성장했을 때 블록의 비트맵 표시를 정리합니다.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onBlockGrow(BlockGrowEvent event) {
+        UntrustedBlockReader.unmarkMarket(event.getBlock());
+    }
+
+    /**
+     * 묘목이 나무로 성장했을 때 생성된 원목 블록들의 비트맵 표시를 정리합니다.
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onStructureGrow(StructureGrowEvent event) {
+        for (BlockState state : event.getBlocks()) {
+            UntrustedBlockReader.unmarkMarket(state.getBlock());
         }
     }
 
@@ -239,16 +312,8 @@ public final class QuotaTracker implements Listener {
         if (!isSurvivalOrAdventure(player)) {
             return;
         }
-        if (!isBlockTrackingAvailable()) {
-            if (!blockTrackingWarned) {
-                blockTrackingWarned = true;
-                logger.warning("EconomyHub 가 없거나 꺼져 있어 블록(광부·벌목꾼·농부) 판매 가능량 집계를 차단합니다.");
-            }
+        if (!checkTrackingAvailableAndLog()) {
             return;
-        }
-        if (blockTrackingWarned) {
-            blockTrackingWarned = false;
-            logger.info("EconomyHub 가 정상 활성화되어 블록 판매 가능량 집계가 재개되었습니다.");
         }
         Block block = event.getHarvestedBlock();
         if (block.getType() != Material.SWEET_BERRY_BUSH) {

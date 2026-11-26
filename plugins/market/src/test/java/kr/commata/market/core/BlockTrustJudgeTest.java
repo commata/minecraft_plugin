@@ -109,4 +109,64 @@ class BlockTrustJudgeTest {
         assertFalse(BlockTrustState.MARKED.isNatural());
         assertFalse(BlockTrustState.UNKNOWN.isNatural());
     }
+
+    @Test
+    @DisplayName("combine 은 둘 중 하나라도 UNKNOWN 이면 UNKNOWN 을 반환한다")
+    void combineUnknownPriority() {
+        assertEquals(BlockTrustState.UNKNOWN, BlockTrustJudge.combine(BlockTrustState.UNKNOWN, BlockTrustState.NATURAL));
+        assertEquals(BlockTrustState.UNKNOWN, BlockTrustJudge.combine(BlockTrustState.NATURAL, BlockTrustState.UNKNOWN));
+        assertEquals(BlockTrustState.UNKNOWN, BlockTrustJudge.combine(BlockTrustState.UNKNOWN, BlockTrustState.MARKED));
+        assertEquals(BlockTrustState.UNKNOWN, BlockTrustJudge.combine(BlockTrustState.MARKED, BlockTrustState.UNKNOWN));
+        assertEquals(BlockTrustState.UNKNOWN, BlockTrustJudge.combine(BlockTrustState.UNKNOWN, BlockTrustState.UNKNOWN));
+    }
+
+    @Test
+    @DisplayName("combine 은 UNKNOWN 이 없고 둘 중 하나라도 MARKED 이면 MARKED 를 반환한다")
+    void combineMarked() {
+        assertEquals(BlockTrustState.MARKED, BlockTrustJudge.combine(BlockTrustState.MARKED, BlockTrustState.NATURAL));
+        assertEquals(BlockTrustState.MARKED, BlockTrustJudge.combine(BlockTrustState.NATURAL, BlockTrustState.MARKED));
+        assertEquals(BlockTrustState.MARKED, BlockTrustJudge.combine(BlockTrustState.MARKED, BlockTrustState.MARKED));
+    }
+
+    @Test
+    @DisplayName("combine 은 둘 다 NATURAL 일 때만 NATURAL 을 반환한다")
+    void combineNatural() {
+        assertEquals(BlockTrustState.NATURAL, BlockTrustJudge.combine(BlockTrustState.NATURAL, BlockTrustState.NATURAL));
+    }
+
+    @Test
+    @DisplayName("setBit 와 clearBit 동작 및 손상 배열 보존 검증")
+    void bitOperations() {
+        // null 배열에 setBit
+        long[] bits = BlockTrustJudge.setBit(null, 100);
+        assertEquals(64, bits.length);
+        assertEquals(BlockTrustState.MARKED, BlockTrustJudge.judge(bits, 100));
+        assertEquals(BlockTrustState.NATURAL, BlockTrustJudge.judge(bits, 101));
+        assertFalse(BlockTrustJudge.isEmpty(bits));
+
+        // clearBit
+        bits = BlockTrustJudge.clearBit(bits, 100);
+        assertEquals(BlockTrustState.NATURAL, BlockTrustJudge.judge(bits, 100));
+        assertTrue(BlockTrustJudge.isEmpty(bits));
+
+        // null clearBit
+        assertTrue(BlockTrustJudge.clearBit(null, 50) == null);
+
+        // 손상 배열 보존
+        long[] corrupted = new long[30];
+        long[] afterSet = BlockTrustJudge.setBit(corrupted, 5);
+        assertTrue(corrupted == afterSet, "손상 배열은 새로 만들지 않고 그대로 반환해야 함");
+        assertEquals(30, afterSet.length);
+
+        long[] afterClear = BlockTrustJudge.clearBit(corrupted, 5);
+        assertTrue(corrupted == afterClear, "손상 배열은 수정하지 않고 그대로 반환해야 함");
+    }
+
+    @Test
+    @DisplayName("HubStatus isAvailable 동작 검증")
+    void hubStatusAvailable() {
+        assertTrue(HubStatus.AVAILABLE.isAvailable());
+        assertFalse(HubStatus.DISABLED.isAvailable());
+        assertFalse(HubStatus.UNSUPPORTED_SPEC.isAvailable());
+    }
 }
