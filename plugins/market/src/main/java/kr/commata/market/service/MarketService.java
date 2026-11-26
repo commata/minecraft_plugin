@@ -442,21 +442,43 @@ public final class MarketService {
             }
 
             // 5단계: 인벤토리 제거 + PDC 기록 + saveData + 디스크 확인
+            PersistentDataContainer pdc = player.getPersistentDataContainer();
+            String prevApplied = pdc.getOrDefault(keyAppliedTx, PersistentDataType.STRING, "");
+            long prevSeq = pdc.getOrDefault(keySeq, PersistentDataType.LONG, 0L);
+            long dbSeq = store.playerSeq(uuid);
+            long nextSeq = Math.max(prevSeq, dbSeq) + 1L;
+            String token = AppliedTxTokens.token(txId, 1);
+            String newApplied = AppliedTxTokens.append(prevApplied, token);
+            ItemStack[] invSnapshot = ItemFactory.snapshotStorage(player.getInventory());
+
             if (!ItemFactory.removeSellable(player.getInventory(), material, plan.totalAmount())) {
                 store.abortSale(txId, "인벤토리 제거 실패");
                 Msg.error(player, "인벤토리 수량이 변경되어 판매를 취소했습니다.");
                 return false;
             }
 
-            PersistentDataContainer pdc = player.getPersistentDataContainer();
-            String prevApplied = pdc.getOrDefault(keyAppliedTx, PersistentDataType.STRING, "");
-            long prevSeq = pdc.getOrDefault(keySeq, PersistentDataType.LONG, 0L);
-            long nextSeq = Math.max(prevSeq, store.playerSeq(uuid)) + 1L;
-            String token = AppliedTxTokens.token(txId, 1);
-
-            pdc.set(keyAppliedTx, PersistentDataType.STRING, AppliedTxTokens.append(prevApplied, token));
-            pdc.set(keySeq, PersistentDataType.LONG, nextSeq);
-            player.saveData();
+            try {
+                pdc.set(keyAppliedTx, PersistentDataType.STRING, newApplied);
+                pdc.set(keySeq, PersistentDataType.LONG, nextSeq);
+                player.saveData();
+            } catch (Throwable e) {
+                // 인벤토리 제거 후 저장 중 예외 발생 시 같은 틱 안에서 인벤토리 및 PDC 복원, 판매 취소
+                player.getInventory().setStorageContents(invSnapshot);
+                if (prevApplied.isEmpty()) {
+                    pdc.remove(keyAppliedTx);
+                } else {
+                    pdc.set(keyAppliedTx, PersistentDataType.STRING, prevApplied);
+                }
+                if (prevSeq == 0L) {
+                    pdc.remove(keySeq);
+                } else {
+                    pdc.set(keySeq, PersistentDataType.LONG, prevSeq);
+                }
+                store.abortSale(txId, "저장 중 오류로 판매 취소: " + e.getMessage());
+                logger.severe("판매 처리 중 예외 발생, 인벤토리 복구 완료 (" + txId + "): " + e);
+                Msg.error(player, "판매 저장 중 오류가 발생하여 아이템을 복구했습니다.");
+                return false;
+            }
 
             PlayerDatReader.MarkerCheck check = PlayerDatReader.checkExact(worldRoot, uuid, txId, 1);
             if (check.status() != PlayerDatReader.MarkerStatus.FOUND) {
@@ -536,6 +558,11 @@ public final class MarketService {
         PersistentDataContainer pdc = player.getPersistentDataContainer();
         String prevApplied = pdc.getOrDefault(keyAppliedTx, PersistentDataType.STRING, "");
         long prevSeq = pdc.getOrDefault(keySeq, PersistentDataType.LONG, 0L);
+        long dbSeq = store.playerSeq(uuid);
+        long nextSeq = Math.max(prevSeq, dbSeq) + 1L;
+        int attempt = order.attempt();
+        String token = AppliedTxTokens.token(order.txId(), attempt);
+        String newApplied = AppliedTxTokens.append(prevApplied, token);
 
         if (!ItemFactory.giveIntoEmptySlots(player.getInventory(), items)) {
             inProcessChargedOrders.add(order.txId());
@@ -543,12 +570,28 @@ public final class MarketService {
             return false;
         }
 
-        int attempt = order.attempt();
-        String token = AppliedTxTokens.token(order.txId(), attempt);
-        long nextSeq = Math.max(prevSeq, store.playerSeq(uuid)) + 1L;
-        pdc.set(keyAppliedTx, PersistentDataType.STRING, AppliedTxTokens.append(prevApplied, token));
-        pdc.set(keySeq, PersistentDataType.LONG, nextSeq);
-        player.saveData();
+        try {
+            pdc.set(keyAppliedTx, PersistentDataType.STRING, newApplied);
+            pdc.set(keySeq, PersistentDataType.LONG, nextSeq);
+            player.saveData();
+        } catch (Throwable e) {
+            // 인벤토리 지급 후 저장 중 예외 발생 시 같은 틱 안에서 아이템 회수 및 PDC 복원
+            player.getInventory().setStorageContents(invSnapshot);
+            if (prevApplied.isEmpty()) {
+                pdc.remove(keyAppliedTx);
+            } else {
+                pdc.set(keyAppliedTx, PersistentDataType.STRING, prevApplied);
+            }
+            if (prevSeq == 0L) {
+                pdc.remove(keySeq);
+            } else {
+                pdc.set(keySeq, PersistentDataType.LONG, prevSeq);
+            }
+            inProcessChargedOrders.add(order.txId());
+            logger.severe("주문 지급 중 예외 발생, 아이템 회수 완료 (" + order.txId() + "): " + e);
+            Msg.error(player, "구매품 저장 중 오류가 발생하여 지급을 보류했습니다. /market claim 으로 다시 받아 주세요.");
+            return false;
+        }
 
         PlayerDatReader.MarkerCheck check = PlayerDatReader.checkExact(worldRoot, uuid, order.txId(), attempt);
         if (check.status() == PlayerDatReader.MarkerStatus.FOUND) {
