@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import org.bukkit.Material;
+import org.bukkit.Tag;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.BlockState;
@@ -64,7 +65,7 @@ public final class PayoutGuard implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onBreakEarly(BlockBreakEvent event) {
-        breakingMarked = enabled && marks.isMarked(event.getBlock()) ? event.getPlayer().getUniqueId() : null;
+        breakingMarked = marks.isMarked(event.getBlock()) ? event.getPlayer().getUniqueId() : null;
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -88,14 +89,16 @@ public final class PayoutGuard implements Listener {
     }
 
     private void move(List<Block> blocks, BlockFace direction) {
-        if (!enabled || blocks.isEmpty()) {
+        if (blocks.isEmpty()) {
             return;
         }
+        // 보상 차단을 꺼도 설치 이력은 Market에서 계속 사용한다.
+        List<Block> tracked = enabled ? blocks : blocks.stream().filter(marks::isMarked).toList();
         // 출발 좌표의 표시를 먼저 지우고 도착 좌표에 표시 (블록 줄에서 출발·도착이 겹쳐도 최종 상태가 맞음)
         for (Block block : blocks) {
             marks.unmark(block);
         }
-        for (Block block : blocks) {
+        for (Block block : tracked) {
             marks.mark(block.getRelative(direction));
         }
     }
@@ -107,10 +110,17 @@ public final class PayoutGuard implements Listener {
         }
     }
 
-    /** 플레이어가 그 자리에 블록을 놓으면 VJobs 의 설치 블록 기록이 맡으므로 표시를 지움. */
+    /** 직접 채집한 품목만 매입하도록 설치 좌표를 기존 청크 기록에 남긴다 (ECONOMY.md 14.2). */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onPlace(BlockPlaceEvent event) {
-        marks.unmark(event.getBlockPlaced());
+        Block placed = event.getBlockPlaced();
+        Material type = placed.getType();
+        if (Tag.LOGS.isTagged(type) || type.name().endsWith("_ORE") || type == Material.ANCIENT_DEBRIS
+                || type == Material.PUMPKIN || type == Material.MELON) {
+            marks.mark(placed);
+        } else {
+            marks.unmark(placed);
+        }
     }
 
     /** 작물·호박·수박·사탕수수가 새로 자란 자리는 자연 블록. 예전 표시가 남아 있으면 지움. */

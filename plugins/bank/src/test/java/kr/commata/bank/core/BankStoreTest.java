@@ -38,6 +38,20 @@ class BankStoreTest {
         opened.forEach(BankStore::close);
     }
 
+    @Test
+    void externalReferenceSurvivesRestartAndRejectsConflictingReuse() throws Exception {
+        BankStore store = install();
+        store.deposit(alice, "Alice", 100, TxType.DEPOSIT, "Bank", null);
+        var first = store.external(alice, 25, "Market", "order-1", TxType.WITHDRAW);
+        assertEquals(BankStore.ExternalStatus.OK, first.status());
+        store.close();
+        BankStore reopened = reboot("next");
+        assertEquals(first, reopened.external(alice, 25, "Market", "order-1", TxType.WITHDRAW));
+        assertEquals(first.txId(), reopened.findByExtRef("order-1").txId());
+        assertEquals(BankStore.ExternalStatus.REJECTED, reopened.external(alice, 26, "Market", "order-1", TxType.WITHDRAW).status());
+        assertEquals(BankStore.LookupStatus.NOT_FOUND, reopened.findByExtRef("missing").status());
+    }
+
     private Path bankDir() {
         return dir.resolve("Bank");
     }

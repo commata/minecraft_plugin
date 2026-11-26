@@ -32,7 +32,7 @@ import org.sqlite.SQLiteOpenMode;
 public final class BankStore implements AutoCloseable {
 
     public static final String DB_FILE = "bank.db";
-    static final int SCHEMA_VERSION = 2;
+    static final int SCHEMA_VERSION = 3;
     /** 다른 프로세스가 쓰기 잠금을 잡고 있을 때 기다리는 시간 */
     static final int BUSY_TIMEOUT_MS = 2000;
 
@@ -76,8 +76,10 @@ public final class BankStore implements AutoCloseable {
               source             TEXT NOT NULL,
               boot_id            TEXT NOT NULL,
               context            TEXT,
+              ext_ref            TEXT,
               ref                INTEGER UNIQUE REFERENCES transactions (id)
             );
+            CREATE UNIQUE INDEX transactions_ext_ref ON transactions(ext_ref);
             CREATE INDEX transactions_from ON transactions (from_uuid, id);
             CREATE INDEX transactions_to ON transactions (to_uuid, id);
             """;
@@ -216,6 +218,12 @@ public final class BankStore implements AutoCloseable {
                 st.execute("CREATE TABLE IF NOT EXISTS shutdown_players (boot_id TEXT NOT NULL,"
                         + " uuid TEXT NOT NULL, PRIMARY KEY (boot_id, uuid))");
             }
+            boolean hasRef = false;
+            try (Statement st = conn.createStatement(); ResultSet rs = st.executeQuery("PRAGMA table_info(transactions)")) {
+                while (rs.next()) hasRef |= "ext_ref".equals(rs.getString("name"));
+            }
+            if (!hasRef) exec("ALTER TABLE transactions ADD COLUMN ext_ref TEXT");
+            exec("CREATE UNIQUE INDEX IF NOT EXISTS transactions_ext_ref ON transactions(ext_ref)");
             String schema = meta("schema");
             if (schema == null || Integer.parseInt(schema) < SCHEMA_VERSION) {
                 putMeta("schema", String.valueOf(SCHEMA_VERSION));
@@ -772,6 +780,71 @@ public final class BankStore implements AutoCloseable {
     @FunctionalInterface
     private interface SqlWork<T> {
         T run() throws SQLException;
+    }
+
+    public enum ExternalStatus { OK, REJECTED, UNKNOWN }
+    public enum LookupStatus { FOUND, NOT_FOUND, ERROR }
+    public record Receipt(ExternalStatus status, long txId) { }
+    public record Lookup(LookupStatus status, long txId) { }
+
+    /** 거래번호로 이미 커밋된 원장을 조회한다. 조회 실패는 거래 없음과 구분한다. */
+    public Lookup findByExtRef(String extRef) {
+        lock.lock();
+        try {
+            ensureUsable();
+            try (PreparedStatement ps = conn.prepareStatement("SELECT id FROM transactions WHERE ext_ref=?")) {
+                ps.setString(1, extRef);
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() ? new Lookup(LookupStatus.FOUND, rs.getLong(1)) : new Lookup(LookupStatus.NOT_FOUND, 0);
+                }
+            }
+        } catch (SQLException e) {
+            return new Lookup(LookupStatus.ERROR, 0);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** 같은 요청의 재시도는 첫 거래번호를 반환한다. 거래번호의 용도를 바꾸는 요청은 거절한다. */
+    public Receipt external(UUID who, long amount, String source, String extRef, TxType type) {
+        if (who == null || amount <= 0 || amount > Amounts.MAX || source == null || source.isBlank()
+                || extRef == null || extRef.isBlank() || (type != TxType.DEPOSIT && type != TxType.WITHDRAW)) {
+            return new Receipt(ExternalStatus.REJECTED, 0);
+        }
+        boolean credit = type == TxType.DEPOSIT;
+        try {
+            Applied applied = write(() -> {
+                requireBoot();
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "SELECT id,type,from_uuid,to_uuid,amount,source FROM transactions WHERE ext_ref=?")) {
+                    ps.setString(1, extRef);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (rs.next()) {
+                            boolean same = type.name().equals(rs.getString(2)) && who.toString().equals(rs.getString(credit ? 4 : 3))
+                                    && amount == rs.getLong(5) && source.equals(rs.getString(6));
+                            if (!same) throw new Rejected(Failure.INVALID_AMOUNT, 0);
+                            return new Applied(rs.getLong(1), 0, Map.of());
+                        }
+                    }
+                }
+                long balance = balanceForUpdate(who, null, false);
+                if (balance < 0 || (!credit && balance < amount)) throw new Rejected(Failure.INSUFFICIENT_FUNDS, 0);
+                long next = credit ? balance + amount : balance - amount;
+                if (next > Amounts.MAX) throw new Rejected(Failure.LIMIT_EXCEEDED, balance);
+                setBalance(who, next);
+                long id = insertTx(type, credit ? null : who, credit ? who : null, amount,
+                        credit ? null : next, credit ? next : null, source, null, null);
+                try (PreparedStatement ps = conn.prepareStatement("UPDATE transactions SET ext_ref=? WHERE id=?")) {
+                    ps.setString(1, extRef);
+                    ps.setLong(2, id);
+                    ps.executeUpdate();
+                }
+                return new Applied(id, next, Map.of(who, next));
+            }, a -> balances.putAll(a.newBalances()));
+            return new Receipt(ExternalStatus.OK, applied.txId());
+        } catch (SQLException | Rejected e) {
+            return new Receipt(brokenReason == null ? ExternalStatus.REJECTED : ExternalStatus.UNKNOWN, 0);
+        }
     }
 
     private Outcome change(SqlWork<Applied> work) {

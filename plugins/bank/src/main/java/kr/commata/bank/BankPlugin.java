@@ -129,6 +129,21 @@ public final class BankPlugin extends JavaPlugin {
                 + store.accountCount() + "개, 기동 ID " + store.bootId() + ")");
     }
 
+    /** Market의 멱등 거래 API (ECONOMY.md 13.6). */
+    public BankStore.Receipt deposit(UUID who, long amount, String source, String extRef) {
+        return store == null ? new BankStore.Receipt(BankStore.ExternalStatus.REJECTED, 0)
+                : store.external(who, amount, source, extRef, kr.commata.bank.core.TxType.DEPOSIT);
+    }
+
+    public BankStore.Receipt withdraw(UUID who, long amount, String source, String extRef) {
+        return store == null ? new BankStore.Receipt(BankStore.ExternalStatus.REJECTED, 0)
+                : store.external(who, amount, source, extRef, kr.commata.bank.core.TxType.WITHDRAW);
+    }
+
+    public BankStore.Lookup findByExtRef(String extRef) {
+        return store == null ? new BankStore.Lookup(BankStore.LookupStatus.ERROR, 0) : store.findByExtRef(extRef);
+    }
+
     @Override
     public void onDisable() {
         getServer().getServicesManager().unregisterAll(this);
