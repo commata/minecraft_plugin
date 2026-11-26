@@ -1,6 +1,8 @@
 package kr.commata.economyhub.jobs;
 
 import java.lang.reflect.Method;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -20,6 +22,7 @@ public final class VJobsHook {
     public static final String LEAVE_EVENT = "com.vjobs.api.event.JobLeaveEvent";
     public static final String PAYOUT_EVENT = "com.vjobs.api.event.JobPayoutEvent";
     public static final String JOIN_EVENT = "com.vjobs.api.event.JobJoinEvent";
+    public static final String LEVEL_UP_EVENT = "com.vjobs.api.event.JobLevelUpEvent";
 
     /** 핸들러를 한 객체에 묶어 두면 플러그인을 끌 때 Bukkit 이 한꺼번에 해제함. */
     private static final Listener OWNER = new Listener() { };
@@ -134,6 +137,79 @@ public final class VJobsHook {
         } catch (ReflectiveOperationException | RuntimeException e) {
             return null;
         }
+    }
+
+    /**
+     * 지금 가입 중인 직업과 레벨 (VJobsApi.getPlayer(uuid).getJobs()). VJobs 가 이 플레이어 데이터를 아직 읽지 않았거나
+     * 읽지 못하면 null.
+     */
+    public Map<String, Progress> joinedJobs(UUID uuid) {
+        try {
+            Object apiInstance = api("com.vjobs.api.VJobsProvider").getMethod("get").invoke(null);
+            Object player = unwrap(api("com.vjobs.api.VJobsApi").getMethod("getPlayer", UUID.class)
+                    .invoke(apiInstance, uuid));
+            if (player == null) {
+                return null;
+            }
+            Object jobs = api("com.vjobs.api.JobPlayer").getMethod("getJobs").invoke(player);
+            if (!(jobs instanceof Map<?, ?> map)) {
+                return null;
+            }
+            Class<?> levelType = api("com.vjobs.api.JobLevel");
+            Method levelOf = levelType.getMethod("level");
+            Method xpOf = levelType.getMethod("xp");
+            Map<String, Progress> result = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                Object level = entry.getValue();
+                if (entry.getKey() instanceof String id && level != null) {
+                    result.put(id, new Progress(((Number) levelOf.invoke(level)).intValue(),
+                            ((Number) xpOf.invoke(level)).doubleValue()));
+                }
+            }
+            return result;
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * VJobsApi.joinJob(player, jobId). 결과 이름(SUCCESS, UNKNOWN_JOB, ALREADY_JOINED, LIMIT_REACHED, COOLDOWN,
+     * CANCELLED, JAR 확인), 호출하지 못하면 null. 쿨타임·최대 직업 수는 VJobs 가 판단하고 JobJoinEvent 도 그대로 발생합니다.
+     */
+    public String joinJob(Player player, String jobId) {
+        try {
+            Object apiInstance = api("com.vjobs.api.VJobsProvider").getMethod("get").invoke(null);
+            Object result = api("com.vjobs.api.VJobsApi").getMethod("joinJob", Player.class, String.class)
+                    .invoke(apiInstance, player, jobId);
+            return result == null ? null : result.toString();
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            plugin.getLogger().warning("VJobs joinJob 호출 실패: " + e);
+            return null;
+        }
+    }
+
+    /** VJobsApi.leaveJob(player, jobId). 탈퇴했으면 true, 거부·취소면 false, 호출하지 못하면 null. */
+    public Boolean leaveJob(Player player, String jobId) {
+        try {
+            Object apiInstance = api("com.vjobs.api.VJobsProvider").getMethod("get").invoke(null);
+            Object result = api("com.vjobs.api.VJobsApi").getMethod("leaveJob", Player.class, String.class)
+                    .invoke(apiInstance, player, jobId);
+            return result instanceof Boolean ok ? ok : null;
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            plugin.getLogger().warning("VJobs leaveJob 호출 실패: " + e);
+            return null;
+        }
+    }
+
+    /** VJobs config.yml jobs-limit.default (동시 가입 수, ECONOMY.md 5.1). */
+    public int jobLimit() {
+        return Math.max(1, vjobs.getConfig().getInt("jobs-limit.default", 2));
+    }
+
+    /** VJobs config.yml 의 jobs.<job>.actions.<action>.<key>.money. 없으면 null. 보상 요약 표시용. */
+    public Double rewardMoney(String jobId, String actionAndKey) {
+        String path = "jobs." + jobId + ".actions." + actionAndKey + ".money";
+        return vjobs.getConfig().isSet(path) ? vjobs.getConfig().getDouble(path) : null;
     }
 
     /** VJobs 가 이 플레이어 데이터를 다 읽었는지 (VJobsApi.getPlayer 는 읽기 전이면 비어 있음, JAR 확인). */
