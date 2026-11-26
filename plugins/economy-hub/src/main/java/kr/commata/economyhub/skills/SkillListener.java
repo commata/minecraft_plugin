@@ -97,8 +97,24 @@ public final class SkillListener implements Listener {
     /** 바닐라 나뭇잎 distance 최댓값: 7이면 원목과 이어지지 않아 원래 사라질 잎 */
     private static final int LEAF_MAX_DISTANCE = 7;
 
+    /** 같은 기둥(월드·x·z)에서 수관을 확인한 뒤 밑동 재식재를 허용하는 시간 */
+    private static final long CANOPY_MEMORY_MS = 30_000;
+
     private final Skills skills;
     private final Cooldowns cooldowns = new Cooldowns();
+    /** 수관이 붙어 있던 원목 기둥 → 기억 만료 시각. 위쪽 원목을 먼저 베고 밑동을 나중에 베도 재식재되게 함 */
+    private final Map<String, Long> canopyColumns = new java.util.HashMap<>();
+    /** 재파종 대기 중인 작물 자리 → 그 블록 드롭에서 씨앗을 미리 떼어 뒀는지 */
+    private final Map<Location, PendingCrop> pendingCrops = new java.util.HashMap<>();
+
+    private static final class PendingCrop {
+        final Material seed;
+        boolean reserved;
+
+        PendingCrop(Material seed) {
+            this.seed = seed;
+        }
+    }
 
     public SkillListener(Skills skills) {
         this.skills = skills;
@@ -109,6 +125,11 @@ public final class SkillListener implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBlockDrop(BlockDropItemEvent event) {
         Player player = event.getPlayer();
+        PendingCrop crop = pendingCrops.get(event.getBlock().getLocation());
+        if (crop != null && !crop.reserved) {
+            // 재파종에 쓸 씨앗 1개를 이 블록의 드롭에서 먼저 뗌 (인벤토리에 씨앗이 없어도 첫 수확부터 동작, 복사 없음)
+            crop.reserved = takeFromDrops(event.getItems(), crop.seed);
+        }
         Skill magnet = blockMagnet(event.getBlockState().getType());
         if (magnet != null && skills.active(player, magnet)) {
             absorbItems(player, event.getItems());
@@ -126,6 +147,27 @@ public final class SkillListener implements Listener {
             return Skill.FARMER_MAGNET;
         }
         return null;
+    }
+
+    /** 드롭 목록에서 이름 없는 기본 아이템 1개를 뺌 */
+    private static boolean takeFromDrops(List<Item> items, Material material) {
+        Iterator<Item> it = items.iterator();
+        while (it.hasNext()) {
+            Item item = it.next();
+            ItemStack stack = item.getItemStack();
+            if (stack.getType() != material || stack.hasItemMeta() && stack.getItemMeta().hasDisplayName()) {
+                continue;
+            }
+            if (stack.getAmount() <= 1) {
+                it.remove();
+            } else {
+                ItemStack less = stack.clone();
+                less.setAmount(stack.getAmount() - 1);
+                item.setItemStack(less);
+            }
+            return true;
+        }
+        return false;
     }
 
     /** 떨어질 아이템 엔티티 목록에서 인벤토리에 들어간 만큼 빼고, 남은 분량만 남김 */
@@ -162,9 +204,19 @@ public final class SkillListener implements Listener {
         if (Tag.LOGS.isTagged(type)) {
             Sapling sapling = SAPLINGS.get(type);
             Material ground = block.getRelative(BlockFace.DOWN).getType();
-            if (sapling != null && sapling.ground().isTagged(ground) && skills.active(player, Skill.LUMBERJACK_REPLANT)
-                    && hasCanopy(block, type)) {
-                later(1, () -> replantSapling(player, block, sapling.item(), ground));
+            if (sapling != null && skills.active(player, Skill.LUMBERJACK_REPLANT)) {
+                boolean canopy = hasCanopy(block, type);
+                String column = column(block);
+                long now = System.currentTimeMillis();
+                canopyColumns.values().removeIf(until -> until < now);
+                if (canopy) {
+                    canopyColumns.put(column, now + CANOPY_MEMORY_MS);
+                }
+                // 밑동: 지금 수관이 붙어 있거나, 30초 안에 같은 기둥 위쪽 원목에서 수관을 확인했으면 심음
+                if (sapling.ground().isTagged(ground) && (canopy || canopyColumns.containsKey(column))) {
+                    canopyColumns.remove(column);
+                    later(1, () -> replantSapling(player, block, sapling.item(), ground));
+                }
             }
             if (skills.active(player, Skill.LUMBERJACK_LEAVES)) {
                 // 나뭇잎 거리(distance) 갱신은 여러 틱에 걸쳐 퍼지므로 두 번 확인
@@ -180,8 +232,18 @@ public final class SkillListener implements Listener {
                 && skills.active(player, Skill.FARMER_REPLANT)) {
             Ageable young = (Ageable) crop.clone();
             young.setAge(0);
-            later(1, () -> replantCrop(player, block, young, seed));
+            Location at = block.getLocation();
+            PendingCrop pending = new PendingCrop(seed);
+            pendingCrops.put(at, pending);
+            later(1, () -> {
+                pendingCrops.remove(at, pending);
+                replantCrop(player, block, young, pending);
+            });
         }
+    }
+
+    private static String column(Block block) {
+        return block.getWorld().getUID() + ":" + block.getX() + ":" + block.getZ();
     }
 
     /** 수관 확인 때 따라갈 원목 수 상한 (큰 참나무·정글나무 한 그루가 들어가는 정도) */
@@ -230,11 +292,16 @@ public final class SkillListener implements Listener {
         }
     }
 
-    private void replantCrop(Player player, Block block, BlockData young, Material seed) {
-        if (!player.isOnline() || !block.getType().isAir() || !canSupport(block, young)) {
+    private void replantCrop(Player player, Block block, BlockData young, PendingCrop pending) {
+        boolean ok = player.isOnline() && block.getType().isAir() && canSupport(block, young);
+        if (!ok) {
+            if (pending.reserved) {
+                // 드롭에서 뗀 씨앗을 못 썼으면 원래 자리에 돌려줌
+                block.getWorld().dropItemNaturally(block.getLocation().add(0.5, 0.5, 0.5), new ItemStack(pending.seed));
+            }
             return;
         }
-        if (take(player, seed)) {
+        if (pending.reserved || take(player, pending.seed)) {
             block.setBlockData(young);
         }
     }

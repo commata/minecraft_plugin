@@ -3,6 +3,7 @@ package kr.commata.economyhub.skills;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import kr.commata.common.gui.Items;
 import kr.commata.economyhub.jobs.VJobsHook;
 import kr.commata.economyhub.jobs.VJobsHook.Progress;
 import org.bukkit.GameMode;
@@ -27,6 +28,8 @@ public final class Skills {
     private volatile SkillSettings settings;
     private final Map<UUID, Cached> cache = new HashMap<>();
     private final Map<Skill, NamespacedKey> keys = new HashMap<>();
+    /** 해금 안내를 이미 보낸 스킬 (한 번만 안내, 탈퇴 후 재가입해도 다시 보내지 않음) */
+    private final Map<Skill, NamespacedKey> notifiedKeys = new HashMap<>();
 
     public Skills(Plugin plugin, VJobsHook vjobs, SkillSettings settings) {
         this.plugin = plugin;
@@ -34,6 +37,7 @@ public final class Skills {
         this.settings = settings;
         for (Skill skill : Skill.values()) {
             keys.put(skill, new NamespacedKey(plugin, "skill_toggle." + skill.id()));
+            notifiedKeys.put(skill, new NamespacedKey(plugin, "skill_notified." + skill.id()));
         }
     }
 
@@ -92,6 +96,29 @@ public final class Skills {
 
     public void setOn(Player player, Skill skill, boolean on) {
         player.getPersistentDataContainer().set(keys.get(skill), PersistentDataType.BYTE, (byte) (on ? 1 : 0));
+    }
+
+    /**
+     * 가입·레벨업 뒤: 새로 열린 스킬을 채팅으로 한 번 안내. 기본 켜짐 스킬은 바로 동작하므로(예: 갑자기 야간 투시)
+     * 무엇이 켜졌고 어디서 끄는지 알려 줌.
+     */
+    public void announceUnlocks(Player player) {
+        Map<String, Progress> joined = jobs(player);
+        if (joined == null) {
+            return;
+        }
+        for (Skill skill : Skill.values()) {
+            NamespacedKey key = notifiedKeys.get(skill);
+            if (!joined.containsKey(skill.job()) || !settings.available(skill) || !unlocked(player, skill)
+                    || player.getPersistentDataContainer().has(key, PersistentDataType.BYTE)) {
+                continue;
+            }
+            player.getPersistentDataContainer().set(key, PersistentDataType.BYTE, (byte) 1);
+            boolean on = isOn(player, skill);
+            player.sendMessage(Items.text("<#55FF55>새 편의 스킬: <white>" + skill.displayName()
+                    + (on ? " <#55FF55>(켜짐)" : " <#AAAAAA>(꺼짐)") + " <#AAAAAA>· " + skill.description()));
+            player.sendMessage(Items.text("<#AAAAAA>  /직업 → 스킬 설정에서 켜고 끌 수 있습니다."));
+        }
     }
 
     /** 가입·탈퇴·레벨업 직후: 지금과 다음 틱(VJobs 가 이벤트 뒤에 데이터를 바꿈) 모두 캐시를 버림 */

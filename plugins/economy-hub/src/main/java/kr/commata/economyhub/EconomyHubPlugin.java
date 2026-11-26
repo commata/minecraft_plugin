@@ -113,6 +113,14 @@ public final class EconomyHubPlugin extends JavaPlugin {
                     skills.invalidate(player.getUniqueId());
                     // 탈퇴 직후 동굴 시야도 바로 끔 (VJobs 가 이벤트 뒤에 직업을 지우므로 다음 틱)
                     getServer().getScheduler().runTask(this, () -> caveVision.update(player));
+                    if (!event.equals(VJobsHook.LEAVE_EVENT)) {
+                        // VJobs 가 이벤트 뒤에 레벨·직업을 바꾸므로 캐시가 비워진 다음(2틱 뒤) 확인
+                        getServer().getScheduler().runTaskLater(this, () -> {
+                            if (player.isOnline()) {
+                                skills.announceUnlocks(player);
+                            }
+                        }, 2L);
+                    }
                 }
             });
             if (error != null) {
