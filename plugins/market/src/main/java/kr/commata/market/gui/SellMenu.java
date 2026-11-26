@@ -23,12 +23,13 @@ import org.bukkit.inventory.ItemStack;
  * /판매 9×6 GUI (ECONOMY.md 7.4.5, 14.3, 14.4).
  *
  * <p>1줄 직업 탭(2~6), 2–4줄 품목 21칸(10–16, 19–25, 28–34), 5줄 일일 한도 게이지 7칸(37–43),
- * 6줄 내 잔액(45)·일일 초기화 안내(49)·닫기(53).
+ * 6줄 메인 허브(45, EconomyHub 가 켜져 있을 때)·내 잔액(46)·일일 초기화 안내(49)·닫기(53).
  */
 final class SellMenu extends Menu {
 
     private static final int GAUGE_START = 37;
-    private static final int SLOT_BALANCE = 45;
+    private static final int SLOT_HUB = 45;
+    private static final int SLOT_BALANCE = 46;
     private static final int SLOT_RESET = 49;
     private static final int SLOT_CLOSE = 53;
 
@@ -240,6 +241,9 @@ final class SellMenu extends Menu {
         }
 
         // 6줄: 내 잔액, 일일 초기화 안내, 닫기
+        if (menus.hubAvailable()) {
+            set(SLOT_HUB, menus.hubButton(), (player, click) -> menus.openHub(player));
+        }
         set(SLOT_BALANCE, menus.balanceHead(viewer));
         String until = Durations.korean(MarketPeriods.untilNextMidnight(System.currentTimeMillis(), cfg.zone()));
         set(SLOT_RESET, Items.of(Material.CLOCK)

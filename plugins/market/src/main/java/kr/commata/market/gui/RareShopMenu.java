@@ -18,11 +18,12 @@ import org.bukkit.inventory.ItemStack;
  * /희귀상점 9×6 GUI (ECONOMY.md 7.4.3, 13.4).
  *
  * <p>2줄 자원 5종(11~15), 3줄 책 6권(19~21, 23~25), 4줄 책 5권(29~33),
- * 6줄 내 잔액(45)·주간 초기화 안내(49)·닫기(53).
+ * 6줄 메인 허브(45, EconomyHub 가 켜져 있을 때)·내 잔액(46)·주간 초기화 안내(49)·닫기(53).
  */
 final class RareShopMenu extends Menu {
 
-    private static final int SLOT_BALANCE = 45;
+    private static final int SLOT_HUB = 45;
+    private static final int SLOT_BALANCE = 46;
     private static final int SLOT_RESET = 49;
     private static final int SLOT_CLOSE = 53;
     private static final int BOOK_USED_UNKNOWN = -1;
@@ -102,6 +103,9 @@ final class RareShopMenu extends Menu {
             }
         }
 
+        if (menus.hubAvailable()) {
+            set(SLOT_HUB, menus.hubButton(), (player, click) -> menus.openHub(player));
+        }
         set(SLOT_BALANCE, menus.balanceHead(viewer));
         String until = Durations.korean(MarketPeriods.untilNextMonday(System.currentTimeMillis(), cfg.zone()));
         set(SLOT_RESET, Items.of(Material.CLOCK)
