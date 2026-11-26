@@ -271,4 +271,20 @@ class MarketStoreTest {
         // DB 테이블을 임의로 락 걸지 않고도 retryPendingQuarantines() 호출 확인
         assertEquals(0, s.retryPendingQuarantines());
     }
+
+    @Test
+    void memoryOnlyQuarantineStillLocksNewTransactions() throws Exception {
+        MarketStore s = openStore();
+        // 다른 연결에서 격리 표를 지워 INSERT 를 실패시킴 (격리 DB 쓰기 실패 재현)
+        try (java.sql.Connection other = java.sql.DriverManager.getConnection(
+                "jdbc:sqlite:" + marketDir().resolve("market.db"));
+             java.sql.Statement st = other.createStatement()) {
+            st.execute("DROP TABLE quarantined_players");
+        }
+        org.junit.jupiter.api.Assertions.assertThrows(java.sql.SQLException.class,
+                () -> s.quarantinePlayer(alice, "seq mismatch", null));
+        assertEquals(Set.of(alice), s.pendingDbQuarantineUuids());
+        assertTrue(s.isQuarantined(alice));
+        assertTrue(s.isPlayerLocked(alice));
+    }
 }

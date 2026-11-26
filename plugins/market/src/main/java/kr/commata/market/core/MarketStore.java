@@ -405,6 +405,10 @@ public final class MarketStore implements AutoCloseable {
     }
 
     private boolean isPlayerLockedInTx(UUID uuid) throws SQLException {
+        // DB 쓰기 실패로 메모리에만 남은 격리도 거래 진입을 막음 (AGENTS.md 2.8)
+        if (memoryQuarantine.containsKey(uuid)) {
+            return true;
+        }
         String id = uuid.toString();
         try (PreparedStatement ps = conn.prepareStatement(
                 "SELECT 1 FROM quarantined_players WHERE uuid = ? LIMIT 1")) {
