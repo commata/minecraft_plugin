@@ -41,6 +41,11 @@ public final class MarketStore implements AutoCloseable {
     public static final String ORDER_DELIVERED = "DELIVERED";
     public static final String ORDER_ABORTED = "ABORTED";
     public static final String ORDER_REFUNDED = "REFUNDED";
+    /**
+     * 관리자 환불 진행 중 (/market resolve refund). Bank 환불 전에 먼저 이 상태로 바꿔 지급 경로가 더는 건드리지 않게 하고,
+     * Bank 결과를 모르면 이 상태로 남겨 관리자가 같은 명령으로 다시 확인합니다 (ECONOMY.md 13.6).
+     */
+    public static final String ORDER_REFUNDING = "REFUNDING";
 
     public static final String SALE_PENDING = "PENDING";
     public static final String SALE_ITEMS_TAKEN = "ITEMS_TAKEN";
@@ -389,7 +394,7 @@ public final class MarketStore implements AutoCloseable {
 
     // ------------------------------------------------------------------ 플레이어 잠금·시퀀스·격리
 
-    /** 미완료 거래(PENDING/CHARGED 주문, PENDING/ITEMS_TAKEN 판매)나 격리 상태면 true. */
+    /** 미완료 거래(PENDING/CHARGED/REFUNDING 주문, PENDING/ITEMS_TAKEN 판매)나 격리 상태면 true. */
     public boolean isPlayerLocked(UUID uuid) throws SQLException {
         return read(() -> isPlayerLockedInTx(uuid));
     }
@@ -406,10 +411,11 @@ public final class MarketStore implements AutoCloseable {
             }
         }
         try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT 1 FROM orders WHERE uuid = ? AND status IN (?, ?) LIMIT 1")) {
+                "SELECT 1 FROM orders WHERE uuid = ? AND status IN (?, ?, ?) LIMIT 1")) {
             ps.setString(1, id);
             ps.setString(2, ORDER_PENDING);
             ps.setString(3, ORDER_CHARGED);
+            ps.setString(4, ORDER_REFUNDING);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     return true;
@@ -457,6 +463,23 @@ public final class MarketStore implements AutoCloseable {
                     return rs.next() ? rs.getLong(1) : 0L;
                 }
             }
+        });
+    }
+
+    /** 디스크에서 확인한 {@code market:seq}가 DB 값보다 크면 올립니다(복구 경로에서 DB 값이 뒤처지지 않게). */
+    public void raisePlayerSeq(UUID uuid, long seq) throws SQLException {
+        if (seq <= 0) {
+            return;
+        }
+        write(() -> {
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "INSERT INTO player_seq (uuid, seq) VALUES (?, ?)"
+                            + " ON CONFLICT (uuid) DO UPDATE SET seq = MAX(seq, excluded.seq)")) {
+                ps.setString(1, uuid.toString());
+                ps.setLong(2, seq);
+                ps.executeUpdate();
+            }
+            return null;
         });
     }
 
@@ -692,17 +715,7 @@ public final class MarketStore implements AutoCloseable {
             if (order == null || !ORDER_PENDING.equals(order.status())) {
                 return false;
             }
-            if (KIND_RARE_BUY.equals(order.kind())) {
-                int used = weeklyUsedInTx(order.uuid(), order.periodKey(), order.limitKey());
-                upsertWeeklyLimit(order.uuid(), order.periodKey(), order.limitKey(),
-                        Math.max(0, used - order.limitDelta()));
-            } else if (KIND_GACHA_PULL.equals(order.kind())) {
-                int used = dailyPullsUsedInTx(order.uuid(), order.periodKey());
-                upsertDailyPulls(order.uuid(), order.periodKey(), Math.max(0, used - order.limitDelta()));
-                if (order.pityBefore() != null) {
-                    upsertPity(order.uuid(), order.pityBefore());
-                }
-            }
+            releaseReservationInTx(order);
             try (PreparedStatement ps = conn.prepareStatement(
                     "UPDATE orders SET status = ?, reason = ? WHERE tx_id = ? AND status = ?")) {
                 ps.setString(1, ORDER_ABORTED);
@@ -808,18 +821,89 @@ public final class MarketStore implements AutoCloseable {
         });
     }
 
-    /** 관리자 수동 환불 완료 처리 ({@code CHARGED → REFUNDED}). */
-    public boolean markOrderRefunded(String txId, String reason) throws SQLException {
+    /**
+     * 예약한 주간 한도·하루 뽑기 횟수를 돌려주고 천장을 주문 전 값으로 되돌립니다 (취소·환불 공통).
+     * 천장은 지금 값이 이 주문이 만든 값({@code pity_after})일 때만 되돌립니다. 주문이 끝나기 전에는 플레이어가 잠겨
+     * 있어 보통 같지만, 다르면 그 뒤 기록을 덮지 않도록 그대로 둡니다.
+     */
+    private void releaseReservationInTx(OrderRecord order) throws SQLException {
+        if (KIND_RARE_BUY.equals(order.kind())) {
+            int used = weeklyUsedInTx(order.uuid(), order.periodKey(), order.limitKey());
+            upsertWeeklyLimit(order.uuid(), order.periodKey(), order.limitKey(),
+                    Math.max(0, used - order.limitDelta()));
+        } else if (KIND_GACHA_PULL.equals(order.kind())) {
+            int used = dailyPullsUsedInTx(order.uuid(), order.periodKey());
+            upsertDailyPulls(order.uuid(), order.periodKey(), Math.max(0, used - order.limitDelta()));
+            if (order.pityBefore() != null
+                    && (order.pityAfter() == null || pityInTx(order.uuid()) == order.pityAfter())) {
+                upsertPity(order.uuid(), order.pityBefore());
+            }
+        }
+    }
+
+    /** 관리자 환불 1단계: {@code CHARGED → REFUNDING}. 이후 지급·복구 경로는 이 주문을 건드리지 않습니다. */
+    public boolean beginRefund(String txId, String reason) throws SQLException {
         return write(() -> {
             try (PreparedStatement ps = conn.prepareStatement(
-                    "UPDATE orders SET status = ?, reason = ? WHERE tx_id = ? AND status IN (?, ?)")) {
-                ps.setString(1, ORDER_REFUNDED);
+                    "UPDATE orders SET status = ?, reason = ? WHERE tx_id = ? AND status = ?")) {
+                ps.setString(1, ORDER_REFUNDING);
                 setNullable(ps, 2, reason);
                 ps.setString(3, txId);
                 ps.setString(4, ORDER_CHARGED);
-                ps.setString(5, ORDER_PENDING);
                 return ps.executeUpdate() == 1;
             }
+        });
+    }
+
+    /** 관리자 환불 완료: {@code REFUNDING → REFUNDED} + 한도·천장 반환을 한 트랜잭션으로 (ECONOMY.md 13.6). */
+    public boolean finishRefund(String txId, String reason) throws SQLException {
+        return write(() -> {
+            OrderRecord order = findOrderInTx(txId);
+            if (order == null || !ORDER_REFUNDING.equals(order.status())) {
+                return false;
+            }
+            releaseReservationInTx(order);
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "UPDATE orders SET status = ?, reason = ? WHERE tx_id = ? AND status = ?")) {
+                ps.setString(1, ORDER_REFUNDED);
+                setNullable(ps, 2, reason);
+                ps.setString(3, txId);
+                ps.setString(4, ORDER_REFUNDING);
+                return ps.executeUpdate() == 1;
+            }
+        });
+    }
+
+    /** Bank 가 환불을 확실히 거부했을 때: {@code REFUNDING → CHARGED} (다시 지급 대기). */
+    public boolean cancelRefund(String txId, String reason) throws SQLException {
+        return write(() -> {
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "UPDATE orders SET status = ?, reason = ? WHERE tx_id = ? AND status = ?")) {
+                ps.setString(1, ORDER_CHARGED);
+                setNullable(ps, 2, reason);
+                ps.setString(3, txId);
+                ps.setString(4, ORDER_REFUNDING);
+                return ps.executeUpdate() == 1;
+            }
+        });
+    }
+
+    /** {@code /market pending}용: 미완료 주문 + 환불 진행 중 주문. */
+    public List<OrderRecord> unresolvedOrders() throws SQLException {
+        return read(() -> {
+            List<OrderRecord> out = new ArrayList<>();
+            try (PreparedStatement ps = conn.prepareStatement(
+                    ORDER_SELECT + " WHERE status IN (?, ?, ?) ORDER BY time_ms ASC")) {
+                ps.setString(1, ORDER_PENDING);
+                ps.setString(2, ORDER_CHARGED);
+                ps.setString(3, ORDER_REFUNDING);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        out.add(orderRow(rs));
+                    }
+                }
+            }
+            return out;
         });
     }
 

@@ -10,6 +10,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
+import kr.commata.common.gui.Menu;
 import kr.commata.market.MarketConfig;
 import kr.commata.market.Msg;
 import kr.commata.market.bridge.BankBridge;
@@ -42,6 +43,8 @@ public final class MarketService {
 
     /** 연속 읽기/조회 실패가 이 횟수에 도달하면 콘솔 경고를 남김 (ECONOMY.md 13.6). */
     public static final int ALERT_THRESHOLD = 10;
+    /** 접속 뒤 VJobs 로딩을 기다리는 탈퇴 이관 보정 재시도 횟수 (1초 간격). */
+    private static final int JOIN_RECONCILE_TRIES = 30;
 
     private final Plugin plugin;
     private final MarketStore store;
@@ -386,6 +389,11 @@ public final class MarketService {
                 Msg.error(player, "판매 가능량 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.");
                 return false;
             }
+            // VJobs 가 켜져 있는데 직업 정보를 아직 못 읽었으면 판매하지 않음 (보너스가 빠진 기본가로 팔리는 것 방지)
+            if (jobsLoading(uuid)) {
+                Msg.warn(player, "직업 정보를 불러오는 중입니다. 잠시 후 다시 시도해 주세요.");
+                return false;
+            }
             // 판매 직전 탈퇴 이관 보정 (ECONOMY.md 14.2)
             reconcileJobQuotas(player);
 
@@ -672,12 +680,29 @@ public final class MarketService {
         } catch (SQLException e) {
             logger.severe("접속 복구 중 DB 오류 (" + player.getName() + "): " + e.getMessage());
         }
-        // VJobs 가 접속 직후 비동기로 데이터를 읽을 수 있어 다음 틱에 탈퇴 이관 보정
+        // VJobs 가 접속 직후 비동기로 데이터를 읽으므로, 직업 정보가 보일 때까지 1초 간격으로 최대 30번 탈퇴 이관 보정
+        scheduleJobReconcile(player, JOIN_RECONCILE_TRIES);
+    }
+
+    private void scheduleJobReconcile(Player player, int triesLeft) {
         plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
-            if (player.isOnline()) {
-                reconcileJobQuotas(player);
+            if (!player.isOnline() || dbLocked()) {
+                return;
+            }
+            if (reconcileJobQuotas(player)) {
+                refreshOpenMenu(player);
+            } else if (triesLeft > 1 && vjobs.available()) {
+                scheduleJobReconcile(player, triesLeft - 1);
+            } else if (vjobs.available()) {
+                logger.warning("접속 후 30초 동안 VJobs 직업 정보를 읽지 못해 탈퇴 이관 보정을 미룹니다 ("
+                        + player.getName() + "). /판매를 열거나 판매할 때 다시 보정합니다.");
             }
         }, 20L);
+    }
+
+    /** VJobs 는 켜져 있는데 이 플레이어의 직업 정보를 아직 못 읽었으면 true (로딩 중 판매 차단, ECONOMY.md 14.2). */
+    public boolean jobsLoading(UUID uuid) {
+        return vjobs.available() && vjobs.joinedJobIds(uuid) == null;
     }
 
     /** 로그아웃 시 실행 중 보류 플래그는 해제(Paper 가 퇴장 저장하므로 다음 접속/재기동 때 디스크 기준으로 판정). */
@@ -714,6 +739,7 @@ public final class MarketService {
                         if (deliverOrderInTick(online, order)) {
                             Msg.success(online, "보류 중이던 구매품(" + OrderPayload.summary(order.kind(), order.payload())
                                     + ")을 지급했습니다.");
+                            refreshOpenMenu(online);
                         }
                     }
                     continue;
@@ -747,6 +773,7 @@ public final class MarketService {
                 case NOT_FOUND -> {
                     store.abortOrder(order.txId(), "Bank 출금 미존재 확인(복구)");
                     logger.info("미완료 주문 취소(출금 없음): " + order.txId());
+                    refreshOpenMenu(online);
                 }
                 case ERROR -> {
                     int count = store.incrementOrderUnreadable(order.txId(), "Bank findByExtRef 조회 오류");
@@ -764,14 +791,17 @@ public final class MarketService {
         PlayerDatReader.MarkerCheck check = PlayerDatReader.checkAnyAttempt(worldRoot, order.uuid(), order.txId());
         switch (check.status()) {
             case FOUND -> {
+                store.raisePlayerSeq(order.uuid(), check.seq());
                 store.markOrderDelivered(order.txId());
                 logger.info("주문 디스크 확인 완료(DELIVERED): " + order.txId());
+                refreshOpenMenu(online);
             }
             case ABSENT -> {
                 if (online != null && online.isOnline()) {
                     if (deliverOrderInTick(online, order)) {
                         Msg.success(online, "이전 미수령 구매품(" + OrderPayload.summary(order.kind(), order.payload())
                                 + ")을 자동으로 지급했습니다.");
+                        refreshOpenMenu(online);
                     }
                 }
             }
@@ -793,7 +823,7 @@ public final class MarketService {
         online.saveData();
         PlayerDatReader.MarkerCheck check = PlayerDatReader.checkExact(worldRoot, sale.uuid(), sale.txId(), sale.attempt());
         if (check.status() == PlayerDatReader.MarkerStatus.FOUND) {
-            store.savePlayerSeq(sale.uuid(), check.seq());
+            store.raisePlayerSeq(sale.uuid(), check.seq());
             store.markSaleItemsTaken(sale.txId());
             inProcessPendingSales.remove(sale.txId());
             depositForTakenSale(sale, online);
@@ -815,12 +845,14 @@ public final class MarketService {
             PlayerDatReader.MarkerCheck check = PlayerDatReader.checkAnyAttempt(worldRoot, sale.uuid(), sale.txId());
             switch (check.status()) {
                 case FOUND -> {
+                    store.raisePlayerSeq(sale.uuid(), check.seq());
                     store.markSaleItemsTaken(sale.txId());
                     depositForTakenSale(sale, online);
                 }
                 case ABSENT -> {
                     store.abortSale(sale.txId(), "디스크에 제거 표시 없음(아이템 보존 확인)");
                     logger.info("미완료 판매 취소(디스크 아이템 보존): " + sale.txId());
+                    refreshOpenMenu(online);
                 }
                 case UNREADABLE -> {
                     int count = store.incrementSaleUnreadable(sale.txId(), check.reason());
@@ -840,6 +872,7 @@ public final class MarketService {
             logger.info("보류 판매 입금 완료: " + sale.txId() + " +" + sale.total());
             if (online != null && online.isOnline()) {
                 Msg.success(online, "보류 중이던 판매 대금 " + MarketPeriods.won(sale.total()) + "이 입금되었습니다.");
+                refreshOpenMenu(online);
             }
         }
     }
@@ -849,24 +882,28 @@ public final class MarketService {
     /**
      * 현재 보유하지 않은 직업 카테고리에 {@code job_amount > 0}이 남아 있으면 {@code base_amount}로 이관합니다.
      * VJobs 가 아직 로딩 중({@code null})이면 건드리지 않습니다.
+     *
+     * @return 직업 정보를 읽어 보정을 마쳤으면(옮길 것이 없었던 경우 포함) true, VJobs 로딩 중·저장 실패면 false
      */
-    public void reconcileJobQuotas(Player player) {
+    public boolean reconcileJobQuotas(Player player) {
         if (dbLocked()) {
-            return;
+            return false;
         }
         flushQuota(player.getUniqueId());
         Set<String> joined = vjobs.joinedJobIds(player.getUniqueId());
         if (joined == null) {
-            return;
+            return false;
         }
         List<String> notJoinedItems = config.sell().itemIdsNotInJobs(joined);
         if (notJoinedItems.isEmpty()) {
-            return;
+            return true;
         }
         try {
             store.demoteJobQuota(player.getUniqueId(), notJoinedItems);
+            return true;
         } catch (SQLException e) {
             logger.warning("탈퇴 이관 보정 실패 (" + player.getName() + "): " + e.getMessage());
+            return false;
         }
     }
 
@@ -889,7 +926,19 @@ public final class MarketService {
 
     // ------------------------------------------------------------------ 관리자 수동 해결 (/market resolve)
 
-    /** {@code /market resolve <tx_id> refund}: Bank 의 1회 환불 제약(ref UNIQUE)으로 환불 후 REFUNDED 처리. */
+    /**
+     * {@code /market resolve <tx_id> refund}: 미수령 주문의 관리자 환불. Market 출금의 유일한 환불 경로입니다
+     * ({@code /bank refund}는 Market 출금을 거부, ECONOMY.md 2.4, 13.6).
+     *
+     * <ol>
+     *   <li>플레이어 파일을 다시 확인합니다. 상품 표시가 있으면({@code FOUND}) 이미 받은 것이므로 {@code DELIVERED}로 바꾸고
+     *       환불하지 않습니다. 읽지 못하면({@code UNREADABLE}) 환불하지 않습니다. 표시가 없을 때({@code ABSENT})만 진행합니다.
+     *       접속 중이면 먼저 {@code saveData()}로 지금 메모리 상태를 디스크에 쓴 뒤 읽습니다.</li>
+     *   <li>{@code CHARGED → REFUNDING}을 먼저 커밋해 지급·복구 경로가 이 주문을 더는 건드리지 않게 합니다.</li>
+     *   <li>Bank {@code refundByExtRef}(거래당 1회). 성공·이미 환불이면 {@code REFUNDED} + 주간 한도·하루 뽑기 횟수·천장 반환.
+     *       확실한 거부면 {@code CHARGED}로 되돌리고, 결과를 모르면 {@code REFUNDING}으로 둬서 같은 명령으로 다시 확인합니다.</li>
+     * </ol>
+     */
     public String resolveRefund(String txId, String adminName) {
         if (dbLocked()) {
             return "Market 이 잠금 모드입니다.";
@@ -900,22 +949,89 @@ public final class MarketService {
                 return "해당 거래 ID를 찾을 수 없습니다: " + txId;
             }
             MarketStore.OrderRecord order = found.get();
-            if (!MarketStore.ORDER_CHARGED.equals(order.status()) && !MarketStore.ORDER_PENDING.equals(order.status())) {
+            UUID uuid = order.uuid();
+            if (MarketStore.ORDER_PENDING.equals(order.status())) {
+                return "아직 Bank 출금 확인 전(PENDING)입니다. 기동 복구·1분 타이머가 출금을 확인해 CHARGED 로 바꾼 뒤 다시 실행해 주세요.";
+            }
+            if (MarketStore.ORDER_CHARGED.equals(order.status())) {
+                if (inFlight.contains(uuid)) {
+                    return "이 플레이어의 거래를 처리 중입니다. 잠시 후 다시 실행해 주세요.";
+                }
+                String blocked = refundDiskCheck(order);
+                if (blocked != null) {
+                    return blocked;
+                }
+                if (!store.beginRefund(txId, "관리자 환불 진행 (" + adminName + ")")) {
+                    return "주문 상태가 바뀌어 환불을 시작하지 못했습니다. /market pending 으로 다시 확인해 주세요.";
+                }
+                inProcessChargedOrders.remove(txId);
+            } else if (!MarketStore.ORDER_REFUNDING.equals(order.status())) {
                 return "환불 가능한 상태가 아닙니다 (현재 상태: " + order.status() + ").";
             }
+
             BankBridge.RefundResult res = bank.refundByExtRef(txId, "admin=" + adminName + " market_resolve");
-            if (!res.ok()) {
-                return "Bank 환불 거부: " + res.message();
+            switch (res.status()) {
+                case OK, ALREADY_REFUNDED -> {
+                    String note = res.status() == BankBridge.RefundStatus.OK
+                            ? "Bank 환불 #" + res.refundTxId() : "Bank 에 이미 환불 기록 있음";
+                    store.finishRefund(txId, "관리자 환불 (" + adminName + ", " + note + ")");
+                    Player online = plugin.getServer().getPlayer(uuid);
+                    if (online != null && online.isOnline()) {
+                        Msg.success(online, "보류된 마켓 주문이 환불되었습니다: +" + MarketPeriods.won(order.price()));
+                        refreshOpenMenu(online);
+                    }
+                    return "환불 완료: " + MarketPeriods.won(order.price()) + " (" + note + ", 한도·천장 반환)";
+                }
+                case REJECTED -> {
+                    store.cancelRefund(txId, "Bank 환불 거부: " + res.message());
+                    return "Bank 환불 거부: " + res.message() + " (주문은 다시 지급 대기 CHARGED)";
+                }
+                default -> {
+                    return "Bank 환불 결과를 확인하지 못했습니다: " + res.message()
+                            + ". 주문은 REFUNDING 으로 잠가 두었으니 같은 명령을 다시 실행해 주세요.";
+                }
             }
-            inProcessChargedOrders.remove(txId);
-            store.markOrderRefunded(txId, "관리자 환불 (" + adminName + ", Bank 환불 #" + res.refundTxId() + ")");
-            Player online = plugin.getServer().getPlayer(order.uuid());
-            if (online != null && online.isOnline()) {
-                Msg.success(online, "보류된 마켓 주문이 환불되었습니다: +" + MarketPeriods.won(order.price()));
-            }
-            return "환불 완료: " + MarketPeriods.won(order.price()) + " (Bank 환불 #" + res.refundTxId() + ")";
         } catch (SQLException e) {
             return "DB 오류: " + e.getMessage();
+        }
+    }
+
+    /** 환불 전 플레이어 파일 확인. 환불해도 되면 null, 아니면 관리자에게 보여 줄 이유. */
+    private String refundDiskCheck(MarketStore.OrderRecord order) throws SQLException {
+        UUID uuid = order.uuid();
+        Player online = plugin.getServer().getPlayer(uuid);
+        boolean isOnline = online != null && online.isOnline();
+        if (isOnline) {
+            // 메모리 상태(같은 틱에 회수했으면 상품·표시 없음)를 먼저 디스크에 씀
+            online.saveData();
+        }
+        PlayerDatReader.MarkerCheck check = PlayerDatReader.checkAnyAttempt(worldRoot, uuid, order.txId());
+        switch (check.status()) {
+            case FOUND -> {
+                if (isOnline && inProcessChargedOrders.contains(order.txId())) {
+                    // 이번 기동에서 회수한 주문인데 디스크에 표시가 남음 = 방금 저장이 실패. 판단 보류
+                    return "방금 플레이어 저장을 확인하지 못했습니다(디스크에 이전 시도 표시가 남아 있음). 잠시 후 다시 실행해 주세요.";
+                }
+                store.raisePlayerSeq(uuid, check.seq());
+                store.markOrderDelivered(order.txId());
+                return "플레이어 파일에 이미 지급 표시가 있어 DELIVERED 로 처리했습니다. 환불하지 않습니다.";
+            }
+            case UNREADABLE -> {
+                return "플레이어 파일을 읽지 못해 환불하지 않습니다 (" + check.reason() + ").";
+            }
+            default -> {
+                return null;
+            }
+        }
+    }
+
+    /** 플레이어가 Market 메뉴를 열어 두었으면 제자리 갱신 (보류 해제·환불 뒤 회색 버튼이 남지 않게). */
+    private void refreshOpenMenu(Player player) {
+        if (player == null || !player.isOnline()) {
+            return;
+        }
+        if (player.getOpenInventory().getTopInventory().getHolder() instanceof Menu menu) {
+            menu.render(player);
         }
     }
 

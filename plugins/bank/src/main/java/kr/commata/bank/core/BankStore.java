@@ -727,7 +727,12 @@ public final class BankStore implements AutoCloseable {
             if (orig.type() != TxType.WITHDRAW || orig.from() == null) {
                 throw new Rejected(Failure.NOT_WITHDRAW, 0, orig.type().label());
             }
-            if (!Sources.SHOP.equals(orig.source()) && !Sources.MARKET.equals(orig.source())) {
+            if (Sources.MARKET.equals(orig.source())) {
+                // Market 출금은 market.db 주문 상태와 한 쌍으로 움직여야 하므로 /market resolve 로만 환불 (ECONOMY.md 2.4, 13.6).
+                // 여기서 돈만 돌려주면 market.db 는 CHARGED 로 남아 접속·1분 복구·/market claim 이 상품까지 지급함
+                throw new Rejected(Failure.MARKET_ORDER, 0, "/market resolve <Market 거래 ID> refund");
+            }
+            if (!Sources.SHOP.equals(orig.source())) {
                 throw new Rejected(Failure.NOT_SHOP, 0, "source=" + orig.source());
             }
             if (!BootStatus.UNCLEAN.equals(orig.bootStatus())) {
@@ -853,8 +858,8 @@ public final class BankStore implements AutoCloseable {
     }
 
     /**
-     * Market 관리자 수동 환불(/market resolve &lt;tx_id&gt; refund, ECONOMY.md 13.6).
-     * {@code transactions.ref} 유일 제약을 함께 써서 /bank refund 와 합쳐 최대 한 번만 환불됩니다.
+     * Market 관리자 수동 환불(/market resolve &lt;tx_id&gt; refund, ECONOMY.md 13.6). Market 출금의 유일한 환불 경로입니다
+     * ({@link #refund}는 Market 출금을 거부). {@code transactions.ref} 유일 제약으로 거래당 한 번만 환불됩니다.
      */
     public Outcome refundByExtRef(String extRef, String source, String context) {
         if (extRef == null || extRef.isBlank()) {

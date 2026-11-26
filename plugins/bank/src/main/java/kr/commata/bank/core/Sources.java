@@ -8,8 +8,9 @@ public final class Sources {
 
     public static final String BANK = "Bank";
     public static final String UNKNOWN = "unknown";
-    /** /bank refund 가 환불을 허용하는 출처 (ECONOMY.md 2.4, 13.6) */
+    /** /bank refund 가 환불을 허용하는 유일한 출처 (ECONOMY.md 2.4) */
     public static final String SHOP = "EconomyShopGUI";
+    /** Market 출금은 /market resolve 로만 환불 ({@code BankStore.refundByExtRef}, ECONOMY.md 13.6) */
     public static final String MARKET = "Market";
 
     /** 호출 스택에서 건너뛰는 플러그인: Bank 자신, 그리고 중간에서 호출을 넘겨줄 수 있는 VaultUnlocked */

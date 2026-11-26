@@ -195,4 +195,56 @@ class MarketStoreTest {
         assertEquals(new MarketStore.Quota(20, 5), reopened.quota(alice, "OAK_LOG"));
         assertEquals(new MarketStore.Quota(2, 0), reopened.quota(alice, "DIAMOND"));
     }
+
+    @Test
+    void adminRefundLocksDeliveryThenReturnsLimitsAndPity() throws Exception {
+        MarketStore s = openStore();
+        RareCatalog.Entry diamond = new RareCatalog.Entry(
+                "diamond", RareCatalog.Kind.RESOURCE, "다이아몬드", "DIAMOND", null, 0, 13, 1500, 1);
+        assertTrue(s.reserveRarePurchase("r-1", alice, diamond, OrderPayload.encodeRareResource(diamond), "2026-W48").ok());
+        assertTrue(s.markOrderCharged("r-1", 11L));
+        assertEquals(1, s.weeklyUsed(alice, "2026-W48", diamond.limitKey()));
+
+        // 환불 시작: 지급 경로(openOrders)에서 빠지고, 플레이어는 계속 잠기며, /market pending 에는 보임
+        assertTrue(s.beginRefund("r-1", "admin"));
+        assertFalse(s.beginRefund("r-1", "admin"), "REFUNDING 은 다시 시작하지 않음");
+        assertTrue(s.openOrders().isEmpty());
+        assertTrue(s.isPlayerLocked(alice));
+        assertEquals(1, s.unresolvedOrders().size());
+        assertFalse(s.markOrderDelivered("r-1"), "환불 중인 주문은 지급 완료로 바뀌지 않음");
+
+        // Bank 가 확실히 거부 → 다시 지급 대기
+        assertTrue(s.cancelRefund("r-1", "거부"));
+        assertEquals(MarketStore.ORDER_CHARGED, s.findOrder("r-1").orElseThrow().status());
+
+        // 다시 환불 → 완료 시 주간 한도 반환
+        assertTrue(s.beginRefund("r-1", "admin"));
+        assertTrue(s.finishRefund("r-1", "done"));
+        assertFalse(s.finishRefund("r-1", "done"), "두 번 반환하지 않음");
+        assertEquals(MarketStore.ORDER_REFUNDED, s.findOrder("r-1").orElseThrow().status());
+        assertEquals(0, s.weeklyUsed(alice, "2026-W48", diamond.limitKey()));
+        assertFalse(s.isPlayerLocked(alice));
+
+        // 뽑기 환불: 하루 횟수·천장 반환 (재기동 후에도 REFUNDING 유지)
+        assertTrue(s.reserveGachaPull("g-1", alice, 10, 20, 20_000, 0, 10, "payload", "2026-11-26").ok());
+        assertTrue(s.markOrderCharged("g-1", 12L));
+        assertTrue(s.beginRefund("g-1", "admin"));
+        s.close();
+        MarketStore reopened = openStore();
+        assertEquals(MarketStore.ORDER_REFUNDING, reopened.findOrder("g-1").orElseThrow().status());
+        assertTrue(reopened.isPlayerLocked(alice));
+        assertTrue(reopened.finishRefund("g-1", "done"));
+        assertEquals(0, reopened.dailyPullsUsed(alice, "2026-11-26"));
+        assertEquals(0, reopened.pity(alice));
+    }
+
+    @Test
+    void raisePlayerSeqNeverLowers() throws Exception {
+        MarketStore s = openStore();
+        s.raisePlayerSeq(alice, 5);
+        s.raisePlayerSeq(alice, 3);
+        assertEquals(5, s.playerSeq(alice));
+        s.raisePlayerSeq(alice, 7);
+        assertEquals(7, s.playerSeq(alice));
+    }
 }

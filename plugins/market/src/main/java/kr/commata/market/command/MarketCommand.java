@@ -193,7 +193,7 @@ public final class MarketCommand implements BasicCommand {
             return;
         }
         try {
-            List<MarketStore.OrderRecord> orders = market.store().openOrders();
+            List<MarketStore.OrderRecord> orders = market.store().unresolvedOrders();
             List<MarketStore.SellOrderRecord> sales = market.store().openSales();
             List<MarketStore.QuarantineRecord> quarantined = market.store().allQuarantined();
             Map<UUID, String> preUnreadable = guard.unreadablePlayers();

@@ -63,7 +63,7 @@ AI 에이전트와 사람 모두 따르는 개발 규칙(구조·도메인 분�
 | `/baltop [쪽]` | 모두 | 잔액 순위 10명씩 (1분마다 갱신) |
 | `/bank give·take·set <닉네임> <금액>` | `bank.admin` (기본 OP) | 관리자 잔액 변경 (기록에 실행자 남음) |
 | `/bank log <닉네임> [쪽]` | `bank.admin` | 거래 기록 (마우스를 올리면 기동 ID·위치·창 제목) |
-| `/bank refund <거래번호>` | `bank.admin` | 비정상 종료된 기동의 EconomyShopGUI·Market 출금만 1회 환불 ([ECONOMY.md 2.4](docs/ECONOMY.md)) |
+| `/bank refund <거래번호>` | `bank.admin` | 비정상 종료된 기동의 EconomyShopGUI 출금만 1회 환불. Market 출금은 `/market resolve <거래 ID> refund` ([ECONOMY.md 2.4](docs/ECONOMY.md)) |
 | `/bank reload` | `bank.admin` | `plugins/Bank/config.yml` 다시 불러오기 |
 | `/희귀상점` (`/market`, `/rareshop`) | 모두 | 희귀 상점 GUI 열기 (자원·고정가 인첸트 책 주간 한도, [ECONOMY.md 13.4](docs/ECONOMY.md)) |
 | `/뽑기` (`/gacha`) `[확률]` | 모두 | 인첸트 책 뽑기 GUI (1회 2,000원·하루 20회·천장 80회) / `확률`: 확률표 ([ECONOMY.md 13.5](docs/ECONOMY.md)) |

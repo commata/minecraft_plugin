@@ -53,7 +53,7 @@ class BankStoreTest {
     }
 
     @Test
-    void marketWithdrawalAllowsRefundOnceAcrossBankAndMarketResolve() throws Exception {
+    void marketWithdrawalRefundsOnlyThroughMarketResolveOnce() throws Exception {
         BankStore store = install();
         store.deposit(alice, "Alice", 5000, TxType.DEPOSIT, "VJobs", null);
         var w1 = store.external(alice, 1500, Sources.MARKET, "m-order-1", TxType.WITHDRAW, "희귀상점 DIAMOND");
@@ -63,15 +63,17 @@ class BankStoreTest {
         store.close(); // 비정상 종료
 
         BankStore reopened = reboot("boot-2");
-        // /bank refund 로 Market 출금 환불 가능, 이후 /market resolve 환불은 중복 거부
-        Outcome byBank = reopened.refund(w1.txId(), Sources.BANK, "admin=op");
-        assertTrue(byBank.ok(), byBank::message);
-        assertEquals(Failure.ALREADY_REFUNDED, reopened.refundByExtRef("m-order-1", Sources.MARKET, "admin=op").failure());
+        // /bank refund 는 Market 출금을 거부 (market.db 주문 상태와 어긋나 상품까지 지급되는 것 방지)
+        assertEquals(Failure.MARKET_ORDER, reopened.refund(w1.txId(), Sources.BANK, "admin=op").failure());
+        assertEquals(1500L, reopened.balance(alice).orElseThrow());
 
-        // /market resolve 환불 후 /bank refund 는 중복 거부
-        Outcome byMarket = reopened.refundByExtRef("m-order-2", Sources.MARKET, "admin=op");
-        assertTrue(byMarket.ok(), byMarket::message);
-        assertEquals(Failure.ALREADY_REFUNDED, reopened.refund(w2.txId(), Sources.BANK, "admin=op").failure());
+        // /market resolve 경로(refundByExtRef)는 한 번만
+        Outcome byMarket1 = reopened.refundByExtRef("m-order-1", Sources.MARKET, "admin=op");
+        assertTrue(byMarket1.ok(), byMarket1::message);
+        assertEquals(Failure.ALREADY_REFUNDED, reopened.refundByExtRef("m-order-1", Sources.MARKET, "admin=op").failure());
+        Outcome byMarket2 = reopened.refundByExtRef("m-order-2", Sources.MARKET, "admin=op");
+        assertTrue(byMarket2.ok(), byMarket2::message);
+        assertEquals(Failure.MARKET_ORDER, reopened.refund(w2.txId(), Sources.BANK, "admin=op").failure());
         assertEquals(5000L, reopened.balance(alice).orElseThrow());
 
         // 외부 입금은 계좌가 아직 없어도 생성 후 입금

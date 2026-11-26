@@ -4,6 +4,7 @@ import java.util.UUID;
 import java.util.logging.Logger;
 import kr.commata.bank.BankPlugin;
 import kr.commata.bank.core.BankStore;
+import kr.commata.bank.core.Failure;
 import kr.commata.bank.core.Outcome;
 import kr.commata.market.core.MarketPeriods;
 import net.milkbowl.vault.economy.Economy;
@@ -31,7 +32,16 @@ public final class BankBridge {
     public record LookupResult(LookupStatus status, long bankTxId) {
     }
 
-    public record RefundResult(boolean ok, long refundTxId, long balance, String message) {
+    /**
+     * 환불 결과. {@code REJECTED}는 Bank 가 반영하지 않았음이 확실한 거부, {@code UNKNOWN}은 저장 오류·예외로
+     * 반영 여부를 모르는 상태(자동으로 되돌리지 않음, AGENTS.md 5.3).
+     */
+    public enum RefundStatus { OK, ALREADY_REFUNDED, REJECTED, UNKNOWN }
+
+    public record RefundResult(RefundStatus status, long refundTxId, long balance, String message) {
+        public boolean ok() {
+            return status == RefundStatus.OK;
+        }
     }
 
     private final Server server;
@@ -130,13 +140,13 @@ public final class BankBridge {
     public RefundResult refundByExtRef(String extRef, String context) {
         Plugin raw = server.getPluginManager().getPlugin("Bank");
         if (raw == null || !raw.isEnabled()) {
-            return new RefundResult(false, 0L, 0L, "Bank 플러그인이 꺼져 있습니다.");
+            return new RefundResult(RefundStatus.REJECTED, 0L, 0L, "Bank 플러그인이 꺼져 있습니다.");
         }
         try {
             return Direct.refundByExtRef(raw, extRef, context);
         } catch (Throwable e) {
             logger.warning("Bank refundByExtRef 예외 (extRef=" + extRef + "): " + e);
-            return new RefundResult(false, 0L, 0L, "환불 처리 중 오류: " + e.getMessage());
+            return new RefundResult(RefundStatus.UNKNOWN, 0L, 0L, "환불 처리 중 오류: " + e.getMessage());
         }
     }
 
@@ -177,10 +187,20 @@ public final class BankBridge {
 
         static RefundResult refundByExtRef(Plugin raw, String extRef, String context) {
             if (!(raw instanceof BankPlugin bank)) {
-                return new RefundResult(false, 0L, 0L, "Bank 플러그인 타입 불일치");
+                return new RefundResult(RefundStatus.REJECTED, 0L, 0L, "Bank 플러그인 타입 불일치");
             }
             Outcome o = bank.refundByExtRef(extRef, SOURCE, context);
-            return new RefundResult(o.ok(), o.txId(), o.balance(), o.message());
+            RefundStatus status;
+            if (o.ok()) {
+                status = RefundStatus.OK;
+            } else if (o.failure() == Failure.ALREADY_REFUNDED) {
+                status = RefundStatus.ALREADY_REFUNDED;
+            } else if (o.failure() == Failure.STORAGE_ERROR) {
+                status = RefundStatus.UNKNOWN;
+            } else {
+                status = RefundStatus.REJECTED;
+            }
+            return new RefundResult(status, o.txId(), o.balance(), o.message());
         }
 
         private static TxResult mapReceipt(BankStore.Receipt r) {
