@@ -7,8 +7,10 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
 import java.util.logging.Logger;
 import kr.commata.market.bridge.UntrustedBlockReader;
+import kr.commata.market.core.BlockTrustState;
 import kr.commata.market.core.BreakLedger;
 import kr.commata.market.core.DropFilter;
 import kr.commata.market.core.QuotaBuffer;
@@ -70,14 +72,20 @@ public final class QuotaTracker implements Listener {
     private record BreakContext(
             UUID playerUid,
             Material blockType,
-            boolean untrusted,
+            BlockTrustState trustState,
             boolean silkTouch,
             boolean matureCrop
     ) {
+        boolean untrusted() {
+            return trustState != BlockTrustState.NATURAL;
+        }
     }
 
     private final MarketService market;
     private final Logger logger;
+    private final BooleanSupplier economyHubAvailable;
+    /** EconomyHub 꺼짐 경고가 이미 출력되었는지 (연속 로그 폭주 방지). */
+    private boolean blockTrackingWarned;
     private final QuotaBuffer buffer = new QuotaBuffer();
     /** 연속 반영 실패 중인지 (첫 실패와 회복 시에만 로그 출력). */
     private boolean flushFailing;
@@ -85,8 +93,25 @@ public final class QuotaTracker implements Listener {
     private final BreakLedger<BlockKey, BreakContext> pendingBreaks = new BreakLedger<>();
 
     public QuotaTracker(MarketService market, Logger logger) {
+        this(market, logger, () -> Bukkit.getPluginManager().isPluginEnabled("EconomyHub"), false);
+    }
+
+    public QuotaTracker(MarketService market, Logger logger, BooleanSupplier economyHubAvailable) {
+        this(market, logger, economyHubAvailable, false);
+    }
+
+    public QuotaTracker(MarketService market, Logger logger, BooleanSupplier economyHubAvailable, boolean initialWarned) {
         this.market = market;
         this.logger = logger;
+        this.economyHubAvailable = economyHubAvailable != null
+                ? economyHubAvailable
+                : () -> Bukkit.getPluginManager().isPluginEnabled("EconomyHub");
+        this.blockTrackingWarned = initialWarned;
+    }
+
+    /** 블록 판매 가능량 집계가 가능한 상태인지 (EconomyHub 활성화 여부). */
+    public boolean isBlockTrackingAvailable() {
+        return economyHubAvailable.getAsBoolean();
     }
 
     // ------------------------------------------------------------------ 블록 (광부·벌목꾼·농부)
@@ -107,7 +132,18 @@ public final class QuotaTracker implements Listener {
         if (!isTrackedBlock(type)) {
             return;
         }
-        boolean untrusted = UntrustedBlockReader.isMarked(block);
+        if (!isBlockTrackingAvailable()) {
+            if (!blockTrackingWarned) {
+                blockTrackingWarned = true;
+                logger.warning("EconomyHub 가 없거나 꺼져 있어 블록(광부·벌목꾼·농부) 판매 가능량 집계를 차단합니다.");
+            }
+            return;
+        }
+        if (blockTrackingWarned) {
+            blockTrackingWarned = false;
+            logger.info("EconomyHub 가 정상 활성화되어 블록 판매 가능량 집계가 재개되었습니다.");
+        }
+        BlockTrustState trustState = UntrustedBlockReader.judge(block);
         ItemStack hand = player.getInventory().getItemInMainHand();
         boolean silkTouch = hand.containsEnchantment(Enchantment.SILK_TOUCH);
         boolean matureCrop = false;
@@ -115,7 +151,7 @@ public final class QuotaTracker implements Listener {
             matureCrop = ageable.getAge() >= ageable.getMaximumAge();
         }
         pendingBreaks.put(BlockKey.of(block), Bukkit.getCurrentTick(),
-                new BreakContext(player.getUniqueId(), type, untrusted, silkTouch, matureCrop));
+                new BreakContext(player.getUniqueId(), type, trustState, silkTouch, matureCrop));
     }
 
     /**
@@ -131,11 +167,14 @@ public final class QuotaTracker implements Listener {
 
     @EventHandler(priority = EventPriority.NORMAL, ignoreCancelled = true)
     public void onBlockDrop(BlockDropItemEvent event) {
+        if (!isBlockTrackingAvailable()) {
+            return;
+        }
         BreakContext ctx = pendingBreaks.take(BlockKey.of(event.getBlock()));
         if (ctx == null || !event.getPlayer().getUniqueId().equals(ctx.playerUid())) {
             return;
         }
-        if (ctx.untrusted()) {
+        if (ctx.trustState() != BlockTrustState.NATURAL) {
             return;
         }
         String categoryJob = resolveBlockCategory(ctx);

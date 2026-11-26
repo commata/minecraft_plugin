@@ -67,7 +67,9 @@ public final class MarketPlugin extends JavaPlugin {
         market = new MarketService(this, store, lockReason, bank, vjobs, worldRoot, config);
         MarketMenus menus = new MarketMenus(this, market);
         PlayerDataGuard dataGuard = new PlayerDataGuard(this, store, market, worldRoot);
-        quotaTracker = new QuotaTracker(market, getLogger());
+        boolean hubAvailable = getServer().getPluginManager().isPluginEnabled("EconomyHub");
+        quotaTracker = new QuotaTracker(market, getLogger(),
+                () -> getServer().getPluginManager().isPluginEnabled("EconomyHub"), !hubAvailable);
         market.setQuotaFlusher(quotaTracker::flushPlayer);
 
         getServer().getPluginManager().registerEvents(new MenuListener(), this);
@@ -81,6 +83,10 @@ public final class MarketPlugin extends JavaPlugin {
             }
         } else {
             getLogger().warning("VJobs 가 없거나 꺼져 있어 직업 보너스는 적용되지 않습니다.");
+        }
+
+        if (!hubAvailable) {
+            getLogger().warning("EconomyHub 가 없거나 꺼져 있어 블록(광부·벌목꾼·농부) 판매 가능량 집계가 차단됩니다.");
         }
 
         if (store != null) {

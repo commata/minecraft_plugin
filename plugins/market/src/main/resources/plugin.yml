@@ -5,6 +5,8 @@ api-version: '${apiVersion}'
 description: 희귀 상점(주간 한도), 인첸트 책 뽑기(확률 공개·천장), 직업별 서버 매입 (/희귀상점, /뽑기, /판매) (ECONOMY.md 13·14장)
 author: commata
 depend: [Vault]
+# EconomyHub 가 없어도 희귀 상점·인첸트 책 뽑기·사냥/낚시 매입은 독립적으로 동작해야 하므로
+# depend 로 강제하지 않고 softdepend 를 유지합니다 (부재 시 블록 판매 가능량 집계만 fail-closed 차단).
 softdepend: [Bank, VJobs, EconomyHub]
 permissions:
   market.admin:
