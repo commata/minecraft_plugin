@@ -22,6 +22,7 @@ import kr.commata.market.core.MarketStore;
 import kr.commata.market.core.OrderPayload;
 import kr.commata.market.core.PlayerDatReader;
 import kr.commata.market.core.RareCatalog;
+import kr.commata.market.core.RefundPolicy;
 import kr.commata.market.core.SellCatalog;
 import kr.commata.market.core.SellMath;
 import org.bukkit.Material;
@@ -950,6 +951,7 @@ public final class MarketService {
             }
             MarketStore.OrderRecord order = found.get();
             UUID uuid = order.uuid();
+            boolean isRetry = MarketStore.ORDER_REFUNDING.equals(order.status());
             if (MarketStore.ORDER_PENDING.equals(order.status())) {
                 return "아직 Bank 출금 확인 전(PENDING)입니다. 기동 복구·1분 타이머가 출금을 확인해 CHARGED 로 바꾼 뒤 다시 실행해 주세요.";
             }
@@ -965,13 +967,20 @@ public final class MarketService {
                     return "주문 상태가 바뀌어 환불을 시작하지 못했습니다. /market pending 으로 다시 확인해 주세요.";
                 }
                 inProcessChargedOrders.remove(txId);
-            } else if (!MarketStore.ORDER_REFUNDING.equals(order.status())) {
+            } else if (!isRetry) {
                 return "환불 가능한 상태가 아닙니다 (현재 상태: " + order.status() + ").";
             }
 
             BankBridge.RefundResult res = bank.refundByExtRef(txId, "admin=" + adminName + " market_resolve");
-            switch (res.status()) {
-                case OK, ALREADY_REFUNDED -> {
+            RefundPolicy.BankStatus bankStatus = switch (res.status()) {
+                case OK -> RefundPolicy.BankStatus.OK;
+                case ALREADY_REFUNDED -> RefundPolicy.BankStatus.ALREADY_REFUNDED;
+                case REJECTED -> RefundPolicy.BankStatus.REJECTED;
+                case UNKNOWN -> RefundPolicy.BankStatus.UNKNOWN;
+            };
+            RefundPolicy.Decision decision = RefundPolicy.decide(isRetry, bankStatus, res.message());
+            switch (decision.action()) {
+                case COMPLETE -> {
                     String note = res.status() == BankBridge.RefundStatus.OK
                             ? "Bank 환불 #" + res.refundTxId() : "Bank 에 이미 환불 기록 있음";
                     store.finishRefund(txId, "관리자 환불 (" + adminName + ", " + note + ")");
@@ -982,14 +991,14 @@ public final class MarketService {
                     }
                     return "환불 완료: " + MarketPeriods.won(order.price()) + " (" + note + ", 한도·천장 반환)";
                 }
-                case REJECTED -> {
+                case RESTORE -> {
                     store.cancelRefund(txId, "Bank 환불 거부: " + res.message());
-                    return "Bank 환불 거부: " + res.message() + " (주문은 다시 지급 대기 CHARGED)";
+                    return decision.message();
                 }
-                default -> {
-                    return "Bank 환불 결과를 확인하지 못했습니다: " + res.message()
-                            + ". 주문은 REFUNDING 으로 잠가 두었으니 같은 명령을 다시 실행해 주세요.";
+                case KEEP_REFUNDING -> {
+                    return decision.message();
                 }
+                default -> throw new IllegalStateException("알 수 없는 환불 결정: " + decision.action());
             }
         } catch (SQLException e) {
             return "DB 오류: " + e.getMessage();
