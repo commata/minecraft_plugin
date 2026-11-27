@@ -12,7 +12,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
 import kr.commata.common.playerdata.PlayerDatReader;
 import kr.commata.common.text.Messages;
@@ -22,7 +21,9 @@ import kr.commata.trade.TradeConfig;
 import kr.commata.trade.bridge.BankBridge;
 import kr.commata.trade.bridge.TravelBridge;
 import kr.commata.trade.core.ClickRules;
+import kr.commata.trade.core.DeliveryCoordinator;
 import kr.commata.trade.core.Journal;
+import kr.commata.trade.core.JournalCacheMerge;
 import kr.commata.trade.core.OfferValidation;
 import kr.commata.trade.core.RecoveryPolicy;
 import kr.commata.trade.core.SessionRegistry;
@@ -73,23 +74,13 @@ public final class TradeService {
     /** 카운트다운 틱 누적(20틱마다 1초 감소): tradeId -> ticks */
     private final Map<UUID, Integer> countdownTicks = new HashMap<>();
 
-    /** 미완료 저널 메모리 캐시: tradeId -> Entry */
-    private final Map<UUID, Journal.Entry> openJournals = new HashMap<>();
-    /** 접속 세션 세대 번호 (접속할 때마다 새 값, 퇴장 시 제거 — TRADE.md 6·13-1장) */
-    private final AtomicLong connGenSeq = new AtomicLong(0L);
-    private final Map<UUID, Long> activeConnGen = new HashMap<>();
     /** 이번 기동에서 TAKING 가져오기를 실행한 시점의 connGen: tradeId -> connGen */
     private final Map<UUID, Long> takingConnGenA = new HashMap<>();
     private final Map<UUID, Long> takingConnGenB = new HashMap<>();
-    /** 이번 기동에서 지급/반환 회수 후 UNCERTAIN 이 된 시점의 connGen: tradeId -> connGen (P1-1) */
-    private final Map<UUID, Long> giveUncertainConnGenA = new HashMap<>();
-    private final Map<UUID, Long> giveUncertainConnGenB = new HashMap<>();
-    private final Map<UUID, Long> returnUncertainConnGenA = new HashMap<>();
-    private final Map<UUID, Long> returnUncertainConnGenB = new HashMap<>();
-    /** 같은 접속에서 saveData 후 ABSENT 가 3회 연속 발생하거나 회수 실패로 Trade 가 잠긴 플레이어 */
-    private final Set<UUID> saveFailedLockedPlayers = new HashSet<>();
     /** 한 틱 안 재진입 방지 */
     private final Set<UUID> inFlight = new HashSet<>();
+    /** 저널 캐시·보호 상태 영속화 잠금·재로딩 병합·지급/반환 상태 머신 코디네이터 */
+    private final DeliveryCoordinator delivery;
 
     public TradeService(Plugin plugin, Path dataDir, Path worldRoot,
                         BankBridge bank, TravelBridge travel, TradeConfig config) {
@@ -103,6 +94,11 @@ public final class TradeService {
         this.tradeLogger = new TradeLogger(dataDir, logger);
         this.keyApplied = new NamespacedKey(plugin, TradeTokens.KEY_NAME);
         this.config = config;
+        this.delivery = new DeliveryCoordinator(
+                new StoreJournalPort(),
+                new BukkitRecipientPort(),
+                new BukkitDiskTokenReader(),
+                new BukkitFeedback());
     }
 
     public void setUiHooks(TradeUiHooks hooks) {
@@ -134,27 +130,38 @@ public final class TradeService {
     }
 
     public Collection<Journal.Entry> openJournals() {
-        return List.copyOf(openJournals.values());
+        return delivery.openJournals();
     }
 
     public Set<UUID> saveFailedLockedPlayers() {
-        return Set.copyOf(saveFailedLockedPlayers);
+        return delivery.saveFailedLockedPlayers();
+    }
+
+    public Set<UUID> unpersistedProtectiveIds() {
+        return delivery.unpersistedProtectiveIds();
+    }
+
+    /** 저널 저장소 잠금 또는 미영속 보호 상태(UNCERTAIN/봉인/잠금) 메모리 플래그 잠금 여부. */
+    public boolean isJournalOrMemoryLocked() {
+        return delivery.isJournalOrMemoryLocked();
     }
 
     /**
      * 새 거래 요청·수락·정산(돈 이동) 불가 여부 (TRADE.md 1·6·10장 5, P2-7).
      *
-     * <p>저널 잠금은 복구·지급·반환까지 전체를 막지만, Bank 불가·잠금은 새 요청·수락·정산과 금액 있는
-     * {@code TAKING} 의 Bank 확인만 막고, 이미 확정된({@code COMMITTED}·{@code RETURNING}) 아이템 지급·반환과
-     * 0원 {@code TAKING} 복구는 Bank 없이도 계속합니다.
+     * <p>저널 잠금과 미영속 보호 상태 메모리 잠금은 복구·지급·반환까지 전체를 막지만,
+     * Bank 불가·잠금은 새 요청·수락·정산과 금액 있는 {@code TAKING} 의 Bank 확인만 막고,
+     * 이미 확정된({@code COMMITTED}·{@code RETURNING}) 아이템 지급·반환과 0원 {@code TAKING} 복구는
+     * Bank 없이도 계속합니다.
      */
     public boolean isGloballyLocked() {
-        return journalStore.isLocked() || !bank.available();
+        return delivery.isJournalOrMemoryLocked() || !bank.available();
     }
 
     public String globalLockReason() {
-        if (journalStore.isLocked()) {
-            return journalStore.lockReason();
+        String journalReason = delivery.journalOrMemoryLockReason();
+        if (journalReason != null) {
+            return journalReason;
         }
         if (!bank.available()) {
             return "Bank 불가 (" + bank.statusText() + ")";
@@ -163,18 +170,13 @@ public final class TradeService {
     }
 
     public boolean hasOpenJournal(UUID playerId) {
-        for (Journal.Entry e : openJournals.values()) {
-            if (e.involves(playerId)) {
-                return true;
-            }
-        }
-        return false;
+        return delivery.hasOpenJournal(playerId);
     }
 
     public boolean isPlayerBlockedFromNewTrade(UUID playerId) {
         return isGloballyLocked()
                 || hasOpenJournal(playerId)
-                || saveFailedLockedPlayers.contains(playerId)
+                || delivery.isPlayerSaveFailedLocked(playerId)
                 || inFlight.contains(playerId);
     }
 
@@ -189,135 +191,78 @@ public final class TradeService {
         long nowMs = System.currentTimeMillis();
         // 이미 접속 중인 플레이어가 있다면(정상 기동엔 없음) connGen 부여
         for (Player p : server.getOnlinePlayers()) {
-            activeConnGen.putIfAbsent(p.getUniqueId(), connGenSeq.incrementAndGet());
+            delivery.ensureOnlineConnGen(p.getUniqueId());
         }
-        try {
-            Journal.LoadReport report = journalStore.loadAll(nowMs);
-            openJournals.clear();
-            for (Journal.Entry entry : report.entries()) {
-                openJournals.put(entry.tradeId(), entry);
-            }
-            if (!report.newlyQuarantined().isEmpty()) {
-                logger.severe("손상된 거래 저널을 격리하고 LOCKED 를 생성했습니다: " + report.newlyQuarantined());
-            }
-            if (report.locked()) {
-                logger.severe("==========================================================");
-                logger.severe("Trade 전체 잠금 모드: " + report.lockReason());
-                logger.severe("plugins/Trade/journal/corrupt/ 의 손상 파일을 확인한 뒤");
-                logger.severe("관리자가 /trade resolve unlock 을 실행해야 잠금이 해제됩니다.");
-                logger.severe("==========================================================");
-                return;
-            }
-            if (!openJournals.isEmpty()) {
-                logger.info("미완료 거래 저널 " + openJournals.size() + "건 기동 복구를 시작합니다.");
-                reconcileAllOpenJournals(false);
-            }
-        } catch (IOException e) {
-            openJournals.clear();
+        DeliveryCoordinator.StartupResult startup = delivery.startupLoad(nowMs);
+        if (!startup.ok()) {
             logger.severe("==========================================================");
-            logger.severe("Trade 저널 폴더 로드 실패 — Trade 전체 잠금 모드로 전환합니다: " + e.getMessage());
+            logger.severe("Trade 저널 폴더 로드 실패 — Trade 전체 잠금 모드로 전환합니다: " + startup.errorMessage());
             logger.severe("디스크·권한 문제를 해결한 뒤 /trade reload 또는 /trade resolve unlock 으로");
             logger.severe("저널 재로딩과 검증이 완료되어야 잠금이 해제됩니다.");
             logger.severe("==========================================================");
+            return;
+        }
+        Journal.LoadReport report = startup.report();
+        if (!report.newlyQuarantined().isEmpty()) {
+            logger.severe("손상된 거래 저널을 격리하고 LOCKED 를 생성했습니다: " + report.newlyQuarantined());
+        }
+        if (report.locked() || delivery.isJournalOrMemoryLocked()) {
+            logger.severe("==========================================================");
+            logger.severe("Trade 전체 잠금 모드: " + delivery.journalOrMemoryLockReason());
+            logger.severe("plugins/Trade/journal/corrupt/ 의 손상 파일을 확인한 뒤");
+            logger.severe("관리자가 /trade resolve unlock 을 실행해야 잠금이 해제됩니다.");
+            logger.severe("==========================================================");
+            return;
+        }
+        if (!delivery.openJournals().isEmpty()) {
+            logger.info("미완료 거래 저널 " + delivery.openJournals().size() + "건 기동 복구를 시작합니다.");
+            reconcileAllOpenJournals(false);
         }
     }
 
     /**
      * {@code /trade reload} 시 저널 미로드 또는 잠금 상태라면 전체 저널 재로딩·검증을 시도합니다 (P1-2).
      *
+     * <p>메모리에 영속화되지 않은 보호 상태(UNCERTAIN·봉인·잠금)가 하나라도 있으면 재로딩을 거부합니다.
+     *
      * @return 재로딩 결과 안내 문구(평문), 이미 정상 로드·비잠금 상태이면 {@code null}
      */
     public String reloadJournalsIfLocked() {
-        if (journalStore.isLoadSucceeded() && !journalStore.isLocked()) {
+        DeliveryCoordinator.ReloadResult result = delivery.reloadJournalsIfLocked(System.currentTimeMillis());
+        if (result.status() == DeliveryCoordinator.ReloadStatus.SKIPPED_ALREADY_OK) {
             return null;
         }
-        long nowMs = System.currentTimeMillis();
-        try {
-            Journal.LoadReport report = journalStore.loadAll(nowMs);
-            openJournals.clear();
-            for (Journal.Entry entry : report.entries()) {
-                openJournals.put(entry.tradeId(), entry);
-            }
-            if (!report.newlyQuarantined().isEmpty()) {
-                logger.severe("재로딩 중 손상 거래 저널 격리 + LOCKED 생성: " + report.newlyQuarantined());
-            }
-            if (report.locked() || journalStore.isLocked()) {
-                String reason = journalStore.lockReason();
-                logger.warning("Trade 저널 재로딩 완료 (여전히 잠금 모드: " + reason + ")");
-                return "설정을 다시 불러왔으나 저널 잠금 상태가 유지됩니다: " + reason;
-            }
-            logger.info("Trade 저널 재로딩·검증 완료 (잠금 해제, 미완료 저널 " + openJournals.size() + "건).");
-            if (!openJournals.isEmpty()) {
-                reconcileAllOpenJournals(true);
-            }
-            return "Trade 설정 및 저널(" + openJournals.size() + "건)을 다시 불러와 잠금이 해제되었습니다.";
-        } catch (IOException e) {
-            openJournals.clear();
-            logger.severe("Trade 저널 재로딩 실패 (잠금 유지): " + e.getMessage());
-            return "설정은 다시 불러왔으나 저널 재로딩 실패로 잠금이 유지됩니다: " + e.getMessage();
+        if (result.status() == DeliveryCoordinator.ReloadStatus.RELOADED_UNLOCKED && result.openJournalCount() > 0) {
+            reconcileAllOpenJournals(true);
         }
+        return result.message();
     }
 
     /**
      * 관리자 {@code /trade resolve unlock}:
+     * 0) 메모리에 미영속 보호 상태가 있으면 즉시 거부
      * 1) 미로드 상태면 먼저 전체 재로딩·검증(새 손상 파일이 발견되면 즉시 해제하지 않고 관리자 확인 요구)
      * 2) 미해결 격리 파일 {@code .resolved} fsync 후 {@code LOCKED} 삭제
-     * 3) 전체 저널 재로딩·검증이 성공해 {@code isLocked() == false} 일 때만 복구 재개 (P1-2).
+     * 3) 전체 저널 재로딩·검증이 성공해 잠금이 없을 때만 복구 재개 (P1-2).
      */
     public Journal.UnlockResult unlockByAdmin(String adminName) {
-        long nowMs = System.currentTimeMillis();
-        try {
-            if (!journalStore.isLoadSucceeded()) {
-                Journal.LoadReport pre = journalStore.loadAll(nowMs);
-                openJournals.clear();
-                for (Journal.Entry entry : pre.entries()) {
-                    openJournals.put(entry.tradeId(), entry);
-                }
-                if (!pre.newlyQuarantined().isEmpty()) {
-                    logger.severe("unlock 전 재로딩 중 새 손상 저널 격리: " + pre.newlyQuarantined());
-                    return new Journal.UnlockResult(false, 0,
-                            "저널 재로딩 중 새 손상 파일이 격리되었습니다("
-                                    + String.join(", ", pre.newlyQuarantined())
-                                    + "). 확인 후 다시 /trade resolve unlock 을 실행하세요.");
-                }
-            }
-
-            Journal.UnlockResult unlock = journalStore.unlock(adminName, nowMs);
-            if (!unlock.unlocked()) {
-                return unlock;
-            }
-
-            // 잠금 파일 삭제 후 전체 저널 목록을 다시 로드·검증해야만 잠금 해제 확정
-            Journal.LoadReport verified = journalStore.loadAll(nowMs);
-            openJournals.clear();
-            for (Journal.Entry entry : verified.entries()) {
-                openJournals.put(entry.tradeId(), entry);
-            }
-            if (!verified.newlyQuarantined().isEmpty() || verified.locked() || journalStore.isLocked()) {
-                return new Journal.UnlockResult(false, unlock.resolvedFiles(),
-                        "잠금 해제 후 재검증에서 여전히 잠금 상태입니다: " + journalStore.lockReason());
-            }
-            if (!openJournals.isEmpty()) {
-                reconcileAllOpenJournals(true);
-            }
-            return unlock;
-        } catch (IOException e) {
-            logger.severe("Trade 잠금 해제·재검증 중 I/O 오류 (잠금 유지): " + e.getMessage());
-            return new Journal.UnlockResult(false, 0,
-                    "저널 재로딩·검증 실패로 잠금을 해제하지 못했습니다: " + e.getMessage());
+        DeliveryCoordinator.UnlockOutcome outcome = delivery.unlockByAdmin(adminName, System.currentTimeMillis());
+        if (outcome.shouldReconcile()) {
+            reconcileAllOpenJournals(true);
         }
+        return outcome.result();
     }
 
     /** {@code PlayerJoinEvent} (LOWEST): 새 connGen 부여 후 해당 플레이어 관련 미완료 저널 복구·지급. */
     public void onPlayerJoin(Player player) {
         UUID uuid = player.getUniqueId();
-        activeConnGen.put(uuid, connGenSeq.incrementAndGet());
-        if (journalStore.isLocked()) {
+        delivery.onPlayerJoin(uuid);
+        if (delivery.isJournalOrMemoryLocked()) {
             return;
         }
-        List<UUID> related = relatedJournalIds(uuid);
+        List<UUID> related = delivery.relatedJournalIds(uuid);
         for (UUID tradeId : related) {
-            Journal.Entry entry = openJournals.get(tradeId);
+            Journal.Entry entry = delivery.openJournal(tradeId);
             if (entry != null) {
                 reconcileEntry(entry, true);
             }
@@ -331,21 +276,21 @@ public final class TradeService {
      * 3) TAKING 저널이 있으면 Paper 의 퇴장 저장이 끝난 뒤(다음 틱)에 디스크 재판정 실행 (TRADE.md 6장)
      */
     public void onPlayerQuit(UUID uuid) {
-        activeConnGen.remove(uuid);
+        delivery.onPlayerQuit(uuid);
         sessions.sessionOf(uuid).ifPresent(session -> {
             if (session.isPreSettlement()) {
                 cancelPreSettlement(session, "접속 종료");
             }
         });
-        if (!journalStore.isLocked()) {
-            List<UUID> related = relatedJournalIds(uuid);
+        if (!delivery.isJournalOrMemoryLocked()) {
+            List<UUID> related = delivery.relatedJournalIds(uuid);
             if (!related.isEmpty()) {
                 server.getScheduler().runTask(plugin, () -> {
-                    if (journalStore.isLocked()) {
+                    if (delivery.isJournalOrMemoryLocked()) {
                         return;
                     }
                     for (UUID tradeId : related) {
-                        Journal.Entry entry = openJournals.get(tradeId);
+                        Journal.Entry entry = delivery.openJournal(tradeId);
                         if (entry != null) {
                             reconcileEntry(entry, true);
                         }
@@ -357,12 +302,12 @@ public final class TradeService {
 
     /** {@code PlayerRespawnEvent} (MONITOR, 다음 틱): 사망 중 대기하던 지급·반환을 재개합니다 (TRADE.md 5·6장). */
     public void onPlayerRespawn(Player player) {
-        if (player == null || !player.isOnline() || player.isDead() || journalStore.isLocked()) {
+        if (player == null || !player.isOnline() || player.isDead() || delivery.isJournalOrMemoryLocked()) {
             return;
         }
-        List<UUID> related = relatedJournalIds(player.getUniqueId());
+        List<UUID> related = delivery.relatedJournalIds(player.getUniqueId());
         for (UUID tradeId : related) {
-            Journal.Entry entry = openJournals.get(tradeId);
+            Journal.Entry entry = delivery.openJournal(tradeId);
             if (entry != null) {
                 reconcileEntry(entry, true);
             }
@@ -467,13 +412,16 @@ public final class TradeService {
     /** 1분마다 실행되는 자동 복구 타이머 (메인 스레드, TRADE.md 5·6장). */
     public void tickRecovery() {
         sessions.pruneCooldowns(System.currentTimeMillis());
-        if (journalStore.isLocked()) {
+        if (delivery.hasUnpersistedProtectiveStates()) {
+            delivery.retryUnpersistedProtectiveWrites();
+        }
+        if (delivery.isJournalOrMemoryLocked()) {
             return;
         }
         reconcileAllOpenJournals(true);
     }
 
-    /** 플러그인 종료(onDisable) 시 진행 중인 사전 거래 세션을 전부 정리합니다. */
+    /** 플러그인 종료(onDisable) 시 진행 중인 사전 거래 세션을 정리하고 미영속 보호 저널 기록을 최선 재시도합니다. */
     public void shutdown() {
         for (TradeSession session : sessions.clearAll()) {
             if (session.isPreSettlement()) {
@@ -490,6 +438,13 @@ public final class TradeService {
         }
         offerSnapshots.clear();
         countdownTicks.clear();
+        if (delivery.hasUnpersistedProtectiveStates()) {
+            DeliveryCoordinator.RetryResult retry = delivery.retryUnpersistedProtectiveWrites();
+            if (retry.remainingCount() > 0) {
+                logger.severe("서버 종료 시 아직 디스크에 영속화되지 못한 보호 상태 저널이 "
+                        + retry.remainingCount() + "건 남아 있습니다: " + delivery.unpersistedProtectiveIds());
+            }
+        }
     }
 
     // ------------------------------------------------------------------ 요청 · 수락 · 거절 · 취소
@@ -501,7 +456,7 @@ public final class TradeService {
         }
         UUID reqId = requester.getUniqueId();
         UUID tgtId = target.getUniqueId();
-        if (hasOpenJournal(tgtId) || saveFailedLockedPlayers.contains(tgtId)) {
+        if (hasOpenJournal(tgtId) || delivery.isPlayerSaveFailedLocked(tgtId)) {
             return "정산 대기 중";
         }
         if (!isAllowedGameMode(target.getGameMode())) {
@@ -563,7 +518,7 @@ public final class TradeService {
                     Placeholder.unparsed("name", target.getName()));
             return false;
         }
-        if (hasOpenJournal(target.getUniqueId()) || saveFailedLockedPlayers.contains(target.getUniqueId())) {
+        if (hasOpenJournal(target.getUniqueId()) || delivery.isPlayerSaveFailedLocked(target.getUniqueId())) {
             Msg.error(requester, "<name>님은 이전 거래 정산 확인 대기 중이라 거래할 수 없습니다.",
                     Placeholder.unparsed("name", target.getName()));
             return false;
@@ -657,7 +612,7 @@ public final class TradeService {
                     Placeholder.unparsed("name", requester.getName()));
             return false;
         }
-        if (hasOpenJournal(requester.getUniqueId()) || saveFailedLockedPlayers.contains(requester.getUniqueId())) {
+        if (hasOpenJournal(requester.getUniqueId()) || delivery.isPlayerSaveFailedLocked(requester.getUniqueId())) {
             Msg.error(target, "<name>님의 이전 거래 정산 확인이 진행 중입니다.",
                     Placeholder.unparsed("name", requester.getName()));
             return false;
@@ -1058,7 +1013,7 @@ public final class TradeService {
                 return;
             }
             if (hasOpenJournal(aId) || hasOpenJournal(bId)
-                    || saveFailedLockedPlayers.contains(aId) || saveFailedLockedPlayers.contains(bId)) {
+                    || delivery.isPlayerSaveFailedLocked(aId) || delivery.isPlayerSaveFailedLocked(bId)) {
                 abortSettling(session, "이전 정산 확인 대기");
                 return;
             }
@@ -1185,15 +1140,15 @@ public final class TradeService {
                 uiHooks.refreshSessionMenus(session);
                 return;
             }
-            openJournals.put(tradeId, entry);
+            delivery.putOpenJournal(entry);
 
             // 여기부터는 저널이 생겼으므로 거래 창을 닫고 정산 3~7단계로 진행 (SETTLING 이므로 닫기 이벤트가 취소하지 않음)
             pA.closeInventory();
             pB.closeInventory();
 
             // [3단계] 가져오기 (양쪽 같은 틱, 실패 시 빼낸 아이템을 절대 돌려주지 않음, TRADE.md 5장 3번)
-            Long connA = activeConnGen.get(aId);
-            Long connB = activeConnGen.get(bId);
+            Long connA = delivery.currentConnGen(aId);
+            Long connB = delivery.currentConnGen(bId);
 
             if (!bytesFromA.isEmpty()) {
                 entry = executeTakeForSide(entry, TradeSession.Side.A, pA, session.sideA().offers(), snapsA, nowMs);
@@ -1207,7 +1162,7 @@ public final class TradeService {
                     takingConnGenB.put(tradeId, connB);
                 }
             }
-            persistJournalQuietly(entry);
+            delivery.persistNormal(entry);
 
             // 세션 메모리는 이제 저널로 넘어감
             cleanupSessionMemory(session);
@@ -1282,7 +1237,7 @@ public final class TradeService {
             switch (res.status()) {
                 case OK -> {
                     entry = entry.withCommitted(res.txAId(), res.txBId(), isRecovery, nowMs);
-                    if (!persistJournalQuietly(entry)) {
+                    if (!delivery.persistNormal(entry)) {
                         return;
                     }
                     deliverCommittedAndFinish(entry, true);
@@ -1297,7 +1252,7 @@ public final class TradeService {
                 }
                 case MISMATCH -> {
                     entry = entry.withSealed("Bank MISMATCH: " + res.message(), nowMs);
-                    persistJournalQuietly(entry);
+                    delivery.persistProtective(entry, "Bank MISMATCH 봉인");
                     logger.severe("거래 " + tradeId + " Bank 정산 MISMATCH 감지! 거래를 봉인했습니다: " + res.message());
                     notifyBothOnline(entry, "<#FF5555>거래 정산 기록 불일치가 감지되어 보류되었습니다. 관리자에게 문의해 주세요.");
                 }
@@ -1309,7 +1264,7 @@ public final class TradeService {
         } else {
             // 0원 거래: 저널 COMMITTED 가 커밋 지점 (TRADE.md 5장 4번)
             entry = entry.withCommitted(0L, 0L, isRecovery, nowMs);
-            if (!persistJournalQuietly(entry)) {
+            if (!delivery.persistNormal(entry)) {
                 return;
             }
             deliverCommittedAndFinish(entry, true);
@@ -1331,7 +1286,7 @@ public final class TradeService {
         Journal.SideStatus retA = RecoveryPolicy.initialReturnStatus(!entry.itemsFromA().isEmpty(), finalA);
         Journal.SideStatus retB = RecoveryPolicy.initialReturnStatus(!entry.itemsFromB().isEmpty(), finalB);
         Journal.Entry returning = entry.withReturning(retA, retB, reason, isRecovery, nowMs);
-        if (!persistJournalQuietly(returning)) {
+        if (!delivery.persistNormal(returning)) {
             logger.severe("거래 " + entry.tradeId() + " RETURNING 전환 fsync 실패 — 반환을 시작하지 않습니다.");
             return;
         }
@@ -1341,11 +1296,11 @@ public final class TradeService {
     /** [5~6단계] COMMITTED 거래의 양쪽 지급 시도 및 완료 처리. */
     private void deliverCommittedAndFinish(Journal.Entry entry, boolean notifyOnline) {
         entry = attemptDeliveryForSide(entry, TradeSession.Side.A, false, notifyOnline);
-        if (entry.isSealed()) {
+        if (entry.isSealed() || delivery.isJournalOrMemoryLocked()) {
             return;
         }
         entry = attemptDeliveryForSide(entry, TradeSession.Side.B, false, notifyOnline);
-        if (entry.isSealed()) {
+        if (entry.isSealed() || delivery.isJournalOrMemoryLocked()) {
             return;
         }
 
@@ -1357,11 +1312,11 @@ public final class TradeService {
     /** [7단계] RETURNING 거래의 양쪽 반환 시도 및 취소 완료 처리. */
     private void processReturningAndFinish(Journal.Entry entry, boolean notifyOnline) {
         entry = attemptDeliveryForSide(entry, TradeSession.Side.A, true, notifyOnline);
-        if (entry.isSealed()) {
+        if (entry.isSealed() || delivery.isJournalOrMemoryLocked()) {
             return;
         }
         entry = attemptDeliveryForSide(entry, TradeSession.Side.B, true, notifyOnline);
-        if (entry.isSealed()) {
+        if (entry.isSealed() || delivery.isJournalOrMemoryLocked()) {
             return;
         }
 
@@ -1372,321 +1327,24 @@ public final class TradeService {
 
     /**
      * 한쪽의 지급({@code isReturn=false}) 또는 돌려주기({@code isReturn=true})를 같은 틱에서 시도합니다.
-     *
-     * <p>확인 실패 뒤 같은 틱 회수 시 디스크가 회수 전(지급됨) 상태일 수 있으므로 그 쪽을
-     * {@link Journal.SideStatus#UNCERTAIN} 으로 두고, 같은 접속에서는 {@code saveData} → 디스크가
-     * ABSENT 로 확정될 때까지 완료·재지급 모두 보류합니다. 디스크에 토큰이 FOUND 면 메모리(회수 상태)에
-     * 다시 지급·저장해 디스크 기준으로 수렴하고, 회수 중 예외가 나면 해당 플레이어를 Trade 잠금 +
-     * 거래 봉인 + severe 처리합니다 (P1-1, TRADE.md 5·6장).
+     * 핵심 상태 전이와 보호 상태 영속화 잠금은 {@link DeliveryCoordinator} 가 수행합니다 (TRADE.md 5·6장).
      */
     private Journal.Entry attemptDeliveryForSide(Journal.Entry entry, TradeSession.Side side,
                                                  boolean isReturn, boolean notifyOnline) {
-        UUID tradeId = entry.tradeId();
-        UUID targetUuid = entry.uuidOf(side);
-        List<byte[]> itemBytes = isReturn ? entry.ownItems(side) : entry.incomingItems(side);
-        Journal.SideStatus currentStatus = isReturn ? entry.returnOf(side) : entry.giveOf(side);
-
-        if (itemBytes.isEmpty() || currentStatus == Journal.SideStatus.FOUND
-                || (isReturn && currentStatus == Journal.SideStatus.NONE)) {
-            if (!isReturn && currentStatus != Journal.SideStatus.FOUND) {
-                entry = entry.withGive(side, Journal.SideStatus.FOUND, entry.giveAttemptOf(side), false, System.currentTimeMillis());
-                persistJournalQuietly(entry);
-            }
-            return entry;
-        }
-
-        Player online = server.getPlayer(targetUuid);
-        boolean isOnline = online != null && online.isOnline();
-        boolean isAlive = isOnline && !online.isDead();
-        boolean isUncertain = currentStatus == Journal.SideStatus.UNCERTAIN;
-        boolean sameUncertainSession = isUncertain && isSameUncertainSession(tradeId, side, isReturn, targetUuid);
-
-        // 1) 사전 디스크 확인: 같은 접속의 UNCERTAIN 상태라면 saveData() 로 회수 상태 저장을 먼저 시도한 뒤 확인
-        TradeTokens.Purpose purpose = isReturn ? TradeTokens.Purpose.RETURN : TradeTokens.Purpose.GIVE;
-        String[] foundDiskToken = {null};
-        PlayerDatReader.MarkerCheck preCheck;
-        if (sameUncertainSession) {
-            boolean preSaveOk = false;
-            try {
-                online.saveData();
-                preSaveOk = true;
-            } catch (Throwable e) {
-                logger.severe("거래 불확실 지급/반환 확인 전 saveData() 예외 ("
-                        + tradeId + ", " + online.getName() + "): " + e);
-            }
-            preCheck = preSaveOk
-                    ? PlayerDatReader.check(worldRoot, targetUuid, TradeTokens.DAT_KEYS, raw -> {
-                        String tok = TradeTokens.findAnyAttemptToken(raw, tradeId, purpose, targetUuid);
-                        if (tok != null) {
-                            foundDiskToken[0] = tok;
-                            return true;
-                        }
-                        return false;
-                    })
-                    : new PlayerDatReader.MarkerCheck(PlayerDatReader.MarkerStatus.UNREADABLE, null, 0L, "saveData 예외");
-        } else {
-            preCheck = PlayerDatReader.check(worldRoot, targetUuid, TradeTokens.DAT_KEYS, raw -> {
-                String tok = TradeTokens.findAnyAttemptToken(raw, tradeId, purpose, targetUuid);
-                if (tok != null) {
-                    foundDiskToken[0] = tok;
-                    return true;
-                }
-                return false;
-            });
-        }
-
-        boolean needsItemsCheck = isAlive && (preCheck.status() == PlayerDatReader.MarkerStatus.ABSENT
-                || (sameUncertainSession && preCheck.status() == PlayerDatReader.MarkerStatus.FOUND));
-        List<ItemStack> items = null;
-        int missingSlots = 0;
-        if (needsItemsCheck) {
-            try {
-                items = TradeInventoryHelper.deserializeStacks(itemBytes);
-            } catch (RuntimeException e) {
-                logger.severe("거래 " + tradeId + " 아이템 역직렬화 실패: " + e.getMessage());
-                entry = entry.withSealed("아이템 역직렬화 실패: " + e.getMessage(), System.currentTimeMillis());
-                openJournals.put(tradeId, entry);
-                persistJournalQuietly(entry);
-                return entry;
-            }
-            missingSlots = TradeInventoryHelper.missingSlots(online.getInventory(), Map.of(), items);
-        }
-
-        RecoveryPolicy.DeliveryDecision decision = isReturn
-                ? RecoveryPolicy.decideReturnSide(!itemBytes.isEmpty(), currentStatus, sameUncertainSession,
-                        preCheck.status(), isOnline, isAlive, missingSlots == 0)
-                : RecoveryPolicy.decideGiveSide(!itemBytes.isEmpty(), currentStatus, sameUncertainSession,
-                        preCheck.status(), isOnline, isAlive, missingSlots == 0);
-
-        int attempt = isReturn ? entry.returnAttemptOf(side) : entry.giveAttemptOf(side);
-
-        switch (decision) {
-            case ALREADY_DONE -> {
-                long nowMs = System.currentTimeMillis();
-                clearUncertainConnGen(tradeId, side, isReturn);
-                entry = isReturn
-                        ? entry.withReturn(side, Journal.SideStatus.FOUND, attempt, true, nowMs)
-                        : entry.withGive(side, Journal.SideStatus.FOUND, attempt, true, nowMs);
-                persistJournalQuietly(entry);
-                return entry;
-            }
-            case WAIT_INVENTORY_FULL -> {
-                if (notifyOnline && isOnline) {
-                    Msg.warn(online, "인벤토리 빈칸이 " + missingSlots + "칸 필요합니다. 빈칸을 비운 뒤 "
-                            + "<#FFDF6B>/trade claim<#AAAAAA> 으로 받아 주세요.");
-                }
-                return entry;
-            }
-            case WAIT_DEAD, WAIT_OFFLINE, WAIT_UNREADABLE -> {
-                return entry;
-            }
-            case CONVERGE_TO_DISK -> {
-                // 같은 접속에서 회수 후 불확실인데 디스크에 토큰이 FOUND:
-                // 메모리(회수 상태)와 디스크(지급 상태)가 다르므로 메모리에 다시 지급·저장해 디스크 기준으로 수렴
-                String diskToken = foundDiskToken[0] != null
-                        ? foundDiskToken[0]
-                        : (isReturn
-                                ? TradeTokens.returnToken(tradeId, targetUuid, attempt)
-                                : TradeTokens.giveToken(tradeId, targetUuid, attempt));
-                return convergeMemoryToDisk(entry, side, isReturn, online, items, attempt, diskToken, notifyOnline);
-            }
-            case CLEAR_UNCERTAIN -> {
-                // 디스크에 이번(및 예전) 시도 토큰이 ABSENT 로 확정 → UNCERTAIN 해제 + 시도 번호 증가 후 PENDING 전환
-                long nowMs = System.currentTimeMillis();
-                int nextAttempt = attempt + 1;
-                Journal.Entry cleared = isReturn
-                        ? entry.withReturn(side, Journal.SideStatus.PENDING, nextAttempt, true, nowMs)
-                        : entry.withGive(side, Journal.SideStatus.PENDING, nextAttempt, true, nowMs);
-                if (!persistJournalQuietly(cleared)) {
-                    return entry;
-                }
-                clearUncertainConnGen(tradeId, side, isReturn);
-                entry = cleared;
-                attempt = nextAttempt;
-                RecoveryPolicy.DeliveryDecision nextDecision = isReturn
-                        ? RecoveryPolicy.decideReturnSide(!itemBytes.isEmpty(), Journal.SideStatus.PENDING, false,
-                                PlayerDatReader.MarkerStatus.ABSENT, isOnline, isAlive, missingSlots == 0)
-                        : RecoveryPolicy.decideGiveSide(!itemBytes.isEmpty(), Journal.SideStatus.PENDING, false,
-                                PlayerDatReader.MarkerStatus.ABSENT, isOnline, isAlive, missingSlots == 0);
-                if (nextDecision == RecoveryPolicy.DeliveryDecision.WAIT_INVENTORY_FULL) {
-                    if (notifyOnline && isOnline) {
-                        Msg.warn(online, "인벤토리 빈칸이 " + missingSlots + "칸 필요합니다. 빈칸을 비운 뒤 "
-                                + "<#FFDF6B>/trade claim<#AAAAAA> 으로 받아 주세요.");
-                    }
-                    return entry;
-                }
-                if (nextDecision != RecoveryPolicy.DeliveryDecision.DELIVER_NOW) {
-                    return entry;
-                }
-                // DELIVER_NOW 로 진행 (아래에서 nextAttempt 로 지급 시도)
-            }
-            case DELIVER_NOW -> {
-                // 아래에서 같은 틱 지급 + saveData + 디스크 확인 + 실패 시 같은 틱 회수 실행
-            }
-        }
-
-        final int deliveryAttempt = attempt;
-        String token = isReturn
-                ? TradeTokens.returnToken(tradeId, targetUuid, deliveryAttempt)
-                : TradeTokens.giveToken(tradeId, targetUuid, deliveryAttempt);
-
-        ItemStack[] invSnapshot = TradeInventoryHelper.snapshotStorage(online.getInventory());
-        PersistentDataContainer pdc = online.getPersistentDataContainer();
-        String prevApplied = pdc.getOrDefault(keyApplied, PersistentDataType.STRING, "");
-        String newApplied = TradeTokens.append(prevApplied, token);
-
-        if (!TradeInventoryHelper.placeAllItems(online.getInventory(), items)) {
-            if (notifyOnline) {
-                Msg.warn(online, "인벤토리 빈칸이 부족합니다. 빈칸을 비운 뒤 <#FFDF6B>/trade claim<#AAAAAA> 으로 받아 주세요.");
-            }
-            return entry;
-        }
-
-        boolean saveOk = false;
-        try {
-            pdc.set(keyApplied, PersistentDataType.STRING, newApplied);
-            online.saveData();
-            saveOk = true;
-        } catch (Throwable e) {
-            logger.severe("거래 지급/반환 saveData() 중 예외 (" + tradeId + ", " + online.getName() + "): " + e);
-        }
-
-        PlayerDatReader.MarkerCheck postCheck = saveOk
-                ? PlayerDatReader.check(worldRoot, targetUuid, TradeTokens.DAT_KEYS,
-                        raw -> isReturn
-                                ? TradeTokens.containsReturnExact(raw, tradeId, targetUuid, deliveryAttempt)
-                                : TradeTokens.containsGiveExact(raw, tradeId, targetUuid, deliveryAttempt))
-                : new PlayerDatReader.MarkerCheck(PlayerDatReader.MarkerStatus.UNREADABLE, null, 0L, "saveData 예외");
-
-        long nowMs = System.currentTimeMillis();
-        if (postCheck.status() == PlayerDatReader.MarkerStatus.FOUND) {
-            clearUncertainConnGen(tradeId, side, isReturn);
-            entry = isReturn
-                    ? entry.withReturn(side, Journal.SideStatus.FOUND, deliveryAttempt, false, nowMs)
-                    : entry.withGive(side, Journal.SideStatus.FOUND, deliveryAttempt, false, nowMs);
-            persistJournalQuietly(entry);
-            return entry;
-        }
-
-        // TRADE.md 5·6장 (P1-1): FOUND 가 아니면 같은 틱에 회수하고 UNCERTAIN 으로 전환.
-        // 디스크가 회수 전(지급됨) 상태일 수 있으므로 ABSENT 확정 전까지 완료·재지급 모두 보류.
-        if (!restoreInventoryAndPdc(online, invSnapshot, prevApplied)) {
-            return lockAndSealOnRollbackFailure(entry, online, nowMs);
-        }
-        entry = isReturn
-                ? entry.withReturn(side, Journal.SideStatus.UNCERTAIN, deliveryAttempt, false, nowMs)
-                : entry.withGive(side, Journal.SideStatus.UNCERTAIN, deliveryAttempt, false, nowMs);
-        recordUncertainConnGen(tradeId, side, isReturn, targetUuid);
-        openJournals.put(tradeId, entry);
-        persistJournalQuietly(entry);
-        if (notifyOnline) {
-            Msg.warn(online, "저장 확인이 지연되어 지급 상태를 재확인 중입니다. 잠시 후 자동 처리되거나 "
-                    + "<#FFDF6B>/trade claim<#AAAAAA> 으로 확인할 수 있습니다.");
-        }
-        return entry;
-    }
-
-    /**
-     * 같은 접속에서 회수 후 {@code UNCERTAIN} 상태인데 디스크에 토큰이 {@code FOUND} 인 경우,
-     * 회수된 메모리에 아이템과 토큰을 다시 반영하고 {@code saveData()} 후 디스크를 재확인해 수렴합니다 (P1-1).
-     */
-    private Journal.Entry convergeMemoryToDisk(
-            Journal.Entry entry,
-            TradeSession.Side side,
-            boolean isReturn,
-            Player online,
-            List<ItemStack> items,
-            int attempt,
-            String diskToken,
-            boolean notifyOnline
-    ) {
-        UUID tradeId = entry.tradeId();
-        UUID targetUuid = online.getUniqueId();
-        TradeTokens.Purpose purpose = isReturn ? TradeTokens.Purpose.RETURN : TradeTokens.Purpose.GIVE;
-
-        ItemStack[] invSnapshot = TradeInventoryHelper.snapshotStorage(online.getInventory());
-        PersistentDataContainer pdc = online.getPersistentDataContainer();
-        String prevApplied = pdc.getOrDefault(keyApplied, PersistentDataType.STRING, "");
-        String newApplied = TradeTokens.append(prevApplied, diskToken);
-
-        if (!TradeInventoryHelper.placeAllItems(online.getInventory(), items)) {
-            if (notifyOnline) {
-                Msg.warn(online, "인벤토리 빈칸이 부족합니다. 빈칸을 비운 뒤 <#FFDF6B>/trade claim<#AAAAAA> 으로 받아 주세요.");
-            }
-            return entry;
-        }
-
-        boolean saveOk = false;
-        try {
-            pdc.set(keyApplied, PersistentDataType.STRING, newApplied);
-            online.saveData();
-            saveOk = true;
-        } catch (Throwable e) {
-            logger.severe("거래 불확실 수렴 saveData() 중 예외 (" + tradeId + ", " + online.getName() + "): " + e);
-        }
-
-        PlayerDatReader.MarkerCheck postCheck = saveOk
-                ? PlayerDatReader.check(worldRoot, targetUuid, TradeTokens.DAT_KEYS,
-                        raw -> TradeTokens.containsAnyAttempt(raw, tradeId, purpose, targetUuid))
-                : new PlayerDatReader.MarkerCheck(PlayerDatReader.MarkerStatus.UNREADABLE, null, 0L, "saveData 예외");
-
-        long nowMs = System.currentTimeMillis();
-        if (postCheck.status() == PlayerDatReader.MarkerStatus.FOUND) {
-            clearUncertainConnGen(tradeId, side, isReturn);
-            entry = isReturn
-                    ? entry.withReturn(side, Journal.SideStatus.FOUND, attempt, true, nowMs)
-                    : entry.withGive(side, Journal.SideStatus.FOUND, attempt, true, nowMs);
-            persistJournalQuietly(entry);
-            return entry;
-        }
-
-        if (!restoreInventoryAndPdc(online, invSnapshot, prevApplied)) {
-            return lockAndSealOnRollbackFailure(entry, online, nowMs);
-        }
-        return entry;
-    }
-
-    private Journal.Entry lockAndSealOnRollbackFailure(Journal.Entry entry, Player online, long nowMs) {
-        UUID tradeId = entry.tradeId();
-        UUID targetUuid = online.getUniqueId();
-        saveFailedLockedPlayers.add(targetUuid);
-        Journal.Entry sealed = entry.withSealed("지급/반환 같은 틱 회수 실패: " + online.getName(), nowMs);
-        openJournals.put(tradeId, sealed);
-        persistJournalQuietly(sealed);
-        logger.severe("거래 " + tradeId + " 지급/반환 같은 틱 회수 중 예외가 발생해 플레이어 "
-                + online.getName() + " (" + targetUuid + ")의 Trade 를 잠그고 거래를 봉인했습니다. "
-                + "재시도로 넘어가지 않습니다. 관리자가 인벤토리를 확인한 뒤 /trade resolve "
-                + tradeId + " dismiss 로 정리하세요.");
-        if (online.isOnline()) {
-            Msg.error(online, "거래 물건 처리 중 오류가 발생해 거래 기능이 일시 잠겼습니다. 관리자에게 문의해 주세요.");
-        }
-        return sealed;
-    }
-
-    private boolean restoreInventoryAndPdc(Player player, ItemStack[] invSnapshot, String prevApplied) {
-        try {
-            player.getInventory().setStorageContents(invSnapshot);
-            PersistentDataContainer pdc = player.getPersistentDataContainer();
-            if (prevApplied == null || prevApplied.isEmpty()) {
-                pdc.remove(keyApplied);
-            } else {
-                pdc.set(keyApplied, PersistentDataType.STRING, prevApplied);
-            }
-            return true;
-        } catch (Throwable t) {
-            logger.severe("거래 지급 같은 틱 회수 실패 (" + player.getName() + "): " + t);
-            return false;
-        }
+        return delivery.attemptDeliveryForSide(entry, side, isReturn, notifyOnline, System.currentTimeMillis());
     }
 
     // ------------------------------------------------------------------ 복구 (TRADE.md 6장)
 
     public void reconcileAllOpenJournals(boolean notifyOnline) {
-        if (journalStore.isLocked()) {
+        if (delivery.isJournalOrMemoryLocked()) {
             return;
         }
-        for (UUID tradeId : new ArrayList<>(openJournals.keySet())) {
-            Journal.Entry entry = openJournals.get(tradeId);
+        for (UUID tradeId : delivery.openJournalIds()) {
+            if (delivery.isJournalOrMemoryLocked()) {
+                return;
+            }
+            Journal.Entry entry = delivery.openJournal(tradeId);
             if (entry != null) {
                 reconcileEntry(entry, notifyOnline);
             }
@@ -1694,10 +1352,42 @@ public final class TradeService {
     }
 
     public String reconcileSingleByAdmin(UUID tradeId) {
+        if (delivery.hasUnpersistedProtectiveStates()) {
+            if (!delivery.unpersistedProtectiveIds().contains(tradeId)) {
+                return "메모리에 영속화되지 않은 보호 상태가 남아 Trade 가 전체 잠금 중입니다: "
+                        + delivery.unpersistedProtectiveIds()
+                        + ". 먼저 해당 거래의 /trade resolve <tradeId> 영속화를 완료하세요.";
+            }
+            DeliveryCoordinator.SingleRetryResult retry = delivery.retrySingleUnpersistedWrite(tradeId);
+            if (!retry.succeeded()) {
+                return retry.message();
+            }
+            if (delivery.isJournalOrMemoryLocked()) {
+                return retry.message() + " (남은 잠금 사유: " + delivery.journalOrMemoryLockReason() + ")";
+            }
+            Journal.Entry persisted = delivery.openJournal(tradeId);
+            if (persisted == null) {
+                return retry.message();
+            }
+            if (persisted.isSealed()) {
+                return retry.message() + " 봉인된 거래입니다 (" + persisted.sealedReason()
+                        + "). 원장과 플레이어 인벤토리를 대조한 뒤 /trade resolve " + tradeId
+                        + " dismiss 로 봉인을 정리하세요.";
+            }
+            reconcileEntry(persisted, true);
+            Journal.Entry after = delivery.openJournal(tradeId);
+            if (after == null) {
+                return retry.message() + " 복구가 완료되어 저널이 정리되었습니다.";
+            }
+            return retry.message() + " 재확인 완료 (현재 단계=" + after.stage()
+                    + ", take=" + after.takeA() + "/" + after.takeB()
+                    + ", give=" + after.giveA() + "/" + after.giveB()
+                    + ", return=" + after.returnA() + "/" + after.returnB() + ").";
+        }
         if (journalStore.isLocked()) {
             return "Trade 가 손상 저널 잠금 모드입니다. 먼저 /trade resolve unlock 을 확인하세요.";
         }
-        Journal.Entry entry = openJournals.get(tradeId);
+        Journal.Entry entry = delivery.openJournal(tradeId);
         if (entry == null) {
             return "열려 있는 거래 저널을 찾을 수 없습니다: " + tradeId;
         }
@@ -1706,7 +1396,7 @@ public final class TradeService {
                     + "/trade resolve " + tradeId + " dismiss 로 봉인을 정리하세요.";
         }
         reconcileEntry(entry, true);
-        Journal.Entry after = openJournals.get(tradeId);
+        Journal.Entry after = delivery.openJournal(tradeId);
         if (after == null) {
             return "거래 " + tradeId + " 복구가 완료되어 저널이 정리되었습니다.";
         }
@@ -1721,12 +1411,12 @@ public final class TradeService {
 
     /** 관리자 수동 정리: 봉인된 저널 삭제 성공 시에만 플레이어 저장 실패 잠금을 해제합니다 (P2-9). */
     public DismissResult dismissSealedJournal(UUID tradeId, String adminName) {
-        Journal.Entry entry = openJournals.get(tradeId);
+        Journal.Entry entry = delivery.openJournal(tradeId);
         if (entry == null) {
             return new DismissResult(false, "열려 있는 거래 저널을 찾을 수 없습니다: " + tradeId);
         }
-        if (!entry.isSealed() && !saveFailedLockedPlayers.contains(entry.playerA())
-                && !saveFailedLockedPlayers.contains(entry.playerB())) {
+        if (!entry.isSealed() && !delivery.isPlayerSaveFailedLocked(entry.playerA())
+                && !delivery.isPlayerSaveFailedLocked(entry.playerB())) {
             return new DismissResult(false,
                     "봉인·잠금 상태의 거래가 아닙니다. 먼저 /trade resolve " + tradeId + " 로 자동 복구를 시도하세요.");
         }
@@ -1744,7 +1434,7 @@ public final class TradeService {
         UUID tradeId = entry.tradeId();
         UUID aId = entry.playerA();
         UUID bId = entry.playerB();
-        if (entry.isSealed()) {
+        if (entry.isSealed() || delivery.isJournalOrMemoryLocked()) {
             return;
         }
         if (!inFlight.add(aId)) {
@@ -1756,8 +1446,8 @@ public final class TradeService {
         }
         try {
             // 최신 스냅샷 재확인
-            entry = openJournals.get(tradeId);
-            if (entry == null || entry.isSealed()) {
+            entry = delivery.openJournal(tradeId);
+            if (entry == null || entry.isSealed() || delivery.isJournalOrMemoryLocked()) {
                 return;
             }
             switch (entry.stage()) {
@@ -1783,7 +1473,13 @@ public final class TradeService {
         updated = applyTakingEvaluation(updated, TradeSession.Side.B, evalB, nowMs);
         if (updated != entry) {
             entry = updated;
-            persistJournalQuietly(entry);
+            if (JournalCacheMerge.hasProtectiveState(entry)) {
+                if (!delivery.persistProtective(entry, "TAKING 저장 실패 잠금")) {
+                    return;
+                }
+            } else {
+                delivery.persistNormal(entry);
+            }
         }
 
         RecoveryPolicy.BankLookupState bankState = RecoveryPolicy.BankLookupState.NOT_CHECKED;
@@ -1807,7 +1503,7 @@ public final class TradeService {
         switch (decision) {
             case PROMOTE_TO_COMMITTED -> {
                 entry = entry.withCommitted(foundTxA, foundTxB, true, nowMs);
-                if (persistJournalQuietly(entry)) {
+                if (delivery.persistNormal(entry)) {
                     deliverCommittedAndFinish(entry, true);
                 }
             }
@@ -1816,7 +1512,7 @@ public final class TradeService {
                     entry, evalA.state(), evalB.state(), "가져오기 미반영으로 거래 취소", true);
             case SEAL_MISMATCH -> {
                 entry = entry.withSealed("Bank 원장 불일치: " + bankDetail, nowMs);
-                persistJournalQuietly(entry);
+                delivery.persistProtective(entry, "Bank 원장 불일치 봉인");
                 logger.severe("복구 중 거래 " + tradeId + " Bank MISMATCH 감지 — 거래 봉인: " + bankDetail);
             }
             case DEFER, QUERY_BANK -> {
@@ -1857,7 +1553,7 @@ public final class TradeService {
                                                 RecoveryPolicy.TakingSideEvaluation eval, long nowMs) {
         UUID uuid = entry.uuidOf(side);
         if (eval.lockPlayer()) {
-            if (saveFailedLockedPlayers.add(uuid)) {
+            if (delivery.lockPlayerForSaveFailure(uuid)) {
                 logger.severe("플레이어 " + entry.nameOf(side) + " (" + uuid + ")의 거래 " + entry.tradeId()
                         + " 저장 확인이 " + RecoveryPolicy.MAX_TAKE_SAVE_RETRIES
                         + "회 연속 실패(ABSENT)하여 해당 플레이어의 Trade 를 잠갔습니다. 관리자가 확인해 주세요.");
@@ -1866,7 +1562,7 @@ public final class TradeService {
         Journal.SideStatus nextStatus = entry.takeOf(side);
         if (eval.updatePersistedToFound()) {
             nextStatus = Journal.SideStatus.FOUND;
-            saveFailedLockedPlayers.remove(uuid);
+            delivery.unlockPlayerForSaveFailure(uuid);
         } else if (eval.updatePersistedToAbsent()) {
             nextStatus = Journal.SideStatus.ABSENT;
         }
@@ -1881,41 +1577,15 @@ public final class TradeService {
         if (online == null || !online.isOnline()) {
             return false;
         }
-        Long current = activeConnGen.get(playerId);
+        Long current = delivery.currentConnGen(playerId);
         Long recorded = side == TradeSession.Side.A ? takingConnGenA.get(tradeId) : takingConnGenB.get(tradeId);
         return current != null && current.equals(recorded);
-    }
-
-    private Map<UUID, Long> uncertainConnGenMap(TradeSession.Side side, boolean isReturn) {
-        if (isReturn) {
-            return side == TradeSession.Side.A ? returnUncertainConnGenA : returnUncertainConnGenB;
-        }
-        return side == TradeSession.Side.A ? giveUncertainConnGenA : giveUncertainConnGenB;
-    }
-
-    private boolean isSameUncertainSession(UUID tradeId, TradeSession.Side side, boolean isReturn, UUID playerId) {
-        Player online = server.getPlayer(playerId);
-        if (online == null || !online.isOnline()) {
-            return false;
-        }
-        Long current = activeConnGen.get(playerId);
-        Long recorded = uncertainConnGenMap(side, isReturn).get(tradeId);
-        return current != null && current.equals(recorded);
-    }
-
-    private void recordUncertainConnGen(UUID tradeId, TradeSession.Side side, boolean isReturn, UUID playerId) {
-        long gen = activeConnGen.computeIfAbsent(playerId, k -> connGenSeq.incrementAndGet());
-        uncertainConnGenMap(side, isReturn).put(tradeId, gen);
-    }
-
-    private void clearUncertainConnGen(UUID tradeId, TradeSession.Side side, boolean isReturn) {
-        uncertainConnGenMap(side, isReturn).remove(tradeId);
     }
 
     // ------------------------------------------------------------------ /trade claim (TRADE.md 8장)
 
     public void claimPending(Player player) {
-        if (journalStore.isLocked()) {
+        if (delivery.isJournalOrMemoryLocked()) {
             Msg.error(player, "Trade 가 잠금 모드입니다. 관리자에게 문의해 주세요.");
             return;
         }
@@ -1924,7 +1594,7 @@ public final class TradeService {
             return;
         }
         UUID uuid = player.getUniqueId();
-        List<UUID> related = relatedJournalIds(uuid);
+        List<UUID> related = delivery.relatedJournalIds(uuid);
         if (related.isEmpty()) {
             Msg.info(player, "받을 거래 물건이 없습니다.");
             return;
@@ -1933,7 +1603,11 @@ public final class TradeService {
         int deliveredCount = 0;
         int remainingCount = 0;
         for (UUID tradeId : related) {
-            Journal.Entry entry = openJournals.get(tradeId);
+            if (delivery.isJournalOrMemoryLocked()) {
+                remainingCount++;
+                break;
+            }
+            Journal.Entry entry = delivery.openJournal(tradeId);
             if (entry == null) {
                 continue;
             }
@@ -1948,7 +1622,7 @@ public final class TradeService {
             }
             if (entry.stage() == Journal.Stage.TAKING) {
                 reconcileEntry(entry, true);
-                entry = openJournals.get(tradeId);
+                entry = delivery.openJournal(tradeId);
                 if (entry == null) {
                     deliveredCount++;
                     continue;
@@ -1959,7 +1633,7 @@ public final class TradeService {
                 Journal.SideStatus before = isReturn ? entry.returnOf(side) : entry.giveOf(side);
                 if (before == Journal.SideStatus.PENDING || before == Journal.SideStatus.UNCERTAIN) {
                     reconcileEntry(entry, true);
-                    Journal.Entry after = openJournals.get(tradeId);
+                    Journal.Entry after = delivery.openJournal(tradeId);
                     boolean doneNow = after == null
                             || (isReturn ? after.returnOf(side) == Journal.SideStatus.FOUND
                                          : after.giveOf(side) == Journal.SideStatus.FOUND);
@@ -1991,20 +1665,10 @@ public final class TradeService {
             logger.severe("완료된 거래 저널 삭제 실패 (" + tradeId + "): " + e.getMessage());
             return false;
         }
-        openJournals.remove(tradeId);
         takingConnGenA.remove(tradeId);
         takingConnGenB.remove(tradeId);
-        giveUncertainConnGenA.remove(tradeId);
-        giveUncertainConnGenB.remove(tradeId);
-        returnUncertainConnGenA.remove(tradeId);
-        returnUncertainConnGenB.remove(tradeId);
-        // 저널 삭제가 실제로 완료된 경우에만 해당 플레이어의 저장 실패 잠금을 정리 (P2-9: ABSENT 취소 경로 포함)
-        if (!hasOpenJournal(entry.playerA())) {
-            saveFailedLockedPlayers.remove(entry.playerA());
-        }
-        if (!hasOpenJournal(entry.playerB())) {
-            saveFailedLockedPlayers.remove(entry.playerB());
-        }
+        // 저널 삭제가 실제로 완료된 경우에만 미영속 상태·플레이어 저장 실패 잠금을 정리 (P2-9: ABSENT 취소 경로 포함)
+        delivery.onJournalDeleted(entry);
         tradeLogger.log(entry, result, reason, nowMs, config.zone());
 
         Player pA = server.getPlayer(entry.playerA());
@@ -2144,19 +1808,8 @@ public final class TradeService {
                 .computeIfAbsent(side, k -> new HashMap<>());
     }
 
-    private boolean persistJournalQuietly(Journal.Entry entry) {
-        try {
-            journalStore.write(entry);
-            openJournals.put(entry.tradeId(), entry);
-            return true;
-        } catch (IOException e) {
-            logger.severe("거래 저널 쓰기 실패 (" + entry.tradeId() + "): " + e.getMessage());
-            return false;
-        }
-    }
-
     private boolean ensureReadyForNewTrade(Player player) {
-        if (journalStore.isLocked()) {
+        if (delivery.isJournalOrMemoryLocked()) {
             Msg.error(player, "거래 기능이 잠금 모드입니다. 관리자에게 문의해 주세요.");
             return false;
         }
@@ -2165,7 +1818,7 @@ public final class TradeService {
             return false;
         }
         UUID uuid = player.getUniqueId();
-        if (saveFailedLockedPlayers.contains(uuid)) {
+        if (delivery.isPlayerSaveFailedLocked(uuid)) {
             Msg.error(player, "이전 거래 저장 확인 실패로 거래가 일시 잠겨 있습니다. 관리자에게 문의해 주세요.");
             return false;
         }
@@ -2175,16 +1828,6 @@ public final class TradeService {
             return false;
         }
         return true;
-    }
-
-    private List<UUID> relatedJournalIds(UUID playerId) {
-        List<UUID> ids = new ArrayList<>();
-        for (Journal.Entry e : openJournals.values()) {
-            if (e.involves(playerId)) {
-                ids.add(e.tradeId());
-            }
-        }
-        return ids;
     }
 
     private void notifyIfOnline(UUID uuid, String text) {
@@ -2206,5 +1849,220 @@ public final class TradeService {
     private void notifyBothOnline(Journal.Entry entry, String text) {
         notifyIfOnline(entry.playerA(), text);
         notifyIfOnline(entry.playerB(), text);
+    }
+
+    // ------------------------------------------------------------------ DeliveryCoordinator 어댑터
+
+    private final class StoreJournalPort implements DeliveryCoordinator.JournalPort {
+        @Override
+        public void write(Journal.Entry entry) throws IOException {
+            journalStore.write(entry);
+        }
+
+        @Override
+        public Journal.LoadReport loadAll(long nowMs) throws IOException {
+            return journalStore.loadAll(nowMs);
+        }
+
+        @Override
+        public Journal.UnlockResult unlock(String adminName, long nowMs) throws IOException {
+            return journalStore.unlock(adminName, nowMs);
+        }
+
+        @Override
+        public boolean isStoreLocked() {
+            return journalStore.isLocked();
+        }
+
+        @Override
+        public String storeLockReason() {
+            return journalStore.lockReason();
+        }
+
+        @Override
+        public boolean isLoadSucceeded() {
+            return journalStore.isLoadSucceeded();
+        }
+    }
+
+    private final class BukkitRecipientPort implements DeliveryCoordinator.RecipientPort {
+        @Override
+        public boolean isOnline(UUID playerId) {
+            Player p = server.getPlayer(playerId);
+            return p != null && p.isOnline();
+        }
+
+        @Override
+        public boolean isAlive(UUID playerId) {
+            Player p = server.getPlayer(playerId);
+            return p != null && p.isOnline() && !p.isDead();
+        }
+
+        @Override
+        public String playerName(UUID playerId, String fallbackName) {
+            Player p = server.getPlayer(playerId);
+            return p != null ? p.getName() : fallbackName;
+        }
+
+        @Override
+        public DeliveryCoordinator.SlotCheck inspectItemsAndSlots(UUID playerId, List<byte[]> itemBytes) {
+            Player p = server.getPlayer(playerId);
+            if (p == null || !p.isOnline()) {
+                return DeliveryCoordinator.SlotCheck.ok(0, List.of());
+            }
+            List<ItemStack> items;
+            try {
+                items = TradeInventoryHelper.deserializeStacks(itemBytes);
+            } catch (RuntimeException e) {
+                return DeliveryCoordinator.SlotCheck.deserializeFailed(e.getMessage());
+            }
+            int missing = TradeInventoryHelper.missingSlots(p.getInventory(), Map.of(), items);
+            return DeliveryCoordinator.SlotCheck.ok(missing, items);
+        }
+
+        @Override
+        public boolean saveData(UUID playerId) {
+            Player p = server.getPlayer(playerId);
+            if (p == null || !p.isOnline()) {
+                return false;
+            }
+            try {
+                p.saveData();
+                return true;
+            } catch (Throwable e) {
+                logger.severe("거래 불확실 지급/반환 확인 전 saveData() 예외 (" + p.getName() + "): " + e);
+                return false;
+            }
+        }
+
+        @Override
+        public DeliveryCoordinator.Snapshot snapshotInventoryAndPdc(UUID playerId) {
+            Player p = server.getPlayer(playerId);
+            if (p == null) {
+                return new DeliveryCoordinator.Snapshot(new ItemStack[0], "");
+            }
+            ItemStack[] invSnapshot = TradeInventoryHelper.snapshotStorage(p.getInventory());
+            String prevApplied = p.getPersistentDataContainer()
+                    .getOrDefault(keyApplied, PersistentDataType.STRING, "");
+            return new DeliveryCoordinator.Snapshot(invSnapshot, prevApplied);
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public boolean placeAllItems(UUID playerId, Object preparedItems) {
+            Player p = server.getPlayer(playerId);
+            if (p == null || !p.isOnline()) {
+                return false;
+            }
+            return TradeInventoryHelper.placeAllItems(p.getInventory(), (List<ItemStack>) preparedItems);
+        }
+
+        @Override
+        public boolean writePdcAndSave(UUID playerId, String newApplied) {
+            Player p = server.getPlayer(playerId);
+            if (p == null || !p.isOnline()) {
+                return false;
+            }
+            try {
+                p.getPersistentDataContainer().set(keyApplied, PersistentDataType.STRING, newApplied);
+                p.saveData();
+                return true;
+            } catch (Throwable e) {
+                logger.severe("거래 지급/반환 saveData() 중 예외 (" + p.getName() + "): " + e);
+                return false;
+            }
+        }
+
+        @Override
+        public boolean restoreInventoryAndPdc(UUID playerId, DeliveryCoordinator.Snapshot snapshot) {
+            Player p = server.getPlayer(playerId);
+            if (p == null) {
+                return false;
+            }
+            try {
+                p.getInventory().setStorageContents((ItemStack[]) snapshot.inventorySnapshot());
+                PersistentDataContainer pdc = p.getPersistentDataContainer();
+                String prevApplied = snapshot.prevApplied();
+                if (prevApplied == null || prevApplied.isEmpty()) {
+                    pdc.remove(keyApplied);
+                } else {
+                    pdc.set(keyApplied, PersistentDataType.STRING, prevApplied);
+                }
+                return true;
+            } catch (Throwable t) {
+                logger.severe("거래 지급 같은 틱 회수 실패 (" + p.getName() + "): " + t);
+                return false;
+            }
+        }
+    }
+
+    private final class BukkitDiskTokenReader implements DeliveryCoordinator.DiskTokenReader {
+        @Override
+        public DeliveryCoordinator.DiskCheck checkAnyAttemptToken(
+                UUID playerId, UUID tradeId, TradeTokens.Purpose purpose) {
+            String[] foundToken = {null};
+            PlayerDatReader.MarkerCheck check = PlayerDatReader.check(worldRoot, playerId, TradeTokens.DAT_KEYS, raw -> {
+                String tok = TradeTokens.findAnyAttemptToken(raw, tradeId, purpose, playerId);
+                if (tok != null) {
+                    foundToken[0] = tok;
+                    return true;
+                }
+                return false;
+            });
+            return new DeliveryCoordinator.DiskCheck(check.status(), foundToken[0]);
+        }
+
+        @Override
+        public PlayerDatReader.MarkerStatus checkExactAttemptToken(
+                UUID playerId, UUID tradeId, TradeTokens.Purpose purpose, int attempt) {
+            PlayerDatReader.MarkerCheck check = PlayerDatReader.check(worldRoot, playerId, TradeTokens.DAT_KEYS, raw ->
+                    purpose == TradeTokens.Purpose.RETURN
+                            ? TradeTokens.containsReturnExact(raw, tradeId, playerId, attempt)
+                            : TradeTokens.containsGiveExact(raw, tradeId, playerId, attempt));
+            return check.status();
+        }
+    }
+
+    private final class BukkitFeedback implements DeliveryCoordinator.Feedback {
+        @Override
+        public void notifyInventoryFull(UUID playerId, int missingSlots) {
+            Player p = server.getPlayer(playerId);
+            if (p != null && p.isOnline()) {
+                Msg.warn(p, "인벤토리 빈칸이 " + missingSlots + "칸 필요합니다. 빈칸을 비운 뒤 "
+                        + "<#FFDF6B>/trade claim<#AAAAAA> 으로 받아 주세요.");
+            }
+        }
+
+        @Override
+        public void notifyUncertainPending(UUID playerId) {
+            Player p = server.getPlayer(playerId);
+            if (p != null && p.isOnline()) {
+                Msg.warn(p, "저장 확인이 지연되어 지급 상태를 재확인 중입니다. 잠시 후 자동 처리되거나 "
+                        + "<#FFDF6B>/trade claim<#AAAAAA> 으로 확인할 수 있습니다.");
+            }
+        }
+
+        @Override
+        public void notifyRollbackFailedSealed(UUID playerId, UUID tradeId) {
+            Player p = server.getPlayer(playerId);
+            if (p != null && p.isOnline()) {
+                Msg.error(p, "거래 물건 처리 중 오류가 발생해 거래 기능이 일시 잠겼습니다. 관리자에게 문의해 주세요.");
+            }
+        }
+
+        @Override
+        public void logInfo(String message) {
+            logger.info(message);
+        }
+
+        @Override
+        public void logWarning(String message) {
+            logger.warning(message);
+        }
+
+        @Override
+        public void logSevere(String message) {
+            logger.severe(message);
+        }
     }
 }

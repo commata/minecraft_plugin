@@ -63,7 +63,7 @@ public final class TradePlugin extends JavaPlugin {
 
         getLogger().info("Trade " + getPluginMeta().getVersion() + " 활성화 (Bank " + bank.statusText()
                 + ", Travel " + travel.statusText()
-                + ", 저널 " + (tradeService.journalStore().isLocked() ? "잠김" : "정상")
+                + ", 저널 " + (tradeService.isJournalOrMemoryLocked() ? "잠김" : "정상")
                 + ", 미완료 저널 " + tradeService.openJournals().size() + "건)");
     }
 

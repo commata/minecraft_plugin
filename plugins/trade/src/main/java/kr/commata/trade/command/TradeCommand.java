@@ -142,6 +142,11 @@ public final class TradeCommand implements BasicCommand {
                     Placeholder.unparsed("err", String.valueOf(e.getMessage())));
         }
 
+        if (!service.unpersistedProtectiveIds().isEmpty()) {
+            Msg.raw(sender, "<#FF5555>  미영속 보호 상태 저널(전체 잠금): " + service.unpersistedProtectiveIds().size()
+                    + "건 " + service.unpersistedProtectiveIds());
+        }
+
         if (!service.saveFailedLockedPlayers().isEmpty()) {
             Msg.raw(sender, "<#FF5555>  저장 확인 실패 잠금 플레이어: " + service.saveFailedLockedPlayers().size() + "명 "
                     + service.saveFailedLockedPlayers());
