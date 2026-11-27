@@ -1,0 +1,17 @@
+# Trade 플러그인 설정 (TRADE.md 2·7·10장, ECONOMY.md 7.3)
+# 모든 시간 설정은 1 이상의 정수(초)입니다. 잘못된 값은 경고 후 기본값을 씁니다.
+
+# 거래 요청 만료 시간 (초)
+request-timeout-seconds: 30
+
+# 양쪽 준비 완료 후 확정 카운트다운 (초)
+countdown-seconds: 3
+
+# 같은 상대에게 거절·만료 뒤 재요청 금지 시간 (초)
+re-request-cooldown-seconds: 10
+
+# 금액 입력 대화창 만료 시간 (초)
+dialog-timeout-seconds: 60
+
+# 거래 로그(trades-YYYY-MM-DD.log) 날짜 기준 시간대
+time-zone: Asia/Seoul

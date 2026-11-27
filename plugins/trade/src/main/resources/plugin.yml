@@ -1,0 +1,17 @@
+name: Trade
+version: '${version}'
+main: kr.commata.trade.TradePlugin
+api-version: '${apiVersion}'
+description: 플레이어 간 1:1 안전 교환 (/trade, /거래) (ECONOMY.md 7.3·7.4.6, TRADE.md)
+author: commata
+depend: [Vault]
+# Bank 가 없거나 잠금 모드이면 거래 기능 전체를 잠급니다 (TRADE.md 1·10장).
+# Travel 이 없으면 전투 태그 검사를 생략하고 /trade status 에 표시합니다 (TRADE.md 2장).
+softdepend: [Bank, Travel, EconomyHub]
+permissions:
+  trade.use:
+    description: /trade 1:1 안전 교환 사용 및 미수령 물건 수령
+    default: true
+  trade.admin:
+    description: /trade status·reload·resolve 관리자 명령
+    default: op
