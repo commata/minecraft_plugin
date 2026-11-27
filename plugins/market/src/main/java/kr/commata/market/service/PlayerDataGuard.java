@@ -8,8 +8,8 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
+import kr.commata.common.playerdata.PlayerDatReader;
 import kr.commata.market.core.MarketStore;
-import kr.commata.market.core.PlayerDatReader;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.NamespacedKey;
@@ -34,6 +34,7 @@ import org.bukkit.plugin.Plugin;
 public final class PlayerDataGuard implements Listener {
 
     private static final String KICK_MESSAGE = "플레이어 데이터를 확인 중입니다. 관리자에게 문의해 주세요.";
+    private static final PlayerDatReader.Keys MARKET_KEYS = PlayerDatReader.Keys.of("market", "applied_tx", "seq");
 
     private final Plugin plugin;
     private final MarketStore store;
@@ -84,7 +85,7 @@ public final class PlayerDataGuard implements Listener {
             if (!store.hasMarketHistory(uuid)) {
                 return;
             }
-            PlayerDatReader.DatSnapshot snap = PlayerDatReader.read(worldRoot, uuid);
+            PlayerDatReader.DatSnapshot snap = PlayerDatReader.read(worldRoot, uuid, MARKET_KEYS);
             if (snap.status() != PlayerDatReader.DatStatus.OK) {
                 preLoginUnreadable.put(uuid, snap.reason());
                 event.disallow(AsyncPlayerPreLoginEvent.Result.KICK_OTHER,

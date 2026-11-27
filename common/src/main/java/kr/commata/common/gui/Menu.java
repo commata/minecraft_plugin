@@ -134,11 +134,32 @@ public abstract class Menu implements InventoryHolder {
         }
     }
 
+    /**
+     * 아래(플레이어) 인벤토리의 좌·우클릭을 버튼 해석으로 받을지 여부. 기본값은 {@code false} 로 기존 메뉴 동작은 바뀌지 않습니다.
+     *
+     * <p>{@code Trade} 거래 창처럼 아이템 이동은 전부 취소한 채 플레이어 인벤토리 클릭만 해석해야 하는 메뉴(ECONOMY.md 7.4.6,
+     * TRADE.md 3·7장)만 {@code true} 로 켜고 {@link #bottomClick(Player, int, ClickType)} 를 구현합니다.
+     */
+    protected boolean acceptsBottomClicks() {
+        return false;
+    }
+
+    /**
+     * {@link #acceptsBottomClicks()} 가 {@code true} 일 때 아래 인벤토리의 좌·우클릭만 전달됩니다.
+     * 아이템 이동은 {@link MenuListener} 가 이미 취소한 상태이며, {@code slot} 은 {@code PlayerInventory} 슬롯(0–35 등)입니다.
+     */
+    protected void bottomClick(Player player, int slot, ClickType type) {
+    }
+
     final void click(Player player, int slot, ClickType type) {
         Click click = clicks.get(slot);
         if (click != null) {
             click.handle(player, type);
         }
+    }
+
+    final void handleBottomClick(Player player, int slot, ClickType type) {
+        bottomClick(player, slot, type);
     }
 
     final void close(Player player) {

@@ -6,6 +6,8 @@ import java.util.logging.Logger;
 import kr.commata.bank.core.Account;
 import kr.commata.bank.core.BankStore;
 import kr.commata.bank.core.BootReport;
+import kr.commata.bank.core.TradeLookup;
+import kr.commata.bank.core.TradeOutcome;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -96,6 +98,17 @@ public final class BankService {
             }
         }
         return fallback;
+    }
+
+    /** Trade 1:1 교환 정산. 잠금 모드이면 LOCKED 로 거부합니다 (TRADE.md 4장). */
+    public TradeOutcome settleTrade(String extRef, UUID a, long aPays, UUID b, long bPays,
+                                    String source, String context) {
+        return BankStore.settleTrade(store, lockReason, extRef, a, aPays, b, bPays, source, context);
+    }
+
+    /** Trade 1:1 교환 정산 조회. 잠금 모드이면 ERROR 를 반환합니다 (TRADE.md 4장). */
+    public TradeLookup findTradeByExtRef(String extRef) {
+        return BankStore.findTradeByExtRef(store, lockReason, extRef);
     }
 
     /**

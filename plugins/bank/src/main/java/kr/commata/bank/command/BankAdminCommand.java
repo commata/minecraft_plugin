@@ -182,7 +182,7 @@ public final class BankAdminCommand implements BasicCommand {
         boolean out = who.equals(r.from());
         Long after = out ? r.fromBalanceAfter() : r.toBalanceAfter();
         String counterpart = "";
-        if (r.type() == TxType.PAY) {
+        if (r.type() == TxType.PAY || r.type() == TxType.TRADE) {
             UUID other = out ? r.to() : r.from();
             counterpart = (out ? " → " : " ← ") + bank.nameOf(other, other.toString().substring(0, 8));
         }

@@ -32,9 +32,26 @@ import org.sqlite.SQLiteOpenMode;
 public final class BankStore implements AutoCloseable {
 
     public static final String DB_FILE = "bank.db";
-    static final int SCHEMA_VERSION = 3;
+    static final int SCHEMA_VERSION = 4;
     /** 다른 프로세스가 쓰기 잠금을 잡고 있을 때 기다리는 시간 */
     static final int BUSY_TIMEOUT_MS = 2000;
+
+    private static final String TRADE_SETTLEMENTS_BODY = """
+            (
+              ext_ref  TEXT PRIMARY KEY,
+              a_uuid   TEXT NOT NULL,
+              b_uuid   TEXT NOT NULL,
+              a_pays   INTEGER NOT NULL CHECK (a_pays >= 0),
+              b_pays   INTEGER NOT NULL CHECK (b_pays >= 0),
+              tx_a_id  INTEGER REFERENCES transactions (id),
+              tx_b_id  INTEGER REFERENCES transactions (id),
+              source   TEXT NOT NULL,
+              boot_id  TEXT NOT NULL,
+              time_ms  INTEGER NOT NULL,
+              context  TEXT,
+              CHECK (a_uuid <> b_uuid),
+              CHECK (a_pays > 0 OR b_pays > 0)
+            )""";
 
     private static final String SCHEMA = """
             CREATE TABLE meta (
@@ -82,7 +99,7 @@ public final class BankStore implements AutoCloseable {
             CREATE UNIQUE INDEX transactions_ext_ref ON transactions(ext_ref);
             CREATE INDEX transactions_from ON transactions (from_uuid, id);
             CREATE INDEX transactions_to ON transactions (to_uuid, id);
-            """;
+            """ + "CREATE TABLE trade_settlements " + TRADE_SETTLEMENTS_BODY + ";\n";
 
     private final Connection conn;
     private final LongSupplier clock;
@@ -196,7 +213,10 @@ public final class BankStore implements AutoCloseable {
         return config.createConnection("jdbc:sqlite:" + dbFile.toAbsolutePath());
     }
 
-    /** 예전 스키마(v1)에 v2 의 칸·테이블을 더함. 추가만 하므로 예전 JAR 로 롤백해도 읽을 수 있음. */
+    /**
+     * 예전 스키마(v1~v3)에 누락된 칸·테이블을 더함(추가만). 단 v4 의 원장 {@code TRADE} 행은 v3 이하 JAR 의 {@code /bank log} 가
+     * 읽지 못하므로, v4 이후 JAR 만 되돌리는 롤백은 안 되고 같은 시점 전체 스냅샷 복원으로만 되돌린다 (TRADE.md 4장).
+     */
     private void migrate() throws SQLException {
         write(() -> {
             boolean hasWorldDir = false;
@@ -224,6 +244,7 @@ public final class BankStore implements AutoCloseable {
             }
             if (!hasRef) exec("ALTER TABLE transactions ADD COLUMN ext_ref TEXT");
             exec("CREATE UNIQUE INDEX IF NOT EXISTS transactions_ext_ref ON transactions(ext_ref)");
+            exec("CREATE TABLE IF NOT EXISTS trade_settlements " + TRADE_SETTLEMENTS_BODY);
             String schema = meta("schema");
             if (schema == null || Integer.parseInt(schema) < SCHEMA_VERSION) {
                 putMeta("schema", String.valueOf(SCHEMA_VERSION));
@@ -837,6 +858,9 @@ public final class BankStore implements AutoCloseable {
                         }
                     }
                 }
+                if (hasTradeExtRef(extRef)) {
+                    throw new Rejected(Failure.INVALID_AMOUNT, 0);
+                }
                 long balance = balanceForUpdate(who, null, credit);
                 if (balance < 0 || (!credit && balance < amount)) throw new Rejected(Failure.INSUFFICIENT_FUNDS, 0);
                 long next = credit ? balance + amount : balance - amount;
@@ -854,6 +878,255 @@ public final class BankStore implements AutoCloseable {
             return new Receipt(ExternalStatus.OK, applied.txId());
         } catch (SQLException | Rejected e) {
             return new Receipt(brokenReason == null ? ExternalStatus.REJECTED : ExternalStatus.UNKNOWN, 0);
+        }
+    }
+
+    // ------------------------------------------------------------------ Trade 1:1 교환 정산 API
+
+    private record TradeApplied(long txAId, long txBId, boolean idempotent, Map<UUID, Long> newBalances) {
+    }
+
+    private static final class TradeRejected extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+        final TradeFailure failure;
+        final UUID affectedPlayer;
+        final String detail;
+
+        TradeRejected(TradeFailure failure, UUID affectedPlayer, String detail) {
+            super(failure.name(), null, false, false);
+            this.failure = failure;
+            this.affectedPlayer = affectedPlayer;
+            this.detail = detail;
+        }
+    }
+
+    private static final class TradeMismatch extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+        final String detail;
+
+        TradeMismatch(String detail) {
+            super(detail, null, false, false);
+            this.detail = detail;
+        }
+    }
+
+    /** 잠금 모드({@code store == null})를 포함한 1:1 교환 정산 진입점 (TRADE.md 4장). */
+    public static TradeOutcome settleTrade(BankStore store, String lockReason,
+                                           String extRef, UUID a, long aPays, UUID b, long bPays,
+                                           String source, String context) {
+        if (store == null) {
+            return TradeOutcome.rejected(TradeFailure.LOCKED, null, lockReason == null ? "" : lockReason);
+        }
+        return store.settleTrade(extRef, a, aPays, b, bPays, source, context);
+    }
+
+    /** 잠금 모드({@code store == null})를 포함한 1:1 교환 정산 조회 진입점 (TRADE.md 4장). */
+    public static TradeLookup findTradeByExtRef(BankStore store, String lockReason, String extRef) {
+        if (store == null) {
+            return TradeLookup.error(lockReason == null || lockReason.isBlank()
+                    ? TradeFailure.LOCKED.message() : lockReason);
+        }
+        return store.findTradeByExtRef(extRef);
+    }
+
+    /**
+     * 1:1 교환 정산: 한 SQLite 트랜잭션(BEGIN IMMEDIATE) 안에서 양쪽 잔액 검사·이동·기록을 처리합니다 (TRADE.md 4장).
+     *
+     * <p>같은 {@code extRef}가 이미 있으면 기록된 두 UUID·양쪽 금액·출처가 모두 일치할 때만 기존 결과(OK, {@code idempotent=true})를
+     * 반환하고, 하나라도 다르면 {@link TradeOutcome.Status#MISMATCH}를 반환합니다.
+     * 계좌가 없는 쪽은 지급액이 0이고 받는 금액이 양수일 때만 기존 {@link #deposit}과 같이 0원 계좌를 새로 만듭니다.
+     */
+    public TradeOutcome settleTrade(String extRef, UUID a, long aPays, UUID b, long bPays,
+                                    String source, String context) {
+        if (extRef == null || extRef.isBlank() || a == null || b == null || source == null || source.isBlank()) {
+            return TradeOutcome.rejected(TradeFailure.INVALID_REQUEST, null, "");
+        }
+        boolean selfTrade = a.equals(b);
+        boolean invalidAmount = aPays < 0 || aPays > Amounts.MAX || bPays < 0 || bPays > Amounts.MAX
+                || (aPays == 0 && bPays == 0);
+        try {
+            TradeApplied applied = write(() -> {
+                requireBoot();
+                // 기존 ref 비교를 입력 검사보다 먼저: 이미 쓰인 ref 에 다른 값이 오면 형식이 틀려도 MISMATCH (QA ④-1)
+                Optional<TradeLookup.TradeRecord> existing = findTradeRecord(extRef);
+                if (existing.isPresent()) {
+                    TradeLookup.TradeRecord rec = existing.get();
+                    if (!selfTrade && !invalidAmount && rec.matches(a, aPays, b, bPays) && source.equals(rec.source())) {
+                        return new TradeApplied(rec.txAId(), rec.txBId(), true, Map.of());
+                    }
+                    throw new TradeMismatch("기존=" + rec.a() + ":" + rec.aPays() + "/" + rec.b() + ":" + rec.bPays()
+                            + " (" + rec.source() + ")");
+                }
+                if (hasTransactionExtRef(extRef)) {
+                    throw new TradeMismatch("다른 종류의 거래에 이미 사용된 extRef: " + extRef);
+                }
+                if (selfTrade) {
+                    throw new TradeRejected(TradeFailure.SELF_TRADE, a, "");
+                }
+                if (invalidAmount) {
+                    throw new TradeRejected(TradeFailure.INVALID_AMOUNT, null, "");
+                }
+
+                long aRaw = balanceForUpdate(a, null, false);
+                boolean aExists = aRaw >= 0;
+                long aCur = aExists ? aRaw : 0L;
+                long bRaw = balanceForUpdate(b, null, false);
+                boolean bExists = bRaw >= 0;
+                long bCur = bExists ? bRaw : 0L;
+
+                if (aPays > 0 && aCur < aPays) {
+                    throw new TradeRejected(TradeFailure.INSUFFICIENT, a, "현재 잔액 " + Amounts.format(aCur));
+                }
+                if (bPays > 0 && bCur < bPays) {
+                    throw new TradeRejected(TradeFailure.INSUFFICIENT, b, "현재 잔액 " + Amounts.format(bCur));
+                }
+
+                long aNext = aCur - aPays + bPays;
+                long bNext = bCur - bPays + aPays;
+                if (aNext > Amounts.MAX) {
+                    throw new TradeRejected(TradeFailure.BALANCE_LIMIT, a, "");
+                }
+                if (bNext > Amounts.MAX) {
+                    throw new TradeRejected(TradeFailure.BALANCE_LIMIT, b, "");
+                }
+
+                // 지급액이 0이고 받는 쪽만 계좌가 없을 수 있음 (기존 deposit 계좌 생성 규칙과 동일)
+                if (!aExists) {
+                    balanceForUpdate(a, null, true);
+                }
+                if (!bExists) {
+                    balanceForUpdate(b, null, true);
+                }
+                setBalance(a, aNext);
+                setBalance(b, bNext);
+
+                Long txAId = null;
+                Long txBId = null;
+                if (aPays > 0 && bPays > 0) {
+                    long aMid = aCur - aPays;
+                    long bMid = bCur + aPays;
+                    txAId = insertTx(TxType.TRADE, a, b, aPays, aMid, bMid, source, context, null);
+                    txBId = insertTx(TxType.TRADE, b, a, bPays, bNext, aNext, source, context, null);
+                } else if (aPays > 0) {
+                    txAId = insertTx(TxType.TRADE, a, b, aPays, aNext, bNext, source, context, null);
+                } else {
+                    txBId = insertTx(TxType.TRADE, b, a, bPays, bNext, aNext, source, context, null);
+                }
+
+                try (PreparedStatement ps = conn.prepareStatement(
+                        "INSERT INTO trade_settlements (ext_ref, a_uuid, b_uuid, a_pays, b_pays,"
+                                + " tx_a_id, tx_b_id, source, boot_id, time_ms, context)"
+                                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+                    ps.setString(1, extRef);
+                    ps.setString(2, a.toString());
+                    ps.setString(3, b.toString());
+                    ps.setLong(4, aPays);
+                    ps.setLong(5, bPays);
+                    setNullable(ps, 6, txAId);
+                    setNullable(ps, 7, txBId);
+                    ps.setString(8, source);
+                    ps.setString(9, bootId);
+                    ps.setLong(10, clock.getAsLong());
+                    setNullable(ps, 11, context);
+                    ps.executeUpdate();
+                }
+
+                return new TradeApplied(txAId == null ? 0L : txAId, txBId == null ? 0L : txBId, false,
+                        Map.of(a, aNext, b, bNext));
+            }, res -> balances.putAll(res.newBalances()));
+            return TradeOutcome.ok(applied.txAId(), applied.txBId(), applied.idempotent());
+        } catch (TradeRejected r) {
+            if (brokenReason != null) {
+                return TradeOutcome.unknown(brokenReason);
+            }
+            return TradeOutcome.rejected(r.failure, r.affectedPlayer, r.detail);
+        } catch (TradeMismatch m) {
+            if (brokenReason != null) {
+                return TradeOutcome.unknown(brokenReason);
+            }
+            return TradeOutcome.mismatch(m.detail);
+        } catch (ClosedException e) {
+            return TradeOutcome.rejected(TradeFailure.CLOSED, null, "");
+        } catch (SQLException | RuntimeException e) {
+            if (brokenReason != null) {
+                return TradeOutcome.unknown(brokenReason);
+            }
+            return TradeOutcome.rejected(TradeFailure.STORAGE_ERROR, null,
+                    e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+    }
+
+    /** 거래번호로 이미 커밋된 1:1 교환 정산 기록을 조회합니다. 조회 오류는 거래 없음과 구분합니다 (TRADE.md 4장). */
+    public TradeLookup findTradeByExtRef(String extRef) {
+        if (extRef == null || extRef.isBlank()) {
+            return TradeLookup.error("extRef 가 비어 있음");
+        }
+        lock.lock();
+        try {
+            ensureUsable();
+            Optional<TradeLookup.TradeRecord> found = findTradeRecord(extRef);
+            if (found.isPresent()) {
+                return TradeLookup.found(found.get());
+            }
+            if (hasTransactionExtRef(extRef)) {
+                return TradeLookup.error("다른 종류의 거래에 사용된 extRef: " + extRef);
+            }
+            return TradeLookup.notFound();
+        } catch (SQLException | RuntimeException e) {
+            return TradeLookup.error(brokenReason != null ? brokenReason : e.getMessage());
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private Optional<TradeLookup.TradeRecord> findTradeRecord(String extRef) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT ext_ref, a_uuid, a_pays, b_uuid, b_pays, tx_a_id, tx_b_id, source, boot_id, time_ms, context"
+                        + " FROM trade_settlements WHERE ext_ref = ?")) {
+            ps.setString(1, extRef);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) {
+                    return Optional.empty();
+                }
+                long txAId = rs.getLong(6);
+                if (rs.wasNull()) {
+                    txAId = 0L;
+                }
+                long txBId = rs.getLong(7);
+                if (rs.wasNull()) {
+                    txBId = 0L;
+                }
+                return Optional.of(new TradeLookup.TradeRecord(
+                        rs.getString(1),
+                        UUID.fromString(rs.getString(2)),
+                        rs.getLong(3),
+                        UUID.fromString(rs.getString(4)),
+                        rs.getLong(5),
+                        txAId,
+                        txBId,
+                        rs.getString(8),
+                        rs.getString(9),
+                        rs.getLong(10),
+                        rs.getString(11)));
+            }
+        }
+    }
+
+    private boolean hasTransactionExtRef(String extRef) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("SELECT 1 FROM transactions WHERE ext_ref = ?")) {
+            ps.setString(1, extRef);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private boolean hasTradeExtRef(String extRef) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("SELECT 1 FROM trade_settlements WHERE ext_ref = ?")) {
+            ps.setString(1, extRef);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
         }
     }
 
@@ -1199,6 +1472,16 @@ public final class BankStore implements AutoCloseable {
             exec("PRAGMA busy_timeout = " + ms);
             return null;
         });
+    }
+
+    /** 테스트용: 커밋·롤백 불확실 상태({@link #brokenReason}) 흉내. */
+    void simulateBrokenForTest(String reason) {
+        lock.lock();
+        try {
+            breakConnection(reason);
+        } finally {
+            lock.unlock();
+        }
     }
 
     /** 테스트·점검용 meta 조회. */

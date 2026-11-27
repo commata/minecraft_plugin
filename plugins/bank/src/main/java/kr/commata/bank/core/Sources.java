@@ -12,6 +12,8 @@ public final class Sources {
     public static final String SHOP = "EconomyShopGUI";
     /** Market 출금은 /market resolve 로만 환불 ({@code BankStore.refundByExtRef}, ECONOMY.md 13.6) */
     public static final String MARKET = "Market";
+    /** Trade 1:1 교환 정산 ({@code BankStore.settleTrade}, TRADE.md 4·9장) */
+    public static final String TRADE = "Trade";
 
     /** 호출 스택에서 건너뛰는 플러그인: Bank 자신, 그리고 중간에서 호출을 넘겨줄 수 있는 VaultUnlocked */
     public static final Set<String> SKIPPED = Set.of(BANK, "Vault");

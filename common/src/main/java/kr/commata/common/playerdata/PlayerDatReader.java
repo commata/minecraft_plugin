@@ -1,4 +1,4 @@
-package kr.commata.market.core;
+package kr.commata.common.playerdata;
 
 import java.io.BufferedInputStream;
 import java.io.DataInputStream;
@@ -8,21 +8,20 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Predicate;
 import java.util.zip.GZIPInputStream;
 
 /**
  * Paper 26.3 플레이어 파일({@code players/data/<uuid>.dat})을 디스크에서 직접 GZIP·NBT 해석해
- * {@code BukkitValues}의 {@code market:applied_tx}와 {@code market:seq}를 확인합니다 (ECONOMY.md 13.6, 14.3).
+ * {@code BukkitValues} 안의 지정된 PDC 키(문자열 마커·정수 순번)를 확인합니다 (ECONOMY.md 13.6, TRADE.md 0·5·6장).
  *
  * <p>결과는 반드시 세 가지로 나눕니다: {@link MarkerStatus#FOUND}, {@link MarkerStatus#ABSENT},
  * {@link MarkerStatus#UNREADABLE}. 읽기·해석 실패나 UUID 불일치는 절대 {@code ABSENT}로 취급하지 않습니다.
  * Bukkit에 의존하지 않아 단위 테스트로 모든 손상 케이스를 검증합니다.
  */
 public final class PlayerDatReader {
-
-    public static final String KEY_APPLIED_TX = "market:applied_tx";
-    public static final String KEY_SEQ = "market:seq";
 
     private static final List<String> LOCATIONS = List.of("players/data", "playerdata");
     private static final int MAX_NBT_DEPTH = 128;
@@ -45,9 +44,41 @@ public final class PlayerDatReader {
 
     public enum MarkerStatus { FOUND, ABSENT, UNREADABLE }
 
-    public record DatSnapshot(DatStatus status, Path file, String appliedTx, long seq, String reason) {
-        public static DatSnapshot ok(Path file, String appliedTx, long seq) {
-            return new DatSnapshot(DatStatus.OK, file, appliedTx == null ? "" : appliedTx, seq, null);
+    /**
+     * {@code BukkitValues}에서 읽어 올 PDC 키 쌍({@code <namespace>:<name>}).
+     *
+     * @param markerKey 토큰 목록 문자열 키 (예: {@code "market:applied_tx"}, {@code "trade:applied"}). 필요 없으면 {@code null}
+     * @param seqKey    저장 순번(Long/Int) 키 (예: {@code "market:seq"}). 필요 없으면 {@code null}
+     */
+    public record Keys(String markerKey, String seqKey) {
+
+        public static Keys of(String namespace, String markerName, String seqName) {
+            Objects.requireNonNull(namespace, "namespace");
+            if (namespace.isBlank()) {
+                throw new IllegalArgumentException("namespace 가 비어 있음");
+            }
+            return new Keys(
+                    markerName == null ? null : key(namespace, markerName),
+                    seqName == null ? null : key(namespace, seqName));
+        }
+
+        public static Keys ofMarker(String namespace, String markerName) {
+            return of(namespace, markerName, null);
+        }
+
+        public static String key(String namespace, String name) {
+            Objects.requireNonNull(namespace, "namespace");
+            Objects.requireNonNull(name, "name");
+            if (namespace.isBlank() || name.isBlank()) {
+                throw new IllegalArgumentException("PDC 키가 비어 있음: " + namespace + ":" + name);
+            }
+            return namespace + ":" + name;
+        }
+    }
+
+    public record DatSnapshot(DatStatus status, Path file, String marker, long seq, String reason) {
+        public static DatSnapshot ok(Path file, String marker, long seq) {
+            return new DatSnapshot(DatStatus.OK, file, marker == null ? "" : marker, seq, null);
         }
 
         public static DatSnapshot unreadable(Path file, String reason) {
@@ -86,14 +117,15 @@ public final class PlayerDatReader {
         return worldRoot.resolve(LOCATIONS.get(0)).resolve(uuid + ".dat");
     }
 
-    /** 월드 루트에서 플레이어 {@code .dat}를 직접 읽어 검증합니다. */
-    public static DatSnapshot read(Path worldRoot, UUID expectedUuid) {
+    /** 월드 루트에서 플레이어 {@code .dat}를 직접 읽어 검증하고 지정한 키 값을 반환합니다. */
+    public static DatSnapshot read(Path worldRoot, UUID expectedUuid, Keys keys) {
         Path file = locateDatFile(worldRoot, expectedUuid);
-        return readFile(file, expectedUuid);
+        return readFile(file, expectedUuid, keys);
     }
 
     /** 특정 {@code .dat} 파일을 직접 GZIP 해제·NBT 파싱하고 UUID 일치 여부를 검증합니다. */
-    public static DatSnapshot readFile(Path file, UUID expectedUuid) {
+    public static DatSnapshot readFile(Path file, UUID expectedUuid, Keys keys) {
+        Objects.requireNonNull(keys, "keys");
         if (file == null || !Files.isRegularFile(file)) {
             return DatSnapshot.unreadable(file, "플레이어 파일 없음");
         }
@@ -115,7 +147,7 @@ public final class PlayerDatReader {
             // 루트 이름 (보통 빈 문자열)
             readString(in);
 
-            RootFields fields = parseRootCompound(in);
+            RootFields fields = parseRootCompound(in, keys);
             // GZIP 트레일러까지 정상 끝났는지 확인 (잘린 파일 검출)
             if (in.read() != -1) {
                 return DatSnapshot.unreadable(file, "루트 Compound 뒤에 예기치 않은 데이터 있음");
@@ -126,7 +158,7 @@ public final class PlayerDatReader {
             if (!fields.uuid.equals(expectedUuid)) {
                 return DatSnapshot.unreadable(file, "UUID 불일치 (파일=" + fields.uuid + ", 대상=" + expectedUuid + ")");
             }
-            return DatSnapshot.ok(file, fields.appliedTx, fields.seq);
+            return DatSnapshot.ok(file, fields.marker, fields.seq);
         } catch (EOFException e) {
             return DatSnapshot.unreadable(file, "잘린 파일(EOF)");
         } catch (IOException e) {
@@ -134,23 +166,28 @@ public final class PlayerDatReader {
         }
     }
 
-    /** 특정 시도 토큰({@code txId#attempt})이 디스크에 저장됐는지 3상태로 확인합니다. */
-    public static MarkerCheck checkExact(Path worldRoot, UUID uuid, String txId, int attempt) {
-        DatSnapshot snap = read(worldRoot, uuid);
+    /**
+     * 월드 루트의 플레이어 {@code .dat}에서 지정한 마커 키 문자열을 읽어 {@code matcher}로 판정합니다.
+     * 파일 읽기·검증 실패는 항상 {@link MarkerStatus#UNREADABLE}입니다.
+     */
+    public static MarkerCheck check(Path worldRoot, UUID uuid, Keys keys, Predicate<String> matcher) {
+        Objects.requireNonNull(matcher, "matcher");
+        DatSnapshot snap = read(worldRoot, uuid, keys);
         if (snap.status() != DatStatus.OK) {
             return new MarkerCheck(MarkerStatus.UNREADABLE, snap.file(), 0L, snap.reason());
         }
-        boolean found = AppliedTxTokens.containsExact(snap.appliedTx(), txId, attempt);
+        boolean found = matcher.test(snap.marker());
         return new MarkerCheck(found ? MarkerStatus.FOUND : MarkerStatus.ABSENT, snap.file(), snap.seq(), null);
     }
 
-    /** 어느 시도든 {@code txId#} 토큰이 디스크에 저장됐는지 3상태로 확인합니다(기동·접속 복구용). */
-    public static MarkerCheck checkAnyAttempt(Path worldRoot, UUID uuid, String txId) {
-        DatSnapshot snap = read(worldRoot, uuid);
+    /** 특정 {@code .dat} 파일에서 지정한 마커 키 문자열을 읽어 {@code matcher}로 판정합니다. */
+    public static MarkerCheck checkFile(Path file, UUID uuid, Keys keys, Predicate<String> matcher) {
+        Objects.requireNonNull(matcher, "matcher");
+        DatSnapshot snap = readFile(file, uuid, keys);
         if (snap.status() != DatStatus.OK) {
             return new MarkerCheck(MarkerStatus.UNREADABLE, snap.file(), 0L, snap.reason());
         }
-        boolean found = AppliedTxTokens.containsAnyAttempt(snap.appliedTx(), txId);
+        boolean found = matcher.test(snap.marker());
         return new MarkerCheck(found ? MarkerStatus.FOUND : MarkerStatus.ABSENT, snap.file(), snap.seq(), null);
     }
 
@@ -160,11 +197,11 @@ public final class PlayerDatReader {
         UUID uuid;
         Long uuidMost;
         Long uuidLeast;
-        String appliedTx = "";
+        String marker = "";
         long seq;
     }
 
-    private static RootFields parseRootCompound(DataInputStream in) throws IOException {
+    private static RootFields parseRootCompound(DataInputStream in, Keys keys) throws IOException {
         RootFields out = new RootFields();
         while (true) {
             int type = in.readUnsignedByte();
@@ -189,7 +226,7 @@ public final class PlayerDatReader {
             } else if ("UUIDLeast".equals(name) && type == TAG_LONG) {
                 out.uuidLeast = in.readLong();
             } else if ("BukkitValues".equals(name) && type == TAG_COMPOUND) {
-                parseBukkitValues(in, out);
+                parseBukkitValues(in, out, keys);
             } else {
                 skipPayload(in, type, 1);
             }
@@ -200,18 +237,18 @@ public final class PlayerDatReader {
         return out;
     }
 
-    private static void parseBukkitValues(DataInputStream in, RootFields out) throws IOException {
+    private static void parseBukkitValues(DataInputStream in, RootFields out, Keys keys) throws IOException {
         while (true) {
             int type = in.readUnsignedByte();
             if (type == TAG_END) {
                 break;
             }
             String name = readString(in);
-            if (KEY_APPLIED_TX.equals(name) && type == TAG_STRING) {
-                out.appliedTx = readString(in);
-            } else if (KEY_SEQ.equals(name) && type == TAG_LONG) {
+            if (keys.markerKey() != null && keys.markerKey().equals(name) && type == TAG_STRING) {
+                out.marker = readString(in);
+            } else if (keys.seqKey() != null && keys.seqKey().equals(name) && type == TAG_LONG) {
                 out.seq = in.readLong();
-            } else if (KEY_SEQ.equals(name) && type == TAG_INT) {
+            } else if (keys.seqKey() != null && keys.seqKey().equals(name) && type == TAG_INT) {
                 out.seq = in.readInt();
             } else {
                 skipPayload(in, type, 2);

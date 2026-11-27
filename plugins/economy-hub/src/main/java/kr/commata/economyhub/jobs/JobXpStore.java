@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import kr.commata.common.io.AtomicFiles;
 
 /**
  * 직업 XP 복구 기록 파일 {@code plugins/EconomyHub/job-xp.tsv} (ECONOMY.md 7.2).

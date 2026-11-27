@@ -1,4 +1,4 @@
-package kr.commata.economyhub.jobs;
+package kr.commata.common.io;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -10,19 +10,28 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 
-/** 작은 기록 파일을 임시 파일 → fsync → 바꿔치기로 씀. 돌아오면 디스크에 반영된 것. Bukkit 에 의존하지 않음. */
-final class AtomicFiles {
+/**
+ * 작은 기록 파일·저널을 임시 파일 → fsync → 원자적 바꿔치기로 씁니다.
+ * 돌아오면 디스크에 반영된 상태입니다 (AGENTS.md 5.1, TRADE.md 5장). Bukkit 에 의존하지 않습니다.
+ */
+public final class AtomicFiles {
 
     private AtomicFiles() {
     }
 
-    static void write(Path file, String content) throws IOException {
+    /** UTF-8 문자열을 원자적으로 기록합니다. */
+    public static void write(Path file, String content) throws IOException {
+        writeBytes(file, content.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** 바이트 배열을 임시 파일에 쓰고 fsync 한 뒤 원자적으로 대상 경로에 바꿔치기합니다. */
+    public static void writeBytes(Path file, byte[] content) throws IOException {
         Path dir = file.toAbsolutePath().getParent();
         Files.createDirectories(dir);
         Path tmp = dir.resolve(file.getFileName() + ".tmp");
         try (FileChannel channel = FileChannel.open(tmp, StandardOpenOption.CREATE, StandardOpenOption.WRITE,
                 StandardOpenOption.TRUNCATE_EXISTING)) {
-            ByteBuffer buffer = ByteBuffer.wrap(content.getBytes(StandardCharsets.UTF_8));
+            ByteBuffer buffer = ByteBuffer.wrap(content);
             while (buffer.hasRemaining()) {
                 channel.write(buffer);
             }
