@@ -158,19 +158,30 @@ public final class TradeTokens {
 
     /** 목적·받는 사람 기준으로 반영 토큰 존재 여부를 판정합니다. */
     public static boolean containsAnyAttempt(String raw, UUID tradeId, Purpose purpose, UUID playerId) {
+        return findAnyAttemptToken(raw, tradeId, purpose, playerId) != null;
+    }
+
+    /** 목적·받는 사람 기준으로 디스크에 기록된 실제 토큰 문자열을 찾아 반환합니다. 없으면 {@code null}. */
+    public static String findAnyAttemptToken(String raw, UUID tradeId, Purpose purpose, UUID playerId) {
         Objects.requireNonNull(tradeId, "tradeId");
         Objects.requireNonNull(purpose, "purpose");
         Objects.requireNonNull(playerId, "playerId");
         if (purpose == Purpose.TAKE) {
-            return containsTake(raw, tradeId, playerId);
+            String target = takeToken(tradeId, playerId);
+            for (String entry : parse(raw)) {
+                if (entry.equals(target)) {
+                    return entry;
+                }
+            }
+            return null;
         }
         String prefix = tradeId + ":" + purpose.tag() + ":" + playerId + ":";
         for (String entry : parse(raw)) {
             if (entry.startsWith(prefix) && isPositiveInteger(entry.substring(prefix.length()))) {
-                return true;
+                return entry;
             }
         }
-        return false;
+        return null;
     }
 
     private static boolean isPositiveInteger(String s) {

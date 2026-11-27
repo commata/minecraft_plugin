@@ -66,18 +66,22 @@ public final class RecoveryPolicy {
 
     /** {@code COMMITTED} 지급 / {@code RETURNING} 돌려주기 한쪽 결정 */
     public enum DeliveryDecision {
-        /** 이미 완료(아이템 없음 / 저널 FOUND / NONE / 디스크에 임의 시도 번호 토큰 FOUND) */
+        /** 이미 완료(아이템 없음 / 저널 FOUND / NONE / 비-불확실 또는 새 접속에서 디스크 토큰 FOUND) */
         ALREADY_DONE,
         /** 디스크 확정 ABSENT + 온라인 + 생존 + 인벤토리 전부 들어감 → 지금 지급/반환 시도 */
         DELIVER_NOW,
-        /** 디스크 확정 ABSENT + 온라인 + 생존 + 빈칸 부족 → 대기 (/trade claim 안내) */
+        /** 디스크 확정 ABSENT + 온라인 + 생존 + 빈칸 부족, 또는 불확실 수렴 시 빈칸 부족 → 대기 (/trade claim 안내) */
         WAIT_INVENTORY_FULL,
-        /** 디스크 확정 ABSENT + 온라인 + 사망 중 → 리스폰 대기 (keepInventory=false 유실 방지, TRADE.md 5·6장) */
+        /** 디스크 확정 ABSENT 또는 불확실 수렴 시 온라인 + 사망 중 → 리스폰 대기 (keepInventory=false 유실 방지, TRADE.md 5·6장) */
         WAIT_DEAD,
         /** 디스크 확정 ABSENT + 오프라인 → 접속 대기 */
         WAIT_OFFLINE,
-        /** 디스크 UNREADABLE → 대기 */
-        WAIT_UNREADABLE
+        /** 디스크 UNREADABLE → 대기(불확실 상태에서는 완료·재지급 모두 보류) */
+        WAIT_UNREADABLE,
+        /** 회수 후 불확실(UNCERTAIN) 상태에서 디스크가 ABSENT 로 확정 → UNCERTAIN 해제 + 시도 번호 증가 + PENDING 전환 (P1-1) */
+        CLEAR_UNCERTAIN,
+        /** 같은 접속에서 회수 후 불확실(UNCERTAIN) 상태인데 디스크에 토큰 FOUND → 회수된 메모리에 다시 지급·저장해 디스크 기준으로 수렴 (P1-1) */
+        CONVERGE_TO_DISK
     }
 
     private RecoveryPolicy() {
@@ -168,10 +172,11 @@ public final class RecoveryPolicy {
         return TakingDecision.TRANSITION_TO_RETURNING;
     }
 
-    /** {@code COMMITTED} 단계에서 한쪽의 물건 지급 결정을 내립니다 (TRADE.md 5·6장). */
+    /** {@code COMMITTED} 단계에서 한쪽의 물건 지급 결정을 내립니다 (TRADE.md 5·6장, P1-1·P1-3). */
     public static DeliveryDecision decideGiveSide(
             boolean hasIncomingItems,
             Journal.SideStatus persistedGive,
+            boolean sameUncertainSession,
             PlayerDatReader.MarkerStatus diskStatus,
             boolean online,
             boolean alive,
@@ -180,13 +185,14 @@ public final class RecoveryPolicy {
         if (!hasIncomingItems || persistedGive == Journal.SideStatus.FOUND) {
             return DeliveryDecision.ALREADY_DONE;
         }
-        return decideDiskTransfer(diskStatus, online, alive, fitsInInventory);
+        return decideDiskTransfer(persistedGive, sameUncertainSession, diskStatus, online, alive, fitsInInventory);
     }
 
-    /** {@code RETURNING} 단계에서 한쪽의 물건 돌려주기 결정을 내립니다 (TRADE.md 5·6장, 정산 절대 재시도 없음). */
+    /** {@code RETURNING} 단계에서 한쪽의 물건 돌려주기 결정을 내립니다 (TRADE.md 5·6장, 정산 절대 재시도 없음, P1-1·P1-3). */
     public static DeliveryDecision decideReturnSide(
             boolean hasOwnItems,
             Journal.SideStatus persistedReturn,
+            boolean sameUncertainSession,
             PlayerDatReader.MarkerStatus diskStatus,
             boolean online,
             boolean alive,
@@ -195,7 +201,7 @@ public final class RecoveryPolicy {
         if (!hasOwnItems || persistedReturn == Journal.SideStatus.NONE || persistedReturn == Journal.SideStatus.FOUND) {
             return DeliveryDecision.ALREADY_DONE;
         }
-        return decideDiskTransfer(diskStatus, online, alive, fitsInInventory);
+        return decideDiskTransfer(persistedReturn, sameUncertainSession, diskStatus, online, alive, fitsInInventory);
     }
 
     /** {@code COMMITTED} 거래가 양쪽 지급 완료로 종료(저널 삭제) 가능한지. */
@@ -224,11 +230,36 @@ public final class RecoveryPolicy {
     }
 
     private static DeliveryDecision decideDiskTransfer(
+            Journal.SideStatus persistedStatus,
+            boolean sameUncertainSession,
             PlayerDatReader.MarkerStatus diskStatus,
             boolean online,
             boolean alive,
             boolean fitsInInventory
     ) {
+        if (persistedStatus == Journal.SideStatus.UNCERTAIN) {
+            if (diskStatus == PlayerDatReader.MarkerStatus.UNREADABLE) {
+                return DeliveryDecision.WAIT_UNREADABLE;
+            }
+            if (diskStatus == PlayerDatReader.MarkerStatus.ABSENT) {
+                // 디스크에 이번(및 예전) 시도 토큰이 없음 확정 → UNCERTAIN 해제 후 시도 번호 증가·재시도 가능
+                return DeliveryDecision.CLEAR_UNCERTAIN;
+            }
+            // diskStatus == FOUND
+            if (!sameUncertainSession) {
+                // 새로 접속(connGen 변경) 또는 오프라인 → 디스크에서 바로 읽었으므로 토큰으로 즉시 완료 판정
+                return DeliveryDecision.ALREADY_DONE;
+            }
+            // 같은 접속에서 회수 후 불확실인데 디스크에 토큰이 FOUND → 메모리는 회수된 상태이므로 메모리에 다시 지급해 수렴
+            if (!online) {
+                return DeliveryDecision.WAIT_OFFLINE;
+            }
+            if (!alive) {
+                return DeliveryDecision.WAIT_DEAD;
+            }
+            return fitsInInventory ? DeliveryDecision.CONVERGE_TO_DISK : DeliveryDecision.WAIT_INVENTORY_FULL;
+        }
+
         if (diskStatus == PlayerDatReader.MarkerStatus.FOUND) {
             return DeliveryDecision.ALREADY_DONE;
         }

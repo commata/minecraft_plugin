@@ -94,41 +94,71 @@ final class RecoveryPolicyTest {
 
     @Test
     void giveAndReturnDeliveryDecisionsCoverAllDiskAndOnlineStates() {
-        // 디스크에 토큰이 있으면(어느 시도 번호든) 오프라인·사망·빈칸부족이어도 ALREADY_DONE
+        // 디스크에 토큰이 있으면(어느 시도 번호든) 비-불확실 상태에서는 오프라인·사망·빈칸부족이어도 ALREADY_DONE
         assertEquals(RecoveryPolicy.DeliveryDecision.ALREADY_DONE,
-                RecoveryPolicy.decideGiveSide(true, Journal.SideStatus.PENDING,
+                RecoveryPolicy.decideGiveSide(true, Journal.SideStatus.PENDING, false,
                         PlayerDatReader.MarkerStatus.FOUND, false, false, false));
         assertEquals(RecoveryPolicy.DeliveryDecision.DELIVER_NOW,
-                RecoveryPolicy.decideGiveSide(true, Journal.SideStatus.PENDING,
+                RecoveryPolicy.decideGiveSide(true, Journal.SideStatus.PENDING, false,
                         PlayerDatReader.MarkerStatus.ABSENT, true, true, true));
         assertEquals(RecoveryPolicy.DeliveryDecision.WAIT_INVENTORY_FULL,
-                RecoveryPolicy.decideGiveSide(true, Journal.SideStatus.PENDING,
+                RecoveryPolicy.decideGiveSide(true, Journal.SideStatus.PENDING, false,
                         PlayerDatReader.MarkerStatus.ABSENT, true, true, false));
         assertEquals(RecoveryPolicy.DeliveryDecision.WAIT_DEAD,
-                RecoveryPolicy.decideGiveSide(true, Journal.SideStatus.PENDING,
+                RecoveryPolicy.decideGiveSide(true, Journal.SideStatus.PENDING, false,
                         PlayerDatReader.MarkerStatus.ABSENT, true, false, true));
         assertEquals(RecoveryPolicy.DeliveryDecision.WAIT_OFFLINE,
-                RecoveryPolicy.decideGiveSide(true, Journal.SideStatus.PENDING,
+                RecoveryPolicy.decideGiveSide(true, Journal.SideStatus.PENDING, false,
                         PlayerDatReader.MarkerStatus.ABSENT, false, false, true));
         assertEquals(RecoveryPolicy.DeliveryDecision.WAIT_UNREADABLE,
-                RecoveryPolicy.decideGiveSide(true, Journal.SideStatus.PENDING,
+                RecoveryPolicy.decideGiveSide(true, Journal.SideStatus.PENDING, false,
                         PlayerDatReader.MarkerStatus.UNREADABLE, true, true, true));
 
         // RETURNING: NONE 인 쪽(원래 take=ABSENT 였던 쪽)은 돌려줄 필요 없음
         assertEquals(RecoveryPolicy.DeliveryDecision.ALREADY_DONE,
-                RecoveryPolicy.decideReturnSide(true, Journal.SideStatus.NONE,
+                RecoveryPolicy.decideReturnSide(true, Journal.SideStatus.NONE, false,
                         PlayerDatReader.MarkerStatus.ABSENT, true, true, true));
         assertEquals(RecoveryPolicy.DeliveryDecision.DELIVER_NOW,
-                RecoveryPolicy.decideReturnSide(true, Journal.SideStatus.PENDING,
+                RecoveryPolicy.decideReturnSide(true, Journal.SideStatus.PENDING, false,
                         PlayerDatReader.MarkerStatus.ABSENT, true, true, true));
         assertEquals(RecoveryPolicy.DeliveryDecision.WAIT_DEAD,
-                RecoveryPolicy.decideReturnSide(true, Journal.SideStatus.PENDING,
+                RecoveryPolicy.decideReturnSide(true, Journal.SideStatus.PENDING, false,
                         PlayerDatReader.MarkerStatus.ABSENT, true, false, true));
+
+        // P1-1: 회수 후 UNCERTAIN 상태 전이 (같은 접속 vs 새 접속)
+        // 같은 접속 + UNREADABLE → 완료·재지급 모두 보류
+        assertEquals(RecoveryPolicy.DeliveryDecision.WAIT_UNREADABLE,
+                RecoveryPolicy.decideGiveSide(true, Journal.SideStatus.UNCERTAIN, true,
+                        PlayerDatReader.MarkerStatus.UNREADABLE, true, true, true));
+        // 같은 접속 + FOUND → 메모리는 회수된 상태이므로 CONVERGE_TO_DISK (사망/빈칸 부족이면 대기)
+        assertEquals(RecoveryPolicy.DeliveryDecision.CONVERGE_TO_DISK,
+                RecoveryPolicy.decideGiveSide(true, Journal.SideStatus.UNCERTAIN, true,
+                        PlayerDatReader.MarkerStatus.FOUND, true, true, true));
+        assertEquals(RecoveryPolicy.DeliveryDecision.WAIT_INVENTORY_FULL,
+                RecoveryPolicy.decideGiveSide(true, Journal.SideStatus.UNCERTAIN, true,
+                        PlayerDatReader.MarkerStatus.FOUND, true, true, false));
+        assertEquals(RecoveryPolicy.DeliveryDecision.WAIT_DEAD,
+                RecoveryPolicy.decideGiveSide(true, Journal.SideStatus.UNCERTAIN, true,
+                        PlayerDatReader.MarkerStatus.FOUND, true, false, true));
+        // 같은 접속 + ABSENT → UNCERTAIN 해제 + 시도 번호 증가(CLEAR_UNCERTAIN)
+        assertEquals(RecoveryPolicy.DeliveryDecision.CLEAR_UNCERTAIN,
+                RecoveryPolicy.decideGiveSide(true, Journal.SideStatus.UNCERTAIN, true,
+                        PlayerDatReader.MarkerStatus.ABSENT, true, true, true));
+        // 새 접속(sameUncertainSession=false) + FOUND → 디스크에서 막 읽었으므로 즉시 ALREADY_DONE
+        assertEquals(RecoveryPolicy.DeliveryDecision.ALREADY_DONE,
+                RecoveryPolicy.decideGiveSide(true, Journal.SideStatus.UNCERTAIN, false,
+                        PlayerDatReader.MarkerStatus.FOUND, true, true, false));
+        // 새 접속 + ABSENT → CLEAR_UNCERTAIN (반환 경로도 동일)
+        assertEquals(RecoveryPolicy.DeliveryDecision.CLEAR_UNCERTAIN,
+                RecoveryPolicy.decideReturnSide(true, Journal.SideStatus.UNCERTAIN, false,
+                        PlayerDatReader.MarkerStatus.ABSENT, true, true, true));
 
         assertTrue(RecoveryPolicy.isCommittedComplete(Journal.SideStatus.FOUND, Journal.SideStatus.FOUND));
         assertFalse(RecoveryPolicy.isCommittedComplete(Journal.SideStatus.FOUND, Journal.SideStatus.PENDING));
+        assertFalse(RecoveryPolicy.isCommittedComplete(Journal.SideStatus.FOUND, Journal.SideStatus.UNCERTAIN));
         assertTrue(RecoveryPolicy.isReturningComplete(Journal.SideStatus.NONE, Journal.SideStatus.FOUND));
         assertFalse(RecoveryPolicy.isReturningComplete(Journal.SideStatus.NONE, Journal.SideStatus.PENDING));
+        assertFalse(RecoveryPolicy.isReturningComplete(Journal.SideStatus.NONE, Journal.SideStatus.UNCERTAIN));
     }
 
     private static RecoveryPolicy.TakingDecision expectedDecision(

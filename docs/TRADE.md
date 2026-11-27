@@ -67,12 +67,12 @@
 | 2 의도 기록 `TAKING` | 양쪽 제시를 **그 순간 그 칸의 실제 스택에서 직렬화**(`ItemStack#serializeAsBytes`)해 저널에 기록, fsync. 직렬화·역직렬화에 같은 크기 제한(단일 스택 2 MiB, 전체 16 MiB)을 적용하며, 제한 초과는 차감 전 정상 실패(준비 해제 + 크기 초과 안내) | 쓰기 실패 → 아무것도 안 바뀜, 준비 해제 + severe (크기 초과는 정상 실패) |
 | 3 가져오기 (양쪽 같은 틱) | 각자 제시 칸에서 제시 개수 제거 + PDC `trade:applied`에 `<tradeId>:take:<uuid>` → `saveData()` → 디스크 확인 | `FOUND` 아닌 쪽: **빼낸 아이템을 돌려주지 않는다**(Market `/판매` 14.3 5번과 같음). 그 쪽 `take=PENDING`, 1분 타이머가 다시 `saveData`·디스크 확인(아래 6장) |
 | 4 돈·확정 `COMMITTED` | 양쪽 `take=FOUND` 일 때만. 금액이 있으면 `settleTrade`(4장): `OK` → 저널 `COMMITTED`. `REJECTED` → 취소(7번). `UNKNOWN/MISMATCH` → 저널 유지 + 두 사람 거래 잠금, 타이머가 `findByExtRef`(있음 → COMMITTED, 없음 → 취소, 계속 모름 → 관리자). 금액이 둘 다 0원이면 바로 `COMMITTED` | — |
-| 5 지급 (양쪽, 시도 번호 `n`) | 받을 물건 **전부**가 빈칸에 들어가면 지급 + PDC `trade:applied`에 `<tradeId>:give:<uuid>:<n>` → `saveData()` → 디스크 확인 | `FOUND` 아님 → **같은 틱에 지급한 물건과 토큰을 회수**(Market 13.6) 하고 `give=PENDING`. 빈칸이 모자라면 지급하지 않고 `give=PENDING` + `/trade claim` 안내 |
+| 5 지급 (양쪽, 시도 번호 `n`) | 받을 물건 **전부**가 빈칸에 들어가면 지급 + PDC `trade:applied`에 `<tradeId>:give:<uuid>:<n>` → `saveData()` → 디스크 확인 | `FOUND` 아님 → **같은 틱에 지급한 물건과 토큰을 회수**하고 `give=UNCERTAIN` 기록(시도 번호 유지). 회수 중 예외가 나면 재시도로 넘어가지 않고 그 플레이어 Trade 잠금 + 거래 봉인 + severe. 빈칸이 모자라면 지급하지 않고 `give=PENDING` + `/trade claim` 안내 |
 | 6 완료 | 양쪽 `give=FOUND` → 저널 삭제, 거래 로그, 안내 | — |
 | 7 취소(확정 전) | 확정 전에 끝난 경우(`REJECTED`, 금액 있는 거래는 `findByExtRef` 로 **미정산 확인 후**, 확정 ABSENT 로 판명된 가져오기 등): **첫 반환 전에 저널을 `RETURNING` 으로 fsync**(단방향 — 이 상태에서는 다시 정산하지 않음, v4 재검증 Critical). 그 뒤 `take=FOUND` 인 쪽에 **자기 물건을 5번과 같은 방식으로 돌려줌**. `take` 가 확정 `ABSENT` 인 쪽은 디스크에 원래 물건이 그대로이므로 할 일 없음 | 돌려주기도 5번과 같은 실패 처리(`/trade claim`) |
 
-- **토큰 이름은 목적·받는 사람·시도로 구분**: `<tradeId>:take:<uuid>`, `<tradeId>:give:<uuid>:<n>`, `<tradeId>:return:<uuid>:<n>`. 쓰는 곳·읽는 곳 모두 이 한 규격(`TradeTokens` 클래스 하나)만 쓴다. **판정 규칙**: 같은 목적·받는 사람의 토큰이 디스크에 **어느 시도 번호로든** FOUND 면 그 목적은 이미 반영된 것이므로 다시 지급하지 않는다. 회수는 같은 틱 안에서 토큰까지 같이 지우므로, 디스크에 남은 토큰은 실제로 반영된 시도만 가리킨다(Market 시도 번호와 같은 근거).
-- `give/return PENDING` 은 그 플레이어가 접속해 있고 생존(`!isDead`) 상태일 때 1분 타이머, 접속할 때, 리스폰(`PlayerRespawnEvent` MONITOR 다음 틱), `/trade claim` 때 새 시도 번호로 5번을 다시 한다(한 번에 전부, 부분 지급 없음 — 배치 토큰 문제 없음). 수령자가 사망 중(`isDead`)이면 지급·반환하지 않고 대기로 유지한다(`keepInventory=false` 유실 방지).
+- **토큰 이름은 목적·받는 사람·시도로 구분**: `<tradeId>:take:<uuid>`, `<tradeId>:give:<uuid>:<n>`, `<tradeId>:return:<uuid>:<n>`. 쓰는 곳·읽는 곳 모두 이 한 규격(`TradeTokens` 클래스 하나)만 쓴다. **판정 규칙**: 같은 목적·받는 사람의 토큰이 디스크에 **어느 시도 번호로든** FOUND 면 그 목적은 이미 반영된 것이므로 다시 지급하지 않는다. 다만 회수 직후 같은 접속에서 `UNCERTAIN` 상태인 경우 디스크가 회수 전(지급됨) 상태일 수 있으므로, `saveData` 후 디스크가 `ABSENT` 로 확정될 때까지 완료·재지급 모두 보류하고, 디스크가 `FOUND` 면 회수된 메모리에 다시 지급·저장해 디스크 기준으로 수렴한다.
+- `give/return PENDING`·`UNCERTAIN` 은 그 플레이어가 접속해 있고 생존(`!isDead`) 상태일 때 1분 타이머, 접속할 때, 리스폰(`PlayerRespawnEvent` MONITOR 다음 틱), `/trade claim` 때 재확인·재시도한다(한 번에 전부, 부분 지급 없음 — 배치 토큰 문제 없음). 수령자가 사망 중(`isDead`)이면 지급·반환하지 않고 대기로 유지한다(`keepInventory=false` 유실 방지).
 - 가져오기가 `PENDING` 인 동안 그 플레이어의 메모리 인벤토리에는 이미 물건이 없다(돌려주지 않았으므로). 디스크에 남은 쪽이 맞는지는 6장이 정한다.
 
 ## 6. 복구 (기동·접속·1분 타이머)
@@ -84,6 +84,7 @@
 | `TAKING` (기동 때, 모두 오프라인) | 각 쪽 `.dat` | `FOUND` → 가져오기 됨. `ABSENT` → 가져오기 안 됨(디스크에 원래 물건). `UNREADABLE` → 기다림(잠금) |
 | `TAKING`, 결정 | 양쪽 take 의 **최종** 상태 | 양쪽 FOUND → 4번부터 계속. 한쪽이라도 확정 ABSENT **이고 다른 쪽이 PENDING(같은 접속에서 저장 중)·UNREADABLE 이 아니면** → 7번 취소. 그 밖(어느 쪽이든 아직 PENDING·UNREADABLE) → **결정 유예**(다른 쪽이 FOUND/ABSENT 로 끝날 때까지 기다림, v4.1 재검증 Critical) |
 | `RETURNING` | 쪽별 `return` 토큰 | 정산은 절대 다시 하지 않음. 돌려받지 못한 쪽만 5번 방식으로 돌려줌 |
+| `COMMITTED`/`RETURNING`, `give`/`return=UNCERTAIN` | 같은 접속이면 `saveData` 뒤 확인, 새 접속(`connGen` 변경)이면 디스크 바로 확인 | `UNREADABLE` → 완료·재지급 모두 보류. `ABSENT` → `UNCERTAIN` 해제 + 시도 번호 `n+1` 로 `PENDING` 전환 뒤 재시도. `FOUND` → 새 접속·오프라인이면 즉시 완료, 같은 접속이면 회수된 메모리에 다시 지급·저장해 디스크 기준으로 수렴 |
 | `COMMITTED`, `give=PENDING` | 접속·타이머·`/trade claim` 때 5번 | 위 5번 그대로 |
 | 금액 있는 `TAKING`→`COMMITTED` 사이에서 멈춤 | `findByExtRef` | 있음·일치 → `COMMITTED`, 없음 → 4번 다시(양쪽 take FOUND 면 정산 재시도) 또는 7번, 모름 → 잠금 |
 

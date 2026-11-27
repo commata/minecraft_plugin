@@ -83,7 +83,9 @@ public final class Journal {
         NONE(0),
         PENDING(1),
         FOUND(2),
-        ABSENT(3);
+        ABSENT(3),
+        /** 지급·반환 확인 실패 뒤 같은 틱 회수 완료 — 디스크·메모리 일치 확인 전까지 완료·재지급 모두 보류 (P1-1). */
+        UNCERTAIN(4);
 
         private final int code;
 

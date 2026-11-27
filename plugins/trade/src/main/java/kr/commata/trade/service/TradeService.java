@@ -80,7 +80,12 @@ public final class TradeService {
     /** 이번 기동에서 TAKING 가져오기를 실행한 시점의 connGen: tradeId -> connGen */
     private final Map<UUID, Long> takingConnGenA = new HashMap<>();
     private final Map<UUID, Long> takingConnGenB = new HashMap<>();
-    /** 같은 접속에서 saveData 후 ABSENT 가 3회 연속 발생해 Trade 가 잠긴 플레이어 */
+    /** 이번 기동에서 지급/반환 회수 후 UNCERTAIN 이 된 시점의 connGen: tradeId -> connGen (P1-1) */
+    private final Map<UUID, Long> giveUncertainConnGenA = new HashMap<>();
+    private final Map<UUID, Long> giveUncertainConnGenB = new HashMap<>();
+    private final Map<UUID, Long> returnUncertainConnGenA = new HashMap<>();
+    private final Map<UUID, Long> returnUncertainConnGenB = new HashMap<>();
+    /** 같은 접속에서 saveData 후 ABSENT 가 3회 연속 발생하거나 회수 실패로 Trade 가 잠긴 플레이어 */
     private final Set<UUID> saveFailedLockedPlayers = new HashSet<>();
     /** 한 틱 안 재진입 방지 */
     private final Set<UUID> inFlight = new HashSet<>();
@@ -1296,7 +1301,13 @@ public final class TradeService {
     /** [5~6단계] COMMITTED 거래의 양쪽 지급 시도 및 완료 처리. */
     private void deliverCommittedAndFinish(Journal.Entry entry, boolean notifyOnline) {
         entry = attemptDeliveryForSide(entry, TradeSession.Side.A, false, notifyOnline);
+        if (entry.isSealed()) {
+            return;
+        }
         entry = attemptDeliveryForSide(entry, TradeSession.Side.B, false, notifyOnline);
+        if (entry.isSealed()) {
+            return;
+        }
 
         if (RecoveryPolicy.isCommittedComplete(entry.giveA(), entry.giveB())) {
             finishAndDeleteJournal(entry, "COMPLETED", "");
@@ -1306,7 +1317,13 @@ public final class TradeService {
     /** [7단계] RETURNING 거래의 양쪽 반환 시도 및 취소 완료 처리. */
     private void processReturningAndFinish(Journal.Entry entry, boolean notifyOnline) {
         entry = attemptDeliveryForSide(entry, TradeSession.Side.A, true, notifyOnline);
+        if (entry.isSealed()) {
+            return;
+        }
         entry = attemptDeliveryForSide(entry, TradeSession.Side.B, true, notifyOnline);
+        if (entry.isSealed()) {
+            return;
+        }
 
         if (RecoveryPolicy.isReturningComplete(entry.returnA(), entry.returnB())) {
             finishAndDeleteJournal(entry, "CANCELLED", entry.cancelReason());
@@ -1315,7 +1332,12 @@ public final class TradeService {
 
     /**
      * 한쪽의 지급({@code isReturn=false}) 또는 돌려주기({@code isReturn=true})를 같은 틱에서 시도합니다.
-     * 실패 시 방금 지급한 아이템과 PDC 토큰을 같은 틱에 회수하고 시도 번호를 올립니다 (TRADE.md 5장 5·7번).
+     *
+     * <p>확인 실패 뒤 같은 틱 회수 시 디스크가 회수 전(지급됨) 상태일 수 있으므로 그 쪽을
+     * {@link Journal.SideStatus#UNCERTAIN} 으로 두고, 같은 접속에서는 {@code saveData} → 디스크가
+     * ABSENT 로 확정될 때까지 완료·재지급 모두 보류합니다. 디스크에 토큰이 FOUND 면 메모리(회수 상태)에
+     * 다시 지급·저장해 디스크 기준으로 수렴하고, 회수 중 예외가 나면 해당 플레이어를 Trade 잠금 +
+     * 거래 봉인 + severe 처리합니다 (P1-1, TRADE.md 5·6장).
      */
     private Journal.Entry attemptDeliveryForSide(Journal.Entry entry, TradeSession.Side side,
                                                  boolean isReturn, boolean notifyOnline) {
@@ -1333,23 +1355,57 @@ public final class TradeService {
             return entry;
         }
 
-        // 1) 사전 디스크 확인: 어느 시도 번호로든 토큰이 FOUND 면 이미 지급됨 → 중복 지급 절대 금지 (TRADE.md 5·13-2장)
-        TradeTokens.Purpose purpose = isReturn ? TradeTokens.Purpose.RETURN : TradeTokens.Purpose.GIVE;
-        PlayerDatReader.MarkerCheck preCheck = PlayerDatReader.check(worldRoot, targetUuid, TradeTokens.DAT_KEYS,
-                raw -> TradeTokens.containsAnyAttempt(raw, tradeId, purpose, targetUuid));
-
         Player online = server.getPlayer(targetUuid);
         boolean isOnline = online != null && online.isOnline();
         boolean isAlive = isOnline && !online.isDead();
+        boolean isUncertain = currentStatus == Journal.SideStatus.UNCERTAIN;
+        boolean sameUncertainSession = isUncertain && isSameUncertainSession(tradeId, side, isReturn, targetUuid);
 
+        // 1) 사전 디스크 확인: 같은 접속의 UNCERTAIN 상태라면 saveData() 로 회수 상태 저장을 먼저 시도한 뒤 확인
+        TradeTokens.Purpose purpose = isReturn ? TradeTokens.Purpose.RETURN : TradeTokens.Purpose.GIVE;
+        String[] foundDiskToken = {null};
+        PlayerDatReader.MarkerCheck preCheck;
+        if (sameUncertainSession) {
+            boolean preSaveOk = false;
+            try {
+                online.saveData();
+                preSaveOk = true;
+            } catch (Throwable e) {
+                logger.severe("거래 불확실 지급/반환 확인 전 saveData() 예외 ("
+                        + tradeId + ", " + online.getName() + "): " + e);
+            }
+            preCheck = preSaveOk
+                    ? PlayerDatReader.check(worldRoot, targetUuid, TradeTokens.DAT_KEYS, raw -> {
+                        String tok = TradeTokens.findAnyAttemptToken(raw, tradeId, purpose, targetUuid);
+                        if (tok != null) {
+                            foundDiskToken[0] = tok;
+                            return true;
+                        }
+                        return false;
+                    })
+                    : new PlayerDatReader.MarkerCheck(PlayerDatReader.MarkerStatus.UNREADABLE, null, 0L, "saveData 예외");
+        } else {
+            preCheck = PlayerDatReader.check(worldRoot, targetUuid, TradeTokens.DAT_KEYS, raw -> {
+                String tok = TradeTokens.findAnyAttemptToken(raw, tradeId, purpose, targetUuid);
+                if (tok != null) {
+                    foundDiskToken[0] = tok;
+                    return true;
+                }
+                return false;
+            });
+        }
+
+        boolean needsItemsCheck = isAlive && (preCheck.status() == PlayerDatReader.MarkerStatus.ABSENT
+                || (sameUncertainSession && preCheck.status() == PlayerDatReader.MarkerStatus.FOUND));
         List<ItemStack> items = null;
         int missingSlots = 0;
-        if (preCheck.status() == PlayerDatReader.MarkerStatus.ABSENT && isAlive) {
+        if (needsItemsCheck) {
             try {
                 items = TradeInventoryHelper.deserializeStacks(itemBytes);
             } catch (RuntimeException e) {
                 logger.severe("거래 " + tradeId + " 아이템 역직렬화 실패: " + e.getMessage());
                 entry = entry.withSealed("아이템 역직렬화 실패: " + e.getMessage(), System.currentTimeMillis());
+                openJournals.put(tradeId, entry);
                 persistJournalQuietly(entry);
                 return entry;
             }
@@ -1357,17 +1413,20 @@ public final class TradeService {
         }
 
         RecoveryPolicy.DeliveryDecision decision = isReturn
-                ? RecoveryPolicy.decideReturnSide(!itemBytes.isEmpty(), currentStatus, preCheck.status(),
-                        isOnline, isAlive, missingSlots == 0)
-                : RecoveryPolicy.decideGiveSide(!itemBytes.isEmpty(), currentStatus, preCheck.status(),
-                        isOnline, isAlive, missingSlots == 0);
+                ? RecoveryPolicy.decideReturnSide(!itemBytes.isEmpty(), currentStatus, sameUncertainSession,
+                        preCheck.status(), isOnline, isAlive, missingSlots == 0)
+                : RecoveryPolicy.decideGiveSide(!itemBytes.isEmpty(), currentStatus, sameUncertainSession,
+                        preCheck.status(), isOnline, isAlive, missingSlots == 0);
+
+        int attempt = isReturn ? entry.returnAttemptOf(side) : entry.giveAttemptOf(side);
 
         switch (decision) {
             case ALREADY_DONE -> {
                 long nowMs = System.currentTimeMillis();
+                clearUncertainConnGen(tradeId, side, isReturn);
                 entry = isReturn
-                        ? entry.withReturn(side, Journal.SideStatus.FOUND, entry.returnAttemptOf(side), true, nowMs)
-                        : entry.withGive(side, Journal.SideStatus.FOUND, entry.giveAttemptOf(side), true, nowMs);
+                        ? entry.withReturn(side, Journal.SideStatus.FOUND, attempt, true, nowMs)
+                        : entry.withGive(side, Journal.SideStatus.FOUND, attempt, true, nowMs);
                 persistJournalQuietly(entry);
                 return entry;
             }
@@ -1381,15 +1440,55 @@ public final class TradeService {
             case WAIT_DEAD, WAIT_OFFLINE, WAIT_UNREADABLE -> {
                 return entry;
             }
+            case CONVERGE_TO_DISK -> {
+                // 같은 접속에서 회수 후 불확실인데 디스크에 토큰이 FOUND:
+                // 메모리(회수 상태)와 디스크(지급 상태)가 다르므로 메모리에 다시 지급·저장해 디스크 기준으로 수렴
+                String diskToken = foundDiskToken[0] != null
+                        ? foundDiskToken[0]
+                        : (isReturn
+                                ? TradeTokens.returnToken(tradeId, targetUuid, attempt)
+                                : TradeTokens.giveToken(tradeId, targetUuid, attempt));
+                return convergeMemoryToDisk(entry, side, isReturn, online, items, attempt, diskToken, notifyOnline);
+            }
+            case CLEAR_UNCERTAIN -> {
+                // 디스크에 이번(및 예전) 시도 토큰이 ABSENT 로 확정 → UNCERTAIN 해제 + 시도 번호 증가 후 PENDING 전환
+                long nowMs = System.currentTimeMillis();
+                int nextAttempt = attempt + 1;
+                Journal.Entry cleared = isReturn
+                        ? entry.withReturn(side, Journal.SideStatus.PENDING, nextAttempt, true, nowMs)
+                        : entry.withGive(side, Journal.SideStatus.PENDING, nextAttempt, true, nowMs);
+                if (!persistJournalQuietly(cleared)) {
+                    return entry;
+                }
+                clearUncertainConnGen(tradeId, side, isReturn);
+                entry = cleared;
+                attempt = nextAttempt;
+                RecoveryPolicy.DeliveryDecision nextDecision = isReturn
+                        ? RecoveryPolicy.decideReturnSide(!itemBytes.isEmpty(), Journal.SideStatus.PENDING, false,
+                                PlayerDatReader.MarkerStatus.ABSENT, isOnline, isAlive, missingSlots == 0)
+                        : RecoveryPolicy.decideGiveSide(!itemBytes.isEmpty(), Journal.SideStatus.PENDING, false,
+                                PlayerDatReader.MarkerStatus.ABSENT, isOnline, isAlive, missingSlots == 0);
+                if (nextDecision == RecoveryPolicy.DeliveryDecision.WAIT_INVENTORY_FULL) {
+                    if (notifyOnline && isOnline) {
+                        Msg.warn(online, "인벤토리 빈칸이 " + missingSlots + "칸 필요합니다. 빈칸을 비운 뒤 "
+                                + "<#FFDF6B>/trade claim<#AAAAAA> 으로 받아 주세요.");
+                    }
+                    return entry;
+                }
+                if (nextDecision != RecoveryPolicy.DeliveryDecision.DELIVER_NOW) {
+                    return entry;
+                }
+                // DELIVER_NOW 로 진행 (아래에서 nextAttempt 로 지급 시도)
+            }
             case DELIVER_NOW -> {
                 // 아래에서 같은 틱 지급 + saveData + 디스크 확인 + 실패 시 같은 틱 회수 실행
             }
         }
 
-        int attempt = isReturn ? entry.returnAttemptOf(side) : entry.giveAttemptOf(side);
+        final int deliveryAttempt = attempt;
         String token = isReturn
-                ? TradeTokens.returnToken(tradeId, targetUuid, attempt)
-                : TradeTokens.giveToken(tradeId, targetUuid, attempt);
+                ? TradeTokens.returnToken(tradeId, targetUuid, deliveryAttempt)
+                : TradeTokens.giveToken(tradeId, targetUuid, deliveryAttempt);
 
         ItemStack[] invSnapshot = TradeInventoryHelper.snapshotStorage(online.getInventory());
         PersistentDataContainer pdc = online.getPersistentDataContainer();
@@ -1415,34 +1514,116 @@ public final class TradeService {
         PlayerDatReader.MarkerCheck postCheck = saveOk
                 ? PlayerDatReader.check(worldRoot, targetUuid, TradeTokens.DAT_KEYS,
                         raw -> isReturn
-                                ? TradeTokens.containsReturnExact(raw, tradeId, targetUuid, attempt)
-                                : TradeTokens.containsGiveExact(raw, tradeId, targetUuid, attempt))
+                                ? TradeTokens.containsReturnExact(raw, tradeId, targetUuid, deliveryAttempt)
+                                : TradeTokens.containsGiveExact(raw, tradeId, targetUuid, deliveryAttempt))
                 : new PlayerDatReader.MarkerCheck(PlayerDatReader.MarkerStatus.UNREADABLE, null, 0L, "saveData 예외");
 
         long nowMs = System.currentTimeMillis();
         if (postCheck.status() == PlayerDatReader.MarkerStatus.FOUND) {
+            clearUncertainConnGen(tradeId, side, isReturn);
             entry = isReturn
-                    ? entry.withReturn(side, Journal.SideStatus.FOUND, attempt, false, nowMs)
-                    : entry.withGive(side, Journal.SideStatus.FOUND, attempt, false, nowMs);
+                    ? entry.withReturn(side, Journal.SideStatus.FOUND, deliveryAttempt, false, nowMs)
+                    : entry.withGive(side, Journal.SideStatus.FOUND, deliveryAttempt, false, nowMs);
             persistJournalQuietly(entry);
             return entry;
         }
 
-        // TRADE.md 5장 5번: FOUND 가 아니면 같은 틱에 지급한 물건과 토큰을 회수하고 시도 번호 증가
-        restoreInventoryAndPdc(online, invSnapshot, prevApplied);
-        int nextAttempt = attempt + 1;
+        // TRADE.md 5·6장 (P1-1): FOUND 가 아니면 같은 틱에 회수하고 UNCERTAIN 으로 전환.
+        // 디스크가 회수 전(지급됨) 상태일 수 있으므로 ABSENT 확정 전까지 완료·재지급 모두 보류.
+        if (!restoreInventoryAndPdc(online, invSnapshot, prevApplied)) {
+            return lockAndSealOnRollbackFailure(entry, online, nowMs);
+        }
         entry = isReturn
-                ? entry.withReturn(side, Journal.SideStatus.PENDING, nextAttempt, false, nowMs)
-                : entry.withGive(side, Journal.SideStatus.PENDING, nextAttempt, false, nowMs);
+                ? entry.withReturn(side, Journal.SideStatus.UNCERTAIN, deliveryAttempt, false, nowMs)
+                : entry.withGive(side, Journal.SideStatus.UNCERTAIN, deliveryAttempt, false, nowMs);
+        recordUncertainConnGen(tradeId, side, isReturn, targetUuid);
+        openJournals.put(tradeId, entry);
         persistJournalQuietly(entry);
         if (notifyOnline) {
-            Msg.warn(online, "저장 확인이 지연되어 잠시 보류되었습니다. 1분 안에 자동 지급되거나 "
-                    + "<#FFDF6B>/trade claim<#AAAAAA> 으로 받을 수 있습니다.");
+            Msg.warn(online, "저장 확인이 지연되어 지급 상태를 재확인 중입니다. 잠시 후 자동 처리되거나 "
+                    + "<#FFDF6B>/trade claim<#AAAAAA> 으로 확인할 수 있습니다.");
         }
         return entry;
     }
 
-    private void restoreInventoryAndPdc(Player player, ItemStack[] invSnapshot, String prevApplied) {
+    /**
+     * 같은 접속에서 회수 후 {@code UNCERTAIN} 상태인데 디스크에 토큰이 {@code FOUND} 인 경우,
+     * 회수된 메모리에 아이템과 토큰을 다시 반영하고 {@code saveData()} 후 디스크를 재확인해 수렴합니다 (P1-1).
+     */
+    private Journal.Entry convergeMemoryToDisk(
+            Journal.Entry entry,
+            TradeSession.Side side,
+            boolean isReturn,
+            Player online,
+            List<ItemStack> items,
+            int attempt,
+            String diskToken,
+            boolean notifyOnline
+    ) {
+        UUID tradeId = entry.tradeId();
+        UUID targetUuid = online.getUniqueId();
+        TradeTokens.Purpose purpose = isReturn ? TradeTokens.Purpose.RETURN : TradeTokens.Purpose.GIVE;
+
+        ItemStack[] invSnapshot = TradeInventoryHelper.snapshotStorage(online.getInventory());
+        PersistentDataContainer pdc = online.getPersistentDataContainer();
+        String prevApplied = pdc.getOrDefault(keyApplied, PersistentDataType.STRING, "");
+        String newApplied = TradeTokens.append(prevApplied, diskToken);
+
+        if (!TradeInventoryHelper.placeAllItems(online.getInventory(), items)) {
+            if (notifyOnline) {
+                Msg.warn(online, "인벤토리 빈칸이 부족합니다. 빈칸을 비운 뒤 <#FFDF6B>/trade claim<#AAAAAA> 으로 받아 주세요.");
+            }
+            return entry;
+        }
+
+        boolean saveOk = false;
+        try {
+            pdc.set(keyApplied, PersistentDataType.STRING, newApplied);
+            online.saveData();
+            saveOk = true;
+        } catch (Throwable e) {
+            logger.severe("거래 불확실 수렴 saveData() 중 예외 (" + tradeId + ", " + online.getName() + "): " + e);
+        }
+
+        PlayerDatReader.MarkerCheck postCheck = saveOk
+                ? PlayerDatReader.check(worldRoot, targetUuid, TradeTokens.DAT_KEYS,
+                        raw -> TradeTokens.containsAnyAttempt(raw, tradeId, purpose, targetUuid))
+                : new PlayerDatReader.MarkerCheck(PlayerDatReader.MarkerStatus.UNREADABLE, null, 0L, "saveData 예외");
+
+        long nowMs = System.currentTimeMillis();
+        if (postCheck.status() == PlayerDatReader.MarkerStatus.FOUND) {
+            clearUncertainConnGen(tradeId, side, isReturn);
+            entry = isReturn
+                    ? entry.withReturn(side, Journal.SideStatus.FOUND, attempt, true, nowMs)
+                    : entry.withGive(side, Journal.SideStatus.FOUND, attempt, true, nowMs);
+            persistJournalQuietly(entry);
+            return entry;
+        }
+
+        if (!restoreInventoryAndPdc(online, invSnapshot, prevApplied)) {
+            return lockAndSealOnRollbackFailure(entry, online, nowMs);
+        }
+        return entry;
+    }
+
+    private Journal.Entry lockAndSealOnRollbackFailure(Journal.Entry entry, Player online, long nowMs) {
+        UUID tradeId = entry.tradeId();
+        UUID targetUuid = online.getUniqueId();
+        saveFailedLockedPlayers.add(targetUuid);
+        Journal.Entry sealed = entry.withSealed("지급/반환 같은 틱 회수 실패: " + online.getName(), nowMs);
+        openJournals.put(tradeId, sealed);
+        persistJournalQuietly(sealed);
+        logger.severe("거래 " + tradeId + " 지급/반환 같은 틱 회수 중 예외가 발생해 플레이어 "
+                + online.getName() + " (" + targetUuid + ")의 Trade 를 잠그고 거래를 봉인했습니다. "
+                + "재시도로 넘어가지 않습니다. 관리자가 인벤토리를 확인한 뒤 /trade resolve "
+                + tradeId + " dismiss 로 정리하세요.");
+        if (online.isOnline()) {
+            Msg.error(online, "거래 물건 처리 중 오류가 발생해 거래 기능이 일시 잠겼습니다. 관리자에게 문의해 주세요.");
+        }
+        return sealed;
+    }
+
+    private boolean restoreInventoryAndPdc(Player player, ItemStack[] invSnapshot, String prevApplied) {
         try {
             player.getInventory().setStorageContents(invSnapshot);
             PersistentDataContainer pdc = player.getPersistentDataContainer();
@@ -1451,8 +1632,10 @@ public final class TradeService {
             } else {
                 pdc.set(keyApplied, PersistentDataType.STRING, prevApplied);
             }
+            return true;
         } catch (Throwable t) {
             logger.severe("거래 지급 같은 틱 회수 실패 (" + player.getName() + "): " + t);
+            return false;
         }
     }
 
@@ -1655,6 +1838,32 @@ public final class TradeService {
         return current != null && current.equals(recorded);
     }
 
+    private Map<UUID, Long> uncertainConnGenMap(TradeSession.Side side, boolean isReturn) {
+        if (isReturn) {
+            return side == TradeSession.Side.A ? returnUncertainConnGenA : returnUncertainConnGenB;
+        }
+        return side == TradeSession.Side.A ? giveUncertainConnGenA : giveUncertainConnGenB;
+    }
+
+    private boolean isSameUncertainSession(UUID tradeId, TradeSession.Side side, boolean isReturn, UUID playerId) {
+        Player online = server.getPlayer(playerId);
+        if (online == null || !online.isOnline()) {
+            return false;
+        }
+        Long current = activeConnGen.get(playerId);
+        Long recorded = uncertainConnGenMap(side, isReturn).get(tradeId);
+        return current != null && current.equals(recorded);
+    }
+
+    private void recordUncertainConnGen(UUID tradeId, TradeSession.Side side, boolean isReturn, UUID playerId) {
+        long gen = activeConnGen.computeIfAbsent(playerId, k -> connGenSeq.incrementAndGet());
+        uncertainConnGenMap(side, isReturn).put(tradeId, gen);
+    }
+
+    private void clearUncertainConnGen(UUID tradeId, TradeSession.Side side, boolean isReturn) {
+        uncertainConnGenMap(side, isReturn).remove(tradeId);
+    }
+
     // ------------------------------------------------------------------ /trade claim (TRADE.md 8장)
 
     public void claimPending(Player player) {
@@ -1700,7 +1909,7 @@ public final class TradeService {
             if (entry.stage() == Journal.Stage.COMMITTED || entry.stage() == Journal.Stage.RETURNING) {
                 boolean isReturn = entry.stage() == Journal.Stage.RETURNING;
                 Journal.SideStatus before = isReturn ? entry.returnOf(side) : entry.giveOf(side);
-                if (before == Journal.SideStatus.PENDING) {
+                if (before == Journal.SideStatus.PENDING || before == Journal.SideStatus.UNCERTAIN) {
                     reconcileEntry(entry, true);
                     Journal.Entry after = openJournals.get(tradeId);
                     boolean doneNow = after == null
@@ -1737,6 +1946,10 @@ public final class TradeService {
         openJournals.remove(tradeId);
         takingConnGenA.remove(tradeId);
         takingConnGenB.remove(tradeId);
+        giveUncertainConnGenA.remove(tradeId);
+        giveUncertainConnGenB.remove(tradeId);
+        returnUncertainConnGenA.remove(tradeId);
+        returnUncertainConnGenB.remove(tradeId);
         tradeLogger.log(entry, result, reason, nowMs, config.zone());
 
         Player pA = server.getPlayer(entry.playerA());

@@ -38,10 +38,15 @@ final class TradeTokensTest {
         assertFalse(TradeTokens.containsGiveExact(raw, TRADE_1, PLAYER_A, 1));
         // 어느 시도 번호로든 FOUND 면 이미 반영됨 (TRADE.md 5·13-2장)
         assertTrue(TradeTokens.containsGiveAnyAttempt(raw, TRADE_1, PLAYER_A));
+        assertEquals(TradeTokens.giveToken(TRADE_1, PLAYER_A, 4),
+                TradeTokens.findAnyAttemptToken(raw, TRADE_1, TradeTokens.Purpose.GIVE, PLAYER_A));
         assertFalse(TradeTokens.containsGiveAnyAttempt(raw, TRADE_1, PLAYER_B));
+        assertEquals(null, TradeTokens.findAnyAttemptToken(raw, TRADE_1, TradeTokens.Purpose.GIVE, PLAYER_B));
         assertFalse(TradeTokens.containsReturnAnyAttempt(raw, TRADE_1, PLAYER_A));
 
         assertTrue(TradeTokens.containsReturnAnyAttempt(raw, TRADE_2, PLAYER_B));
+        assertEquals(TradeTokens.returnToken(TRADE_2, PLAYER_B, 2),
+                TradeTokens.findAnyAttemptToken(raw, TRADE_2, TradeTokens.Purpose.RETURN, PLAYER_B));
         assertFalse(TradeTokens.containsGiveAnyAttempt(raw, TRADE_2, PLAYER_B));
     }
 

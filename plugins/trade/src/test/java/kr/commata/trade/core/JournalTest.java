@@ -60,6 +60,15 @@ final class JournalTest {
         assertEquals(original.giveAttemptB(), decoded.giveAttemptB());
         assertEquals(original.takeSaveRetriesB(), decoded.takeSaveRetriesB());
         assertEquals(original.bankTxAId(), decoded.bankTxAId());
+
+        Journal.Entry uncertain = original
+                .withGive(TradeSession.Side.A, Journal.SideStatus.UNCERTAIN, 3, false, 3_000L)
+                .withReturn(TradeSession.Side.B, Journal.SideStatus.UNCERTAIN, 2, true, 4_000L);
+        Journal.Entry decodedUncertain = Journal.deserialize(Journal.serialize(uncertain));
+        assertEquals(Journal.SideStatus.UNCERTAIN, decodedUncertain.giveA());
+        assertEquals(3, decodedUncertain.giveAttemptA());
+        assertEquals(Journal.SideStatus.UNCERTAIN, decodedUncertain.returnB());
+        assertEquals(2, decodedUncertain.returnAttemptB());
     }
 
     @Test
