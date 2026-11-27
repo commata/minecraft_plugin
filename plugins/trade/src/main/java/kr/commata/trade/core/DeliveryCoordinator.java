@@ -20,7 +20,7 @@ import kr.commata.common.playerdata.PlayerDatReader.MarkerStatus;
  * <p>TRADE.md 5·6장의 다음 규칙을 한 곳에 모아 {@code TradeService} 와 단위 테스트가 같은 실행 경로를 공유합니다:
  * <ul>
  *   <li>보호 상태({@code UNCERTAIN}·봉인·3회 저장 실패 잠금) 저널 쓰기 실패 시 메모리 플래그로 Trade 전체 잠금 + severe</li>
- *   <li>미영속 보호 상태가 하나라도 남아 있으면 {@code /trade reload}·재검증·{@code /trade resolve unlock} 거부</li>
+ *   <li>미영속 보호 상태가 하나라도 남아 있으면 {@code /trade reload}·재검증·{@code /trade resolve unlock}·{@code dismiss} 거부</li>
  *   <li>재로딩 병합 시 {@link JournalCacheMerge} 로 디스크의 덜 보호적인 상태가 메모리 보호 상태를 덮지 못하게 차단</li>
  *   <li>지급·반환 확인 실패 시 같은 틱 회수(인벤토리·PDC 토큰) → {@code UNCERTAIN} → 같은 접속 수렴 / 새 접속 판정</li>
  * </ul>
@@ -32,6 +32,8 @@ public final class DeliveryCoordinator {
     /** 저널 디스크 저장소 포트({@link Journal.Store} 어댑터 또는 테스트용 가짜 저장소). */
     public interface JournalPort {
         void write(Journal.Entry entry) throws IOException;
+
+        void delete(UUID tradeId) throws IOException;
 
         Journal.LoadReport loadAll(long nowMs) throws IOException;
 
@@ -135,6 +137,9 @@ public final class DeliveryCoordinator {
     }
 
     public record UnlockOutcome(Journal.UnlockResult result, boolean shouldReconcile) {
+    }
+
+    public record DismissOutcome(boolean dismissed, Journal.Entry dismissedEntry, String message) {
     }
 
     // ------------------------------------------------------------------ 상태
@@ -288,7 +293,7 @@ public final class DeliveryCoordinator {
      * 보호 상태({@code UNCERTAIN}·봉인·3회 저장 실패 잠금) 저널을 메모리 캐시에 먼저 고정한 뒤 디스크에 기록합니다.
      *
      * <p>디스크 쓰기가 실패하면 {@link #unpersistedProtective} 에 등록해 Trade 전체를 메모리 플래그로 잠그고
-     * {@code severe} 를 남깁니다. 영속화 재시도가 성공할 때까지 재로딩·재검증·{@code unlock} 이 거부됩니다.
+     * {@code severe} 를 남깁니다. 영속화 재시도가 성공할 때까지 재로딩·재검증·{@code unlock}·{@code dismiss} 가 거부됩니다.
      */
     public boolean persistProtective(Journal.Entry entry, String context) {
         Objects.requireNonNull(entry, "entry");
@@ -302,7 +307,7 @@ public final class DeliveryCoordinator {
             unpersistedProtective.put(entry.tradeId(), new UnpersistedProtective(entry.tradeId(), context, err));
             feedback.logSevere("거래 " + entry.tradeId() + " 보호 상태(" + context
                     + ") 저널 쓰기 실패 — Trade 전체 잠금 모드로 전환합니다: " + err
-                    + ". 영속화 재시도가 성공할 때까지 /trade reload·재검증·unlock 이 거부됩니다.");
+                    + ". 영속화 재시도가 성공할 때까지 /trade reload·재검증·unlock·dismiss 가 거부됩니다.");
             return false;
         }
     }
@@ -384,13 +389,22 @@ public final class DeliveryCoordinator {
     }
 
     /**
-     * {@code /trade reload} 시 저널 재로딩·검증.
+     * {@code /trade reload} 시 저널 재로딩·검증 (복구 후콜백 미지정 버전).
+     */
+    public ReloadResult reloadJournalsIfLocked(long nowMs) {
+        return reloadJournalsIfLocked(nowMs, null);
+    }
+
+    /**
+     * {@code /trade reload} 시 저널 재로딩·검증 + 잠금 해제 시 복구 재개 후 최종 잠금 상태 재확인.
      *
      * <p>메모리에 영속화되지 않은 보호 상태가 하나라도 있으면 재로딩을 <b>즉시 거부</b>합니다.
      * 재로딩이 허용된 경우에도 {@link JournalCacheMerge} 로 병합해 디스크의 덜 보호적인 상태가
-     * 메모리 보호 상태를 덮지 못하게 합니다.
+     * 메모리 보호 상태를 덮지 못하게 합니다. 잠금이 풀린 뒤 {@code postUnlockReconcile} 이 실행되어
+     * 새 보호 상태 쓰기 실패 등으로 다시 잠기면 최종 잠금 상태를 반영해 {@link ReloadStatus#RELOADED_STILL_LOCKED}
+     * 를 반환합니다.
      */
-    public ReloadResult reloadJournalsIfLocked(long nowMs) {
+    public ReloadResult reloadJournalsIfLocked(long nowMs, Runnable postUnlockReconcile) {
         if (!unpersistedProtective.isEmpty()) {
             String msg = "설정은 다시 불러왔으나 메모리에 영속화되지 않은 보호 상태(UNCERTAIN/봉인/잠금) "
                     + unpersistedProtective.size() + "건" + unpersistedProtective.keySet()
@@ -420,6 +434,15 @@ public final class DeliveryCoordinator {
                 return new ReloadResult(ReloadStatus.RELOADED_STILL_LOCKED, openJournals.size(),
                         "설정을 다시 불러왔으나 저널 잠금 상태가 유지됩니다: " + reason);
             }
+            if (!openJournals.isEmpty() && postUnlockReconcile != null) {
+                postUnlockReconcile.run();
+                if (isJournalOrMemoryLocked()) {
+                    String reason = journalOrMemoryLockReason();
+                    String msg = "설정은 다시 불러와 저널 복구를 재개했으나 복구 중 다시 잠겼습니다: " + reason;
+                    feedback.logWarning("Trade 저널 재로딩 후 복구 재잠김: " + reason);
+                    return new ReloadResult(ReloadStatus.RELOADED_STILL_LOCKED, openJournals.size(), msg);
+                }
+            }
             feedback.logInfo("Trade 저널 재로딩·검증 완료 (잠금 해제, 미완료 저널 " + openJournals.size() + "건).");
             return new ReloadResult(ReloadStatus.RELOADED_UNLOCKED, openJournals.size(),
                     "Trade 설정 및 저널(" + openJournals.size() + "건)을 다시 불러와 잠금이 해제되었습니다.");
@@ -432,11 +455,20 @@ public final class DeliveryCoordinator {
     }
 
     /**
-     * 관리자 {@code /trade resolve unlock}.
-     *
-     * <p>메모리에 영속화되지 않은 보호 상태가 하나라도 있으면 잠금 해제를 <b>즉시 거부</b>합니다.
+     * 관리자 {@code /trade resolve unlock} (복구 후콜백 미지정 버전).
      */
     public UnlockOutcome unlockByAdmin(String adminName, long nowMs) {
+        return unlockByAdmin(adminName, nowMs, null);
+    }
+
+    /**
+     * 관리자 {@code /trade resolve unlock} + 잠금 해제 시 복구 재개 후 최종 잠금 상태 재확인.
+     *
+     * <p>메모리에 영속화되지 않은 보호 상태가 하나라도 있으면 잠금 해제를 <b>즉시 거부</b>합니다.
+     * 잠금 파일 정리와 재검증이 통과한 뒤 {@code postUnlockReconcile} 이 실행되어 새 보호 상태 쓰기 실패
+     * 등으로 다시 잠기면 최종 잠금 상태를 반영해 {@code unlocked=false} 로 응답합니다.
+     */
+    public UnlockOutcome unlockByAdmin(String adminName, long nowMs, Runnable postUnlockReconcile) {
         if (!unpersistedProtective.isEmpty()) {
             String msg = "메모리에 영속화되지 않은 보호 상태(UNCERTAIN/봉인/잠금) "
                     + unpersistedProtective.size() + "건" + unpersistedProtective.keySet()
@@ -477,6 +509,19 @@ public final class DeliveryCoordinator {
                 return new UnlockOutcome(new Journal.UnlockResult(false, unlock.resolvedFiles(),
                         "잠금 해제 후 재검증에서 여전히 잠금 상태입니다: " + journalPort.storeLockReason()), false);
             }
+            if (postUnlockReconcile != null) {
+                if (!openJournals.isEmpty()) {
+                    postUnlockReconcile.run();
+                }
+                if (isJournalOrMemoryLocked()) {
+                    String reason = journalOrMemoryLockReason();
+                    String msg = "잠금 파일 정리와 재검증은 완료했으나 복구 재개 중 다시 잠겼습니다: " + reason;
+                    feedback.logWarning("Trade resolve unlock 후 복구 재잠김: " + reason);
+                    return new UnlockOutcome(
+                            new Journal.UnlockResult(false, unlock.resolvedFiles(), msg), false);
+                }
+                return new UnlockOutcome(unlock, false);
+            }
             return new UnlockOutcome(unlock, !openJournals.isEmpty());
         } catch (IOException e) {
             preserveProtectiveMemoryOnly("unlock 재검증 실패");
@@ -484,6 +529,61 @@ public final class DeliveryCoordinator {
             return new UnlockOutcome(new Journal.UnlockResult(false, 0,
                     "저널 재로딩·검증 실패로 잠금을 해제하지 못했습니다: " + e.getMessage()), false);
         }
+    }
+
+    /**
+     * 관리자 수동 정리({@code /trade resolve <tradeId> dismiss}).
+     *
+     * <p>메모리에 영속화되지 않은 보호 상태가 하나라도 있거나 저널 저장소가 손상 잠금 상태이면
+     * 수동 정리를 <b>즉시 거부</b>해 영속화 없이 잠금이 우회 해제되는 경로를 차단합니다.
+     * 디스크 저널 삭제가 성공한 경우에만 메모리 캐시·플레이어 잠금을 정리하고 최종 잠금 상태를 반영해 응답합니다.
+     */
+    public DismissOutcome dismissSealedJournal(UUID tradeId, String adminName) {
+        if (!unpersistedProtective.isEmpty()) {
+            String msg = "메모리에 영속화되지 않은 보호 상태(UNCERTAIN/봉인/잠금) "
+                    + unpersistedProtective.size() + "건" + unpersistedProtective.keySet()
+                    + " 이 있어 수동 정리(dismiss)를 거부했습니다. 먼저 1분 타이머 또는 /trade resolve <tradeId> 로 "
+                    + "영속화가 성공한 뒤 다시 시도하세요.";
+            feedback.logWarning("Trade resolve dismiss 거부 (" + tradeId + "): " + msg);
+            return new DismissOutcome(false, null, msg);
+        }
+        if (journalPort.isStoreLocked()) {
+            String msg = "Trade 가 손상 저널 잠금 모드입니다(" + journalPort.storeLockReason()
+                    + "). 먼저 /trade resolve unlock 을 확인하세요.";
+            feedback.logWarning("Trade resolve dismiss 거부 (" + tradeId + "): " + msg);
+            return new DismissOutcome(false, null, msg);
+        }
+        Journal.Entry entry = openJournals.get(tradeId);
+        if (entry == null) {
+            return new DismissOutcome(false, null, "열려 있는 거래 저널을 찾을 수 없습니다: " + tradeId);
+        }
+        if (!entry.isSealed()
+                && !saveFailedLockedPlayers.contains(entry.playerA())
+                && !saveFailedLockedPlayers.contains(entry.playerB())) {
+            return new DismissOutcome(false, null,
+                    "봉인·잠금 상태의 거래가 아닙니다. 먼저 /trade resolve " + tradeId + " 로 자동 복구를 시도하세요.");
+        }
+        try {
+            journalPort.delete(tradeId);
+        } catch (IOException e) {
+            String err = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            feedback.logSevere("관리자 수동 정리(dismiss) 저널 삭제 실패 (" + tradeId + "): " + err);
+            return new DismissOutcome(false, null,
+                    "거래 " + tradeId + " 저널 삭제에 실패해 잠금을 해제하지 못했습니다: " + err);
+        }
+        onJournalDeleted(entry);
+        if (isJournalOrMemoryLocked()) {
+            return new DismissOutcome(true, entry,
+                    "거래 " + tradeId + " 저널을 관리자(" + adminName + ")가 수동 정리했으나, 전체 잠금이 유지됩니다: "
+                            + journalOrMemoryLockReason());
+        }
+        if (saveFailedLockedPlayers.contains(entry.playerA()) || saveFailedLockedPlayers.contains(entry.playerB())) {
+            return new DismissOutcome(true, entry,
+                    "거래 " + tradeId + " 저널을 관리자(" + adminName
+                            + ")가 수동 정리했으나, 다른 미완료 저널이 남아 일부 플레이어 잠금이 유지됩니다.");
+        }
+        return new DismissOutcome(true, entry,
+                "거래 " + tradeId + " 저널을 관리자(" + adminName + ")가 수동 정리하고 잠금을 해제했습니다.");
     }
 
     /** 완료·취소·수동 정리로 저널 파일 삭제가 성공한 뒤 호출해 캐시·미영속·잠금 상태를 정리합니다 (P2-9). */

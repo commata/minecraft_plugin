@@ -296,6 +296,9 @@ final class DeliveryCoordinatorTest {
         // 관리자 reload / unlock 모두 거부 → 비봉인 디스크가 메모리 봉인을 덮지 못함
         assertEquals(ReloadStatus.REFUSED_UNPERSISTED, coord.reloadJournalsIfLocked(2100L).status());
         assertFalse(coord.unlockByAdmin("Admin", 2200L).result().unlocked());
+        // 미영속 봉인이 남아 있으면 관리자 dismiss 도 거부 (재검증 2 P2)
+        assertFalse(coord.dismissSealedJournal(tradeId, "Admin").dismissed());
+        assertTrue(journalPort.diskEntries.containsKey(tradeId));
         assertTrue(coord.openJournal(tradeId).isSealed());
 
         // 관리자 단건 영속화 재시도 성공 → 디스크에 봉인이 반영되고 전체 메모리 잠금 해제, 거래 봉인은 그대로 유지
@@ -310,6 +313,38 @@ final class DeliveryCoordinatorTest {
         int placeBefore = recipient.placeAllItemsCalls;
         coord.attemptDeliveryForSide(coord.openJournal(tradeId), Side.A, false, true, 3000L);
         assertEquals(placeBefore, recipient.placeAllItemsCalls);
+
+        // 영속화 뒤 dismiss: 디스크 삭제가 실패하면 정리·잠금 해제 없음 (P2-9)
+        journalPort.failNextDeletes = 1;
+        var failed = coord.dismissSealedJournal(tradeId, "Admin");
+        assertFalse(failed.dismissed());
+        assertTrue(coord.isPlayerSaveFailedLocked(PLAYER_A));
+        assertTrue(coord.openJournal(tradeId) != null);
+        // 삭제가 되면 저널·플레이어 잠금 정리
+        var ok = coord.dismissSealedJournal(tradeId, "Admin");
+        assertTrue(ok.dismissed());
+        assertFalse(journalPort.diskEntries.containsKey(tradeId));
+        assertFalse(coord.isPlayerSaveFailedLocked(PLAYER_A));
+        assertFalse(coord.isJournalOrMemoryLocked());
+    }
+
+    /** 재검증 2 P3: unlock 뒤 복구 재개 중 다시 잠기면 성공으로 보고하지 않음. */
+    @Test
+    void unlockReportsFailureWhenReconcileRelocks() {
+        UUID tradeId = UUID.randomUUID();
+        Journal.Entry initial = committedEntry(tradeId);
+        FakeJournalPort journalPort = new FakeJournalPort(initial);
+        journalPort.storeLocked = true;
+        DeliveryCoordinator coord = new DeliveryCoordinator(journalPort, new FakeRecipientPort(),
+                new FakeDiskTokenReader(), new RecordingFeedback());
+        coord.putOpenJournal(initial);
+        // 복구 재개가 보호 상태 쓰기에 실패해 다시 잠그는 상황을 흉내
+        var outcome = coord.unlockByAdmin("Admin", 1000L, () -> {
+            journalPort.failNextWrites = 1;
+            coord.persistProtective(initial, "테스트 재잠금");
+        });
+        assertFalse(outcome.result().unlocked());
+        assertTrue(coord.isJournalOrMemoryLocked());
     }
 
     /**
@@ -391,6 +426,7 @@ final class DeliveryCoordinatorTest {
         final Map<UUID, Journal.Entry> diskEntries = new LinkedHashMap<>();
         final List<Journal.Entry> writeHistory = new ArrayList<>();
         int failNextWrites = 0;
+        int failNextDeletes = 0;
         boolean storeLocked = false;
         boolean loadSucceeded = true;
 
@@ -408,6 +444,15 @@ final class DeliveryCoordinatorTest {
             }
             diskEntries.put(entry.tradeId(), entry);
             writeHistory.add(entry);
+        }
+
+        @Override
+        public void delete(UUID tradeId) throws IOException {
+            if (failNextDeletes > 0) {
+                failNextDeletes--;
+                throw new IOException("디스크 삭제 주입 오류");
+            }
+            diskEntries.remove(tradeId);
         }
 
         @Override

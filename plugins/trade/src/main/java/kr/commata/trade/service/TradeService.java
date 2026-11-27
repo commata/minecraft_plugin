@@ -223,17 +223,16 @@ public final class TradeService {
     /**
      * {@code /trade reload} 시 저널 미로드 또는 잠금 상태라면 전체 저널 재로딩·검증을 시도합니다 (P1-2).
      *
-     * <p>메모리에 영속화되지 않은 보호 상태(UNCERTAIN·봉인·잠금)가 하나라도 있으면 재로딩을 거부합니다.
+     * <p>메모리에 영속화되지 않은 보호 상태(UNCERTAIN·봉인·잠금)가 하나라도 있으면 재로딩을 거부하고,
+     * 잠금이 풀려 복구를 재개한 뒤 새 잠금이 발생하면 최종 잠금 상태를 그대로 응답합니다.
      *
      * @return 재로딩 결과 안내 문구(평문), 이미 정상 로드·비잠금 상태이면 {@code null}
      */
     public String reloadJournalsIfLocked() {
-        DeliveryCoordinator.ReloadResult result = delivery.reloadJournalsIfLocked(System.currentTimeMillis());
+        DeliveryCoordinator.ReloadResult result = delivery.reloadJournalsIfLocked(
+                System.currentTimeMillis(), () -> reconcileAllOpenJournals(true));
         if (result.status() == DeliveryCoordinator.ReloadStatus.SKIPPED_ALREADY_OK) {
             return null;
-        }
-        if (result.status() == DeliveryCoordinator.ReloadStatus.RELOADED_UNLOCKED && result.openJournalCount() > 0) {
-            reconcileAllOpenJournals(true);
         }
         return result.message();
     }
@@ -243,13 +242,11 @@ public final class TradeService {
      * 0) 메모리에 미영속 보호 상태가 있으면 즉시 거부
      * 1) 미로드 상태면 먼저 전체 재로딩·검증(새 손상 파일이 발견되면 즉시 해제하지 않고 관리자 확인 요구)
      * 2) 미해결 격리 파일 {@code .resolved} fsync 후 {@code LOCKED} 삭제
-     * 3) 전체 저널 재로딩·검증이 성공해 잠금이 없을 때만 복구 재개 (P1-2).
+     * 3) 전체 저널 재로딩·검증이 성공해 잠금이 없을 때만 복구 재개, 복구 중 다시 잠기면 실패 응답 반환 (P1-2).
      */
     public Journal.UnlockResult unlockByAdmin(String adminName) {
-        DeliveryCoordinator.UnlockOutcome outcome = delivery.unlockByAdmin(adminName, System.currentTimeMillis());
-        if (outcome.shouldReconcile()) {
-            reconcileAllOpenJournals(true);
-        }
+        DeliveryCoordinator.UnlockOutcome outcome = delivery.unlockByAdmin(
+                adminName, System.currentTimeMillis(), () -> reconcileAllOpenJournals(true));
         return outcome.result();
     }
 
@@ -1375,9 +1372,16 @@ public final class TradeService {
                         + " dismiss 로 봉인을 정리하세요.";
             }
             reconcileEntry(persisted, true);
+            if (delivery.isJournalOrMemoryLocked()) {
+                return retry.message() + " 복구 재개 중 다시 잠겼습니다: " + delivery.journalOrMemoryLockReason();
+            }
             Journal.Entry after = delivery.openJournal(tradeId);
             if (after == null) {
                 return retry.message() + " 복구가 완료되어 저널이 정리되었습니다.";
+            }
+            if (after.isSealed()) {
+                return retry.message() + " 복구 중 거래가 봉인되었습니다 (" + after.sealedReason()
+                        + "). 원장과 인벤토리를 확인한 뒤 /trade resolve " + tradeId + " dismiss 로 정리하세요.";
             }
             return retry.message() + " 재확인 완료 (현재 단계=" + after.stage()
                     + ", take=" + after.takeA() + "/" + after.takeB()
@@ -1396,9 +1400,16 @@ public final class TradeService {
                     + "/trade resolve " + tradeId + " dismiss 로 봉인을 정리하세요.";
         }
         reconcileEntry(entry, true);
+        if (delivery.isJournalOrMemoryLocked()) {
+            return "거래 " + tradeId + " 재확인 중 Trade 가 다시 잠겼습니다: " + delivery.journalOrMemoryLockReason();
+        }
         Journal.Entry after = delivery.openJournal(tradeId);
         if (after == null) {
             return "거래 " + tradeId + " 복구가 완료되어 저널이 정리되었습니다.";
+        }
+        if (after.isSealed()) {
+            return "거래 " + tradeId + " 재확인 중 봉인되었습니다 (" + after.sealedReason()
+                    + "). 원장과 인벤토리를 확인한 뒤 /trade resolve " + tradeId + " dismiss 로 정리하세요.";
         }
         return "거래 " + tradeId + " 재확인 완료 (현재 단계=" + after.stage()
                 + ", take=" + after.takeA() + "/" + after.takeB()
@@ -1409,25 +1420,21 @@ public final class TradeService {
     public record DismissResult(boolean dismissed, String message) {
     }
 
-    /** 관리자 수동 정리: 봉인된 저널 삭제 성공 시에만 플레이어 저장 실패 잠금을 해제합니다 (P2-9). */
+    /**
+     * 관리자 수동 정리: 미영속 보호 상태·저널 손상 잠금 가드를 통과하고 디스크 저널 삭제에 성공한 경우에만
+     * 메모리·플레이어 잠금을 정리하고 감사 로그를 남깁니다 (P2-9, 재검증 2 P2).
+     */
     public DismissResult dismissSealedJournal(UUID tradeId, String adminName) {
-        Journal.Entry entry = delivery.openJournal(tradeId);
-        if (entry == null) {
-            return new DismissResult(false, "열려 있는 거래 저널을 찾을 수 없습니다: " + tradeId);
+        DeliveryCoordinator.DismissOutcome outcome = delivery.dismissSealedJournal(tradeId, adminName);
+        if (outcome.dismissed() && outcome.dismissedEntry() != null) {
+            takingConnGenA.remove(tradeId);
+            takingConnGenB.remove(tradeId);
+            Journal.Entry dismissed = outcome.dismissedEntry();
+            tradeLogger.log(dismissed, "ADMIN_RESOLVED",
+                    "admin=" + adminName + " " + dismissed.sealedReason(),
+                    System.currentTimeMillis(), config.zone());
         }
-        if (!entry.isSealed() && !delivery.isPlayerSaveFailedLocked(entry.playerA())
-                && !delivery.isPlayerSaveFailedLocked(entry.playerB())) {
-            return new DismissResult(false,
-                    "봉인·잠금 상태의 거래가 아닙니다. 먼저 /trade resolve " + tradeId + " 로 자동 복구를 시도하세요.");
-        }
-        boolean deleted = finishAndDeleteJournal(
-                entry, "ADMIN_RESOLVED", "admin=" + adminName + " " + entry.sealedReason());
-        if (!deleted) {
-            return new DismissResult(false,
-                    "거래 " + tradeId + " 저널 삭제에 실패해 잠금을 해제하지 못했습니다. 서버 로그를 확인하세요.");
-        }
-        return new DismissResult(true,
-                "거래 " + tradeId + " 저널을 관리자(" + adminName + ")가 수동 정리하고 잠금을 해제했습니다.");
+        return new DismissResult(outcome.dismissed(), outcome.message());
     }
 
     private void reconcileEntry(Journal.Entry entry, boolean notifyOnline) {
@@ -1857,6 +1864,11 @@ public final class TradeService {
         @Override
         public void write(Journal.Entry entry) throws IOException {
             journalStore.write(entry);
+        }
+
+        @Override
+        public void delete(UUID tradeId) throws IOException {
+            journalStore.delete(tradeId);
         }
 
         @Override
