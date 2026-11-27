@@ -117,4 +117,58 @@ final class JournalTest {
         assertFalse(Files.exists(store.lockedFile()));
         assertFalse(store.isLocked());
     }
+
+    @Test
+    void serializeAndStoreRejectPayloadsExceedingSharedSizeLimits(@TempDir Path tempDir) throws IOException {
+        // 단일 스택 2 MiB 초과는 사전 검증과 Entry 생성 모두 거부
+        byte[] tooBigStack = new byte[Journal.MAX_ITEM_BYTES + 1];
+        assertFalse(Journal.fitsItemSizeLimits(List.of(tooBigStack), List.of()));
+        assertThrows(IllegalArgumentException.class, () -> new Journal.Entry(
+                TRADE_ID, 1L, 1L, Journal.Stage.TAKING,
+                PLAYER_A, "Alice", PLAYER_B, "Bob",
+                0L, 0L,
+                List.of(tooBigStack), List.of(), List.of("BIG"), List.of(),
+                Journal.SideStatus.PENDING, Journal.SideStatus.FOUND,
+                Journal.SideStatus.FOUND, Journal.SideStatus.PENDING,
+                Journal.SideStatus.NONE, Journal.SideStatus.NONE,
+                1, 1, 1, 1, 0, 0, 0L, 0L, "", false, ""));
+
+        // 스택당 2 MiB(유효) × 9개 = 18 MiB > 전체 16 MiB → 사전 검증 거부 + serialize/write 거부 + 디스크 미기록
+        byte[] twoMiB = new byte[Journal.MAX_ITEM_BYTES];
+        twoMiB[0] = 42;
+        List<byte[]> nineStacks = List.of(twoMiB, twoMiB, twoMiB, twoMiB, twoMiB, twoMiB, twoMiB, twoMiB, twoMiB);
+        assertFalse(Journal.fitsItemSizeLimits(nineStacks, List.of()));
+
+        Journal.Entry oversized = new Journal.Entry(
+                TRADE_ID, 1L, 1L, Journal.Stage.TAKING,
+                PLAYER_A, "Alice", PLAYER_B, "Bob",
+                0L, 0L,
+                nineStacks, List.of(), List.of(), List.of(),
+                Journal.SideStatus.PENDING, Journal.SideStatus.FOUND,
+                Journal.SideStatus.FOUND, Journal.SideStatus.PENDING,
+                Journal.SideStatus.NONE, Journal.SideStatus.NONE,
+                1, 1, 1, 1, 0, 0, 0L, 0L, "", false, "");
+        assertThrows(Journal.SizeLimitExceededException.class, () -> Journal.serialize(oversized));
+
+        Journal.Store store = new Journal.Store(tempDir);
+        assertThrows(Journal.SizeLimitExceededException.class, () -> store.write(oversized));
+        assertFalse(Files.exists(store.fileOf(TRADE_ID)));
+
+        // 한도 안(7 × 2 MiB = 14 MiB)은 사전 검증 통과 + 직렬화·역직렬화 대칭 통과
+        List<byte[]> sevenStacks = List.of(twoMiB, twoMiB, twoMiB, twoMiB, twoMiB, twoMiB, twoMiB);
+        assertTrue(Journal.fitsItemSizeLimits(sevenStacks, List.of()));
+        Journal.Entry validLarge = new Journal.Entry(
+                TRADE_ID, 1L, 1L, Journal.Stage.TAKING,
+                PLAYER_A, "Alice", PLAYER_B, "Bob",
+                0L, 0L,
+                sevenStacks, List.of(), List.of(), List.of(),
+                Journal.SideStatus.PENDING, Journal.SideStatus.FOUND,
+                Journal.SideStatus.FOUND, Journal.SideStatus.PENDING,
+                Journal.SideStatus.NONE, Journal.SideStatus.NONE,
+                1, 1, 1, 1, 0, 0, 0L, 0L, "", false, "");
+        byte[] encoded = Journal.serialize(validLarge);
+        Journal.Entry decoded = Journal.deserialize(encoded);
+        assertEquals(7, decoded.itemsFromA().size());
+        assertEquals(Journal.MAX_ITEM_BYTES, decoded.itemsFromA().get(0).length);
+    }
 }

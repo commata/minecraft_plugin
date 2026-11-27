@@ -40,8 +40,19 @@ public final class Journal {
 
     private static final byte[] MAGIC = {'T', 'R', 'D', 'J'};
     private static final int FORMAT_VERSION = 1;
-    private static final int MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
-    private static final int MAX_ITEM_BYTES = 2 * 1024 * 1024;
+    /** 저널 전체 페이로드 최대 크기 (직렬화·역직렬화 동일 제한, 16 MiB). */
+    public static final int MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
+    /** 단일 아이템 스택 직렬화 최대 크기 (직렬화·역직렬화 동일 제한, 2 MiB). */
+    public static final int MAX_ITEM_BYTES = 2 * 1024 * 1024;
+    /** 단계 전환 메타데이터 여유분(64 KiB)을 남긴 초기 양쪽 아이템 합계 상한. */
+    public static final int MAX_ITEMS_TOTAL_BYTES = MAX_PAYLOAD_BYTES - (64 * 1024);
+
+    /** 저널 단일 스택 또는 전체 페이로드 크기 제한 초과 예외. */
+    public static final class SizeLimitExceededException extends IOException {
+        public SizeLimitExceededException(String message) {
+            super(message);
+        }
+    }
 
     public enum Stage {
         TAKING(0),
@@ -343,6 +354,43 @@ public final class Journal {
     private Journal() {
     }
 
+    /**
+     * 양쪽 제시 아이템 직렬화 바이트가 단일 스택({@link #MAX_ITEM_BYTES}) 및
+     * 전체 합계({@link #MAX_ITEMS_TOTAL_BYTES}) 제한 안에 있는지 검사합니다 (TRADE.md 5장).
+     */
+    public static boolean fitsItemSizeLimits(List<byte[]> itemsFromA, List<byte[]> itemsFromB) {
+        long total = 0L;
+        if (itemsFromA != null) {
+            if (itemsFromA.size() > OfferValidation.MAX_OFFER_SLOTS) {
+                return false;
+            }
+            for (byte[] b : itemsFromA) {
+                if (b == null || b.length == 0 || b.length > MAX_ITEM_BYTES) {
+                    return false;
+                }
+                total += b.length;
+                if (total > MAX_ITEMS_TOTAL_BYTES) {
+                    return false;
+                }
+            }
+        }
+        if (itemsFromB != null) {
+            if (itemsFromB.size() > OfferValidation.MAX_OFFER_SLOTS) {
+                return false;
+            }
+            for (byte[] b : itemsFromB) {
+                if (b == null || b.length == 0 || b.length > MAX_ITEM_BYTES) {
+                    return false;
+                }
+                total += b.length;
+                if (total > MAX_ITEMS_TOTAL_BYTES) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     /** 저널 엔트리를 매직·버전·길이·CRC32 체크섬이 붙은 바이트 배열로 직렬화합니다. */
     public static byte[] serialize(Entry e) throws IOException {
         Objects.requireNonNull(e, "entry");
@@ -381,10 +429,14 @@ public final class Journal {
             out.writeUTF(e.sealedReason());
         }
         byte[] payload = payloadOut.toByteArray();
+        if (payload.length > MAX_PAYLOAD_BYTES) {
+            throw new SizeLimitExceededException(
+                    "저널 전체 크기 초과: " + payload.length + " > " + MAX_PAYLOAD_BYTES);
+        }
         CRC32 crc = new CRC32();
         crc.update(payload);
 
-        ByteArrayOutputStream frameOut = new ByteArrayOutputStream(16 + payload.length);
+        ByteArrayOutputStream frameOut = new ByteArrayOutputStream(20 + payload.length);
         try (DataOutputStream out = new DataOutputStream(frameOut)) {
             out.write(MAGIC);
             out.writeInt(FORMAT_VERSION);

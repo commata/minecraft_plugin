@@ -64,7 +64,7 @@
 | 단계 | 하는 일 (메인 스레드) | 실패하면 |
 | --- | --- | --- |
 | 1 재검증 | 둘 다 온라인·같은 `(tradeId, gen)`·서바이벌/모험·전투 아님·대화창 닫힘, 제시가 3장 조건 충족, 양쪽 잔액 ≥ 자기 지급액·받는 쪽 최종 잔액 ≤ `Amounts.MAX` | 준비 해제 + 이유 안내(잔액 부족은 취소) |
-| 2 의도 기록 `TAKING` | 양쪽 제시를 **그 순간 그 칸의 실제 스택에서 직렬화**(`ItemStack#serializeAsBytes`)해 저널에 기록, fsync | 쓰기 실패 → 아무것도 안 바뀜, 준비 해제 + severe |
+| 2 의도 기록 `TAKING` | 양쪽 제시를 **그 순간 그 칸의 실제 스택에서 직렬화**(`ItemStack#serializeAsBytes`)해 저널에 기록, fsync. 직렬화·역직렬화에 같은 크기 제한(단일 스택 2 MiB, 전체 16 MiB)을 적용하며, 제한 초과는 차감 전 정상 실패(준비 해제 + 크기 초과 안내) | 쓰기 실패 → 아무것도 안 바뀜, 준비 해제 + severe (크기 초과는 정상 실패) |
 | 3 가져오기 (양쪽 같은 틱) | 각자 제시 칸에서 제시 개수 제거 + PDC `trade:applied`에 `<tradeId>:take:<uuid>` → `saveData()` → 디스크 확인 | `FOUND` 아닌 쪽: **빼낸 아이템을 돌려주지 않는다**(Market `/판매` 14.3 5번과 같음). 그 쪽 `take=PENDING`, 1분 타이머가 다시 `saveData`·디스크 확인(아래 6장) |
 | 4 돈·확정 `COMMITTED` | 양쪽 `take=FOUND` 일 때만. 금액이 있으면 `settleTrade`(4장): `OK` → 저널 `COMMITTED`. `REJECTED` → 취소(7번). `UNKNOWN/MISMATCH` → 저널 유지 + 두 사람 거래 잠금, 타이머가 `findByExtRef`(있음 → COMMITTED, 없음 → 취소, 계속 모름 → 관리자). 금액이 둘 다 0원이면 바로 `COMMITTED` | — |
 | 5 지급 (양쪽, 시도 번호 `n`) | 받을 물건 **전부**가 빈칸에 들어가면 지급 + PDC `trade:applied`에 `<tradeId>:give:<uuid>:<n>` → `saveData()` → 디스크 확인 | `FOUND` 아님 → **같은 틱에 지급한 물건과 토큰을 회수**(Market 13.6) 하고 `give=PENDING`. 빈칸이 모자라면 지급하지 않고 `give=PENDING` + `/trade claim` 안내 |

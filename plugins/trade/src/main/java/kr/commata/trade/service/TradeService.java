@@ -978,9 +978,27 @@ public final class TradeService {
                 }
             }
 
+            // [2단계 전] 실제 스택 직렬화 및 크기 제한 검증 — 제한 초과는 차감 전 정상 실패(준비 해제, TRADE.md 5장)
+            List<byte[]> bytesFromA;
+            List<byte[]> bytesFromB;
+            try {
+                bytesFromA = TradeInventoryHelper.serializeOfferedStacks(pA.getInventory(), session.sideA().offers());
+                bytesFromB = TradeInventoryHelper.serializeOfferedStacks(pB.getInventory(), session.sideB().offers());
+            } catch (RuntimeException e) {
+                logger.warning("거래 아이템 직렬화 실패 (" + tradeId + "): " + e.getMessage());
+                session.revertSettlingToOpen();
+                notifyBoth(pA, pB, "<#FF5555>아이템 데이터가 너무 커서 거래할 수 없습니다.");
+                uiHooks.refreshSessionMenus(session);
+                return;
+            }
+            if (!Journal.fitsItemSizeLimits(bytesFromA, bytesFromB)) {
+                session.revertSettlingToOpen();
+                notifyBoth(pA, pB, "<#FF5555>아이템 데이터가 너무 커서 거래할 수 없습니다.");
+                uiHooks.refreshSessionMenus(session);
+                return;
+            }
+
             // [2단계] 의도 기록 TAKING — 그 순간 실제 스택에서 직렬화해 fsync (TRADE.md 5장 2번)
-            List<byte[]> bytesFromA = TradeInventoryHelper.serializeOfferedStacks(pA.getInventory(), session.sideA().offers());
-            List<byte[]> bytesFromB = TradeInventoryHelper.serializeOfferedStacks(pB.getInventory(), session.sideB().offers());
             List<String> summaryA = TradeInventoryHelper.summarizeOfferedStacks(pA.getInventory(), session.sideA().offers());
             List<String> summaryB = TradeInventoryHelper.summarizeOfferedStacks(pB.getInventory(), session.sideB().offers());
 
@@ -1001,6 +1019,11 @@ public final class TradeService {
             );
             try {
                 journalStore.write(entry);
+            } catch (Journal.SizeLimitExceededException e) {
+                session.revertSettlingToOpen();
+                notifyBoth(pA, pB, "<#FF5555>아이템 데이터가 너무 커서 거래할 수 없습니다.");
+                uiHooks.refreshSessionMenus(session);
+                return;
             } catch (IOException e) {
                 logger.severe("거래 저널 TAKING 쓰기 실패 (" + tradeId + "): " + e.getMessage());
                 session.revertSettlingToOpen();
