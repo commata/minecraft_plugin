@@ -32,6 +32,7 @@ import kr.commata.trade.storage.TradeLogger;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.event.HoverEvent;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.GameMode;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Server;
@@ -557,25 +558,29 @@ public final class TradeService {
             return false;
         }
         if (!isAllowedGameMode(target.getGameMode())) {
-            Msg.error(requester, target.getName() + "님은 현재 크리에이티브·관전 모드라 거래할 수 없습니다.");
+            Msg.error(requester, "<name>님은 현재 크리에이티브·관전 모드라 거래할 수 없습니다.",
+                    Placeholder.unparsed("name", target.getName()));
             return false;
         }
         if (travel.inCombat(target, nowMs)) {
-            Msg.error(requester, target.getName() + "님은 현재 전투 중이라 거래할 수 없습니다.");
+            Msg.error(requester, "<name>님은 현재 전투 중이라 거래할 수 없습니다.",
+                    Placeholder.unparsed("name", target.getName()));
             return false;
         }
         if (hasOpenJournal(target.getUniqueId()) || saveFailedLockedPlayers.contains(target.getUniqueId())) {
-            Msg.error(requester, target.getName() + "님은 이전 거래 정산 확인 대기 중이라 거래할 수 없습니다.");
+            Msg.error(requester, "<name>님은 이전 거래 정산 확인 대기 중이라 거래할 수 없습니다.",
+                    Placeholder.unparsed("name", target.getName()));
             return false;
         }
         if (sessions.hasSession(target.getUniqueId())) {
-            Msg.error(requester, target.getName() + "님은 이미 다른 거래를 진행 중입니다.");
+            Msg.error(requester, "<name>님은 이미 다른 거래를 진행 중입니다.",
+                    Placeholder.unparsed("name", target.getName()));
             return false;
         }
         long cd = sessions.reRequestRemainingMs(requester.getUniqueId(), target.getUniqueId(), nowMs);
         if (cd > 0L) {
-            Msg.error(requester, target.getName() + "님에게는 "
-                    + Durations.korean(Duration.ofMillis(cd)) + " 뒤에 다시 요청할 수 있습니다.");
+            Msg.error(requester, "<name>님에게는 " + Durations.korean(Duration.ofMillis(cd)) + " 뒤에 다시 요청할 수 있습니다.",
+                    Placeholder.unparsed("name", target.getName()));
             return false;
         }
 
@@ -589,12 +594,14 @@ public final class TradeService {
             return false;
         }
 
-        Msg.info(requester, "<#55FFFF>" + target.getName() + "<#AAAAAA>님에게 거래 요청을 보냈습니다 ("
-                + config.requestTimeoutSeconds() + "초).");
+        Msg.info(requester, "<#55FFFF><name><#AAAAAA>님에게 거래 요청을 보냈습니다 ("
+                + config.requestTimeoutSeconds() + "초).",
+                Placeholder.unparsed("name", target.getName()));
 
         // 채팅 요청 + 클릭 버튼 [수락] [거절] + 알림음 1회 (ECONOMY.md 7.4.6a)
-        Component header = Messages.parse("<#F5C542>[거래] <#55FFFF>" + requester.getName()
-                + "<#AAAAAA>님이 거래를 요청했습니다 (" + config.requestTimeoutSeconds() + "초) ");
+        Component header = Messages.parse("<#F5C542>[거래] <#55FFFF><name><#AAAAAA>님이 거래를 요청했습니다 ("
+                + config.requestTimeoutSeconds() + "초) ",
+                Placeholder.unparsed("name", requester.getName()));
         Component acceptBtn = Messages.parse("<#55FF55>[수락]")
                 .clickEvent(ClickEvent.runCommand("/trade accept " + requester.getName()))
                 .hoverEvent(HoverEvent.showText(Messages.parse("<#55FF55>클릭하여 거래 수락")));
@@ -623,7 +630,8 @@ public final class TradeService {
         }
         if (optionalRequesterName != null && !optionalRequesterName.isBlank()
                 && !session.sideA().name().equalsIgnoreCase(optionalRequesterName)) {
-            Msg.error(target, optionalRequesterName + "님에게 받은 거래 요청이 없습니다.");
+            Msg.error(target, "<name>님에게 받은 거래 요청이 없습니다.",
+                    Placeholder.unparsed("name", optionalRequesterName));
             return false;
         }
         if (session.isRequestExpired(nowMs)) {
@@ -649,11 +657,13 @@ public final class TradeService {
             return false;
         }
         if (travel.inCombat(requester, nowMs)) {
-            Msg.error(target, requester.getName() + "님이 현재 전투 중이라 거래를 시작할 수 없습니다.");
+            Msg.error(target, "<name>님이 현재 전투 중이라 거래를 시작할 수 없습니다.",
+                    Placeholder.unparsed("name", requester.getName()));
             return false;
         }
         if (hasOpenJournal(requester.getUniqueId()) || saveFailedLockedPlayers.contains(requester.getUniqueId())) {
-            Msg.error(target, requester.getName() + "님의 이전 거래 정산 확인이 진행 중입니다.");
+            Msg.error(target, "<name>님의 이전 거래 정산 확인이 진행 중입니다.",
+                    Placeholder.unparsed("name", requester.getName()));
             return false;
         }
         // 커서에 아이템이 있으면 창을 열지 않음 (TRADE.md 7·13장)
@@ -662,7 +672,8 @@ public final class TradeService {
             return false;
         }
         if (!TradeInventoryHelper.isEmpty(requester.getItemOnCursor())) {
-            Msg.error(target, requester.getName() + "님이 손에 아이템을 들고 있어 지금은 거래 창을 열 수 없습니다.");
+            Msg.error(target, "<name>님이 손에 아이템을 들고 있어 지금은 거래 창을 열 수 없습니다.",
+                    Placeholder.unparsed("name", requester.getName()));
             Msg.warn(requester, "손에 든 아이템을 먼저 내려놓아 주세요.");
             return false;
         }
@@ -675,8 +686,8 @@ public final class TradeService {
         snapMap.put(TradeSession.Side.B, new HashMap<>());
         offerSnapshots.put(session.tradeId(), snapMap);
 
-        Msg.success(requester, target.getName() + "님이 거래를 수락했습니다.");
-        Msg.success(target, requester.getName() + "님의 거래 요청을 수락했습니다.");
+        Msg.success(requester, "<name>님이 거래를 수락했습니다.", Placeholder.unparsed("name", target.getName()));
+        Msg.success(target, "<name>님의 거래 요청을 수락했습니다.", Placeholder.unparsed("name", requester.getName()));
         uiHooks.openTradeMenu(requester, session);
         uiHooks.openTradeMenu(target, session);
         return true;
@@ -696,16 +707,19 @@ public final class TradeService {
         }
         if (optionalRequesterName != null && !optionalRequesterName.isBlank()
                 && !session.sideA().name().equalsIgnoreCase(optionalRequesterName)) {
-            Msg.error(target, optionalRequesterName + "님에게 받은 거래 요청이 없습니다.");
+            Msg.error(target, "<name>님에게 받은 거래 요청이 없습니다.",
+                    Placeholder.unparsed("name", optionalRequesterName));
             return false;
         }
         if (session.cancelIfPreSettlement("거절")) {
             sessions.remove(session);
             sessions.setReRequestCooldown(session.sideA().uuid(), session.sideB().uuid(),
                     nowMs, config.reRequestCooldownMs());
-            Msg.info(target, session.sideA().name() + "님의 거래 요청을 거절했습니다.");
-            notifyIfOnline(session.sideA().uuid(),
-                    "<#FF5555>" + target.getName() + "님이 거래 요청을 거절했습니다.");
+            Msg.info(target, "<name>님의 거래 요청을 거절했습니다.", Placeholder.unparsed("name", session.sideA().name()));
+            Player requester = server.getPlayer(session.sideA().uuid());
+            if (requester != null && requester.isOnline()) {
+                Msg.error(requester, "<name>님이 거래 요청을 거절했습니다.", Placeholder.unparsed("name", target.getName()));
+            }
             return true;
         }
         return false;
@@ -724,9 +738,11 @@ public final class TradeService {
             }
             if (session.cancelIfPreSettlement("요청 취소")) {
                 sessions.remove(session);
-                Msg.info(player, session.sideB().name() + "님에게 보낸 거래 요청을 취소했습니다.");
-                notifyIfOnline(session.sideB().uuid(),
-                        "<#FFDF6B>" + player.getName() + "님이 거래 요청을 취소했습니다.");
+                Msg.info(player, "<name>님에게 보낸 거래 요청을 취소했습니다.", Placeholder.unparsed("name", session.sideB().name()));
+                Player target = server.getPlayer(session.sideB().uuid());
+                if (target != null && target.isOnline()) {
+                    Msg.warn(target, "<name>님이 거래 요청을 취소했습니다.", Placeholder.unparsed("name", player.getName()));
+                }
                 return true;
             }
             return false;
@@ -1961,27 +1977,27 @@ public final class TradeService {
         Player pA = server.getPlayer(entry.playerA());
         Player pB = server.getPlayer(entry.playerB());
         if ("COMPLETED".equals(result)) {
+            String summaryA = formatSideSummary(entry.summaryFromA(), entry.aPays());
+            String summaryB = formatSideSummary(entry.summaryFromB(), entry.bPays());
             if (pA != null && pA.isOnline()) {
-                Msg.raw(pA, "<#55FF55>[거래] 완료: <#AAAAAA>받은 것 <white>"
-                        + formatSideSummary(entry.summaryFromB(), entry.bPays())
-                        + "<#AAAAAA>, 보낸 것 <white>"
-                        + formatSideSummary(entry.summaryFromA(), entry.aPays()));
+                Msg.raw(pA, "<#55FF55>[거래] 완료: <#AAAAAA>받은 것 <white><received><#AAAAAA>, 보낸 것 <white><sent>",
+                        Placeholder.unparsed("received", summaryB),
+                        Placeholder.unparsed("sent", summaryA));
                 pA.playSound(pA.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 0.7f, 1.4f);
             }
             if (pB != null && pB.isOnline()) {
-                Msg.raw(pB, "<#55FF55>[거래] 완료: <#AAAAAA>받은 것 <white>"
-                        + formatSideSummary(entry.summaryFromA(), entry.aPays())
-                        + "<#AAAAAA>, 보낸 것 <white>"
-                        + formatSideSummary(entry.summaryFromB(), entry.bPays()));
+                Msg.raw(pB, "<#55FF55>[거래] 완료: <#AAAAAA>받은 것 <white><received><#AAAAAA>, 보낸 것 <white><sent>",
+                        Placeholder.unparsed("received", summaryA),
+                        Placeholder.unparsed("sent", summaryB));
                 pB.playSound(pB.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 0.7f, 1.4f);
             }
         } else if ("CANCELLED".equals(result)) {
-            String msg = "<#FF5555>[거래] 취소됨 (" + (reason == null || reason.isEmpty() ? "취소" : reason) + ")";
+            String displayReason = (reason == null || reason.isEmpty()) ? "취소" : reason;
             if (pA != null && pA.isOnline()) {
-                Msg.raw(pA, msg);
+                Msg.raw(pA, "<#FF5555>[거래] 취소됨 (<reason>)", Placeholder.unparsed("reason", displayReason));
             }
             if (pB != null && pB.isOnline()) {
-                Msg.raw(pB, msg);
+                Msg.raw(pB, "<#FF5555>[거래] 취소됨 (<reason>)", Placeholder.unparsed("reason", displayReason));
             }
         }
     }
@@ -2008,6 +2024,7 @@ public final class TradeService {
         boolean wasOpen = offerSnapshots.containsKey(session.tradeId());
         cleanupSessionMemory(session);
 
+        String displayReason = reason == null ? "취소" : reason;
         Player pA = server.getPlayer(session.sideA().uuid());
         Player pB = server.getPlayer(session.sideB().uuid());
         if (pA != null && pA.isOnline()) {
@@ -2015,29 +2032,30 @@ public final class TradeService {
             if (wasOpen) {
                 uiHooks.closeTradeMenuNextTick(pA);
             }
-            Msg.raw(pA, "<#FF5555>[거래] 취소됨 (" + reason + ")");
+            Msg.raw(pA, "<#FF5555>[거래] 취소됨 (<reason>)", Placeholder.unparsed("reason", displayReason));
         }
         if (pB != null && pB.isOnline()) {
             uiHooks.closeDialog(pB);
             if (wasOpen) {
                 uiHooks.closeTradeMenuNextTick(pB);
             }
-            Msg.raw(pB, "<#FF5555>[거래] 취소됨 (" + reason + ")");
+            Msg.raw(pB, "<#FF5555>[거래] 취소됨 (<reason>)", Placeholder.unparsed("reason", displayReason));
         }
     }
 
     private void abortSettling(TradeSession session, String reason) {
         session.cancelFromSettling(reason);
         cleanupSessionMemory(session);
+        String displayReason = reason == null ? "취소" : reason;
         Player pA = server.getPlayer(session.sideA().uuid());
         Player pB = server.getPlayer(session.sideB().uuid());
         if (pA != null && pA.isOnline()) {
             uiHooks.closeTradeMenuNextTick(pA);
-            Msg.raw(pA, "<#FF5555>[거래] 취소됨 (" + reason + ")");
+            Msg.raw(pA, "<#FF5555>[거래] 취소됨 (<reason>)", Placeholder.unparsed("reason", displayReason));
         }
         if (pB != null && pB.isOnline()) {
             uiHooks.closeTradeMenuNextTick(pB);
-            Msg.raw(pB, "<#FF5555>[거래] 취소됨 (" + reason + ")");
+            Msg.raw(pB, "<#FF5555>[거래] 취소됨 (<reason>)", Placeholder.unparsed("reason", displayReason));
         }
     }
 
@@ -2066,7 +2084,8 @@ public final class TradeService {
         Player other = server.getPlayer(session.participant(side.other()).uuid());
         Msg.warn(player, "인벤토리의 제시 아이템이 변경되어 해당 제시가 취소되고 준비가 해제되었습니다.");
         if (other != null && other.isOnline()) {
-            Msg.warn(other, player.getName() + "님의 제시 아이템이 변경되어 준비가 해제되었습니다.");
+            Msg.warn(other, "<name>님의 제시 아이템이 변경되어 준비가 해제되었습니다.",
+                    Placeholder.unparsed("name", player.getName()));
         }
         return true;
     }

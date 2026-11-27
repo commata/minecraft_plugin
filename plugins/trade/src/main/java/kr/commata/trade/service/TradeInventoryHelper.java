@@ -99,7 +99,7 @@ public final class TradeInventoryHelper {
         String base = stack.getType().name() + " x" + amount;
         ItemMeta meta = stack.getItemMeta();
         if (meta != null && meta.hasDisplayName() && meta.displayName() != null) {
-            String name = PLAIN.serialize(meta.displayName()).trim();
+            String name = PLAIN.serialize(meta.displayName()).replace('\r', ' ').replace('\n', ' ').trim();
             if (!name.isEmpty()) {
                 return base + " (" + name + ")";
             }

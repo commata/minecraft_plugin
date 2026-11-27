@@ -16,6 +16,7 @@ import kr.commata.trade.core.Journal;
 import kr.commata.trade.core.OfferValidation;
 import kr.commata.trade.gui.TradeUiManager;
 import kr.commata.trade.service.TradeService;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.Server;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
@@ -87,7 +88,8 @@ public final class TradeCommand implements BasicCommand {
 
         if (args.length == 0) {
             if (service.isGloballyLocked()) {
-                Msg.error(player, "현재 거래 기능을 사용할 수 없습니다 (" + service.globalLockReason() + ").");
+                Msg.error(player, "현재 거래 기능을 사용할 수 없습니다 (<reason>).",
+                        Placeholder.unparsed("reason", service.globalLockReason()));
                 return;
             }
             uiManager.openPlayerSelectMenu(player);
@@ -103,7 +105,7 @@ public final class TradeCommand implements BasicCommand {
             default -> {
                 Player target = findOnlineTarget(player, args[0]);
                 if (target == null) {
-                    Msg.error(player, "'" + args[0] + "' 플레이어를 찾을 수 없습니다.");
+                    Msg.error(player, "'<arg>' 플레이어를 찾을 수 없습니다.", Placeholder.unparsed("arg", args[0]));
                     return;
                 }
                 service.sendRequest(player, target);
@@ -115,11 +117,15 @@ public final class TradeCommand implements BasicCommand {
         TradeConfig cfg = service.config();
         boolean locked = service.isGloballyLocked();
         Msg.info(sender, "<#F5C542>=== Trade 상태 ===");
-        Msg.raw(sender, "<#AAAAAA>  상태: " + (locked
-                ? "<#FF5555>잠김 (" + service.globalLockReason() + ")"
-                : "<#55FF55>정상 운영"));
-        Msg.raw(sender, "<#AAAAAA>  연동: Bank=" + service.bank().statusText()
-                + ", Travel=" + service.travel().statusText());
+        if (locked) {
+            Msg.raw(sender, "<#AAAAAA>  상태: <#FF5555>잠김 (<reason>)",
+                    Placeholder.unparsed("reason", service.globalLockReason()));
+        } else {
+            Msg.raw(sender, "<#AAAAAA>  상태: <#55FF55>정상 운영");
+        }
+        Msg.raw(sender, "<#AAAAAA>  연동: Bank=<bank>, Travel=<travel>",
+                Placeholder.unparsed("bank", service.bank().statusText()),
+                Placeholder.unparsed("travel", service.travel().statusText()));
         Msg.raw(sender, "<#AAAAAA>  설정: 요청=" + cfg.requestTimeoutSeconds() + "초, 카운트다운="
                 + cfg.countdownSeconds() + "초, 재요청 금지=" + cfg.reRequestCooldownSeconds()
                 + "초, 대화창 만료=" + cfg.dialogTimeoutSeconds() + "초, 타임존=" + cfg.zone());
@@ -128,10 +134,12 @@ public final class TradeCommand implements BasicCommand {
         try {
             List<String> corrupt = service.journalStore().unresolvedCorruptFiles();
             if (!corrupt.isEmpty()) {
-                Msg.raw(sender, "<#FF5555>  미해결 손상 저널: " + String.join(", ", corrupt));
+                Msg.raw(sender, "<#FF5555>  미해결 손상 저널: <files>",
+                        Placeholder.unparsed("files", String.join(", ", corrupt)));
             }
         } catch (IOException e) {
-            Msg.raw(sender, "<#FF5555>  손상 저널 폴더 조회 실패: " + e.getMessage());
+            Msg.raw(sender, "<#FF5555>  손상 저널 폴더 조회 실패: <err>",
+                    Placeholder.unparsed("err", String.valueOf(e.getMessage())));
         }
 
         if (!service.saveFailedLockedPlayers().isEmpty()) {
@@ -142,21 +150,35 @@ public final class TradeCommand implements BasicCommand {
         Collection<Journal.Entry> open = service.openJournals();
         Msg.raw(sender, "<#AAAAAA>  미완료 저널: <#FFDF6B>" + open.size() + "건");
         for (Journal.Entry e : open) {
-            String sealed = e.isSealed() ? " <#FF5555>[봉인: " + e.sealedReason() + "]" : "";
-            Msg.raw(sender, "<#AAAAAA>   - <#FFDF6B>" + e.tradeId()
-                    + " <#AAAAAA>" + e.nameA() + "(" + OfferValidation.formatWon(e.aPays()) + ") ↔ "
-                    + e.nameB() + "(" + OfferValidation.formatWon(e.bPays()) + ")"
-                    + " | stage=" + e.stage()
-                    + " take=" + e.takeA() + "/" + e.takeB()
-                    + " give=" + e.giveA() + "/" + e.giveB()
-                    + " ret=" + e.returnA() + "/" + e.returnB()
-                    + sealed);
+            if (e.isSealed()) {
+                Msg.raw(sender, "<#AAAAAA>   - <#FFDF6B>" + e.tradeId()
+                        + " <#AAAAAA><name_a>(" + OfferValidation.formatWon(e.aPays()) + ") ↔ "
+                        + "<name_b>(" + OfferValidation.formatWon(e.bPays()) + ")"
+                        + " | stage=" + e.stage()
+                        + " take=" + e.takeA() + "/" + e.takeB()
+                        + " give=" + e.giveA() + "/" + e.giveB()
+                        + " ret=" + e.returnA() + "/" + e.returnB()
+                        + " <#FF5555>[봉인: <sealed>]",
+                        Placeholder.unparsed("name_a", e.nameA()),
+                        Placeholder.unparsed("name_b", e.nameB()),
+                        Placeholder.unparsed("sealed", e.sealedReason()));
+            } else {
+                Msg.raw(sender, "<#AAAAAA>   - <#FFDF6B>" + e.tradeId()
+                        + " <#AAAAAA><name_a>(" + OfferValidation.formatWon(e.aPays()) + ") ↔ "
+                        + "<name_b>(" + OfferValidation.formatWon(e.bPays()) + ")"
+                        + " | stage=" + e.stage()
+                        + " take=" + e.takeA() + "/" + e.takeB()
+                        + " give=" + e.giveA() + "/" + e.giveB()
+                        + " ret=" + e.returnA() + "/" + e.returnB(),
+                        Placeholder.unparsed("name_a", e.nameA()),
+                        Placeholder.unparsed("name_b", e.nameB()));
+            }
         }
     }
 
     private void handleReload(CommandSender sender) {
         String summary = reloadCallback.get();
-        Msg.info(sender, summary);
+        Msg.infoPlain(sender, summary);
     }
 
     private void handleResolve(CommandSender sender, String[] args) {
@@ -169,10 +191,10 @@ public final class TradeCommand implements BasicCommand {
             Journal.UnlockResult result = service.unlockByAdmin(sender.getName());
             if (result.unlocked()) {
                 logger.info("관리자(" + sender.getName() + ") /trade resolve unlock 실행: " + result.message());
-                Msg.success(sender, result.message());
+                Msg.successPlain(sender, result.message());
             } else {
                 logger.warning("관리자(" + sender.getName() + ") /trade resolve unlock 실패: " + result.message());
-                Msg.error(sender, result.message());
+                Msg.errorPlain(sender, result.message());
             }
             return;
         }
@@ -181,20 +203,20 @@ public final class TradeCommand implements BasicCommand {
         try {
             tradeId = UUID.fromString(target);
         } catch (IllegalArgumentException e) {
-            Msg.error(sender, "올바른 거래 UUID 가 아닙니다: " + target);
+            Msg.error(sender, "올바른 거래 UUID 가 아닙니다: <arg>", Placeholder.unparsed("arg", target));
             return;
         }
 
         if (args.length >= 3 && args[2].equalsIgnoreCase("dismiss")) {
             String result = service.dismissSealedJournal(tradeId, sender.getName());
             logger.info("관리자(" + sender.getName() + ") /trade resolve " + tradeId + " dismiss: " + result);
-            Msg.info(sender, result);
+            Msg.infoPlain(sender, result);
             return;
         }
 
         String result = service.reconcileSingleByAdmin(tradeId);
         logger.info("관리자(" + sender.getName() + ") /trade resolve " + tradeId + ": " + result);
-        Msg.info(sender, result);
+        Msg.infoPlain(sender, result);
     }
 
     @Override
