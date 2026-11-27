@@ -11,6 +11,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 import kr.commata.common.gui.Menu;
+import kr.commata.common.playerdata.PlayerDatReader;
 import kr.commata.market.MarketConfig;
 import kr.commata.market.Msg;
 import kr.commata.market.bridge.BankBridge;
@@ -21,7 +22,6 @@ import kr.commata.market.core.GachaCatalog;
 import kr.commata.market.core.MarketPeriods;
 import kr.commata.market.core.MarketStore;
 import kr.commata.market.core.OrderPayload;
-import kr.commata.market.core.PlayerDatReader;
 import kr.commata.market.core.RareCatalog;
 import kr.commata.market.core.RefundPolicy;
 import kr.commata.market.core.SellCatalog;
@@ -49,6 +49,7 @@ public final class MarketService {
     public static final int ALERT_THRESHOLD = 10;
     /** 접속 뒤 VJobs 로딩을 기다리는 탈퇴 이관 보정 재시도 횟수 (1초 간격). */
     private static final int JOIN_RECONCILE_TRIES = 30;
+    private static final PlayerDatReader.Keys MARKET_KEYS = PlayerDatReader.Keys.of("market", "applied_tx", "seq");
 
     private final Plugin plugin;
     private final MarketStore store;
@@ -473,7 +474,7 @@ public final class MarketService {
             }
 
             PlayerDatReader.MarkerCheck check = saveOk
-                    ? PlayerDatReader.checkExact(worldRoot, uuid, txId, 1)
+                    ? checkExact(uuid, txId, 1)
                     : new PlayerDatReader.MarkerCheck(PlayerDatReader.MarkerStatus.UNREADABLE, null, 0L, "저장 중 예외: " + saveError);
 
             if (check.status() != PlayerDatReader.MarkerStatus.FOUND) {
@@ -537,7 +538,7 @@ public final class MarketService {
         }
 
         // [P1] 사전 디스크 확인: 이미 과거 시도에서 디스크에 지급 표시가 쓰여 있다면 중복 지급 방지
-        PlayerDatReader.MarkerCheck existing = PlayerDatReader.checkAnyAttempt(worldRoot, uuid, order.txId());
+        PlayerDatReader.MarkerCheck existing = checkAnyAttempt(uuid, order.txId());
         DeliveryPolicy.Decision preDecision = DeliveryPolicy.checkPreDelivery(existing.status() == PlayerDatReader.MarkerStatus.FOUND);
         if (preDecision != null && preDecision.action() == DeliveryPolicy.Action.ALREADY_DELIVERED) {
             inProcessChargedOrders.remove(order.txId());
@@ -593,7 +594,7 @@ public final class MarketService {
         }
 
         PlayerDatReader.MarkerCheck check = saveOk
-                ? PlayerDatReader.checkExact(worldRoot, uuid, order.txId(), attempt)
+                ? checkExact(uuid, order.txId(), attempt)
                 : new PlayerDatReader.MarkerCheck(PlayerDatReader.MarkerStatus.UNREADABLE, null, 0L, "저장 중 예외: " + saveError);
 
         if (check.status() == PlayerDatReader.MarkerStatus.FOUND) {
@@ -695,7 +696,7 @@ public final class MarketService {
                 if (MarketStore.ORDER_CHARGED.equals(order.status())) {
                     // 이전 기동 건이면 먼저 디스크 확인
                     if (!inProcessChargedOrders.contains(order.txId())) {
-                        PlayerDatReader.MarkerCheck check = PlayerDatReader.checkAnyAttempt(worldRoot, uuid, order.txId());
+                        PlayerDatReader.MarkerCheck check = checkAnyAttempt(uuid, order.txId());
                         if (check.status() == PlayerDatReader.MarkerStatus.FOUND) {
                             store.markOrderDelivered(order.txId());
                             delivered++;
@@ -902,7 +903,7 @@ public final class MarketService {
     }
 
     private void reconcileChargedOrderFromDisk(MarketStore.OrderRecord order, Player online) throws SQLException {
-        PlayerDatReader.MarkerCheck check = PlayerDatReader.checkAnyAttempt(worldRoot, order.uuid(), order.txId());
+        PlayerDatReader.MarkerCheck check = checkAnyAttempt(order.uuid(), order.txId());
         switch (check.status()) {
             case FOUND -> {
                 store.raisePlayerSeq(order.uuid(), check.seq());
@@ -935,7 +936,7 @@ public final class MarketService {
             return;
         }
         online.saveData();
-        PlayerDatReader.MarkerCheck check = PlayerDatReader.checkExact(worldRoot, sale.uuid(), sale.txId(), sale.attempt());
+        PlayerDatReader.MarkerCheck check = checkExact(sale.uuid(), sale.txId(), sale.attempt());
         if (check.status() == PlayerDatReader.MarkerStatus.FOUND) {
             store.raisePlayerSeq(sale.uuid(), check.seq());
             store.markSaleItemsTaken(sale.txId());
@@ -959,7 +960,7 @@ public final class MarketService {
             return;
         }
         if (MarketStore.SALE_PENDING.equals(sale.status())) {
-            PlayerDatReader.MarkerCheck check = PlayerDatReader.checkAnyAttempt(worldRoot, sale.uuid(), sale.txId());
+            PlayerDatReader.MarkerCheck check = checkAnyAttempt(sale.uuid(), sale.txId());
             switch (check.status()) {
                 case FOUND -> {
                     store.raisePlayerSeq(sale.uuid(), check.seq());
@@ -1134,7 +1135,7 @@ public final class MarketService {
             // 메모리 상태(같은 틱에 회수했으면 상품·표시 없음)를 먼저 디스크에 씀
             online.saveData();
         }
-        PlayerDatReader.MarkerCheck check = PlayerDatReader.checkAnyAttempt(worldRoot, uuid, order.txId());
+        PlayerDatReader.MarkerCheck check = checkAnyAttempt(uuid, order.txId());
         switch (check.status()) {
             case FOUND -> {
                 if (isOnline && inProcessChargedOrders.contains(order.txId())) {
@@ -1210,5 +1211,15 @@ public final class MarketService {
         } catch (SQLException e) {
             return Map.of();
         }
+    }
+
+    private PlayerDatReader.MarkerCheck checkExact(UUID uuid, String txId, int attempt) {
+        return PlayerDatReader.check(worldRoot, uuid, MARKET_KEYS,
+                raw -> AppliedTxTokens.containsExact(raw, txId, attempt));
+    }
+
+    private PlayerDatReader.MarkerCheck checkAnyAttempt(UUID uuid, String txId) {
+        return PlayerDatReader.check(worldRoot, uuid, MARKET_KEYS,
+                raw -> AppliedTxTokens.containsAnyAttempt(raw, txId));
     }
 }

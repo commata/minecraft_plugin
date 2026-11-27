@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import kr.commata.common.io.AtomicFiles;
 
 /**
  * 마지막 직업 탈퇴 시각 파일 {@code plugins/EconomyHub/job-leaves.tsv} (ECONOMY.md 5.1, 7.2).
