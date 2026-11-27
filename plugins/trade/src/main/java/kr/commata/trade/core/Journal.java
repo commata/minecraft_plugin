@@ -601,6 +601,8 @@ public final class Journal {
         private final Path journalDir;
         private final Path lockedFile;
         private final Path corruptDir;
+        private boolean loadSucceeded;
+        private String loadErrorReason = "저널 초기 로드 미완료";
 
         public Store(Path dataDir) {
             this.journalDir = Objects.requireNonNull(dataDir, "dataDir").resolve("journal");
@@ -618,6 +620,11 @@ public final class Journal {
 
         public Path corruptDir() {
             return corruptDir;
+        }
+
+        /** 마지막 전체 저널 로드·검증이 예외 없이 완료됐는지 여부 (P1-2 fail-closed 조건). */
+        public boolean isLoadSucceeded() {
+            return loadSucceeded;
         }
 
         public Path fileOf(UUID tradeId) {
@@ -640,48 +647,66 @@ public final class Journal {
         /**
          * 디렉터리의 모든 {@code *.bin} 저널을 읽고, 손상된 파일이 있으면
          * <b>먼저 {@code LOCKED} 를 fsync 로 만든 뒤</b> {@code corrupt/} 로 격리합니다 (TRADE.md 6·13-1장).
+         *
+         * <p>목록 읽기 실패나 {@code LOCKED} 쓰기 실패 등 예외가 발생하면 {@link #isLoadSucceeded()} 를
+         * {@code false} 로 유지하고 가능하면 {@code LOCKED} 표시 파일을 남긴 뒤 예외를 다시 던집니다.
          */
         public LoadReport loadAll(long nowMs) throws IOException {
-            Files.createDirectories(journalDir);
-            List<Entry> loaded = new ArrayList<>();
-            List<String> newlyQuarantined = new ArrayList<>();
+            loadSucceeded = false;
+            loadErrorReason = "저널 로드 진행 중";
+            try {
+                Files.createDirectories(journalDir);
+                List<Entry> loaded = new ArrayList<>();
+                List<String> newlyQuarantined = new ArrayList<>();
 
-            try (DirectoryStream<Path> stream = Files.newDirectoryStream(journalDir)) {
-                for (Path file : stream) {
-                    if (!Files.isRegularFile(file)) {
-                        continue;
-                    }
-                    String name = file.getFileName().toString();
-                    if (!name.endsWith(".bin")) {
-                        continue;
-                    }
-                    try {
-                        byte[] raw = Files.readAllBytes(file);
-                        Entry entry = Journal.deserialize(raw);
-                        String expectedName = entry.tradeId() + ".bin";
-                        if (!expectedName.equals(name)) {
-                            throw new IOException("파일 이름과 tradeId 불일치: " + name + " != " + expectedName);
+                try (DirectoryStream<Path> stream = Files.newDirectoryStream(journalDir)) {
+                    for (Path file : stream) {
+                        if (!Files.isRegularFile(file)) {
+                            continue;
                         }
-                        loaded.add(entry);
-                    } catch (IOException e) {
-                        String quarantinedName = quarantineCorrupt(file, e.getMessage(), nowMs);
-                        newlyQuarantined.add(quarantinedName);
+                        String name = file.getFileName().toString();
+                        if (!name.endsWith(".bin")) {
+                            continue;
+                        }
+                        try {
+                            byte[] raw = Files.readAllBytes(file);
+                            Entry entry = Journal.deserialize(raw);
+                            String expectedName = entry.tradeId() + ".bin";
+                            if (!expectedName.equals(name)) {
+                                throw new IOException("파일 이름과 tradeId 불일치: " + name + " != " + expectedName);
+                            }
+                            loaded.add(entry);
+                        } catch (IOException e) {
+                            String quarantinedName = quarantineCorrupt(file, e.getMessage(), nowMs);
+                            newlyQuarantined.add(quarantinedName);
+                        }
                     }
                 }
-            }
 
-            List<String> unresolved = unresolvedCorruptFiles();
-            boolean lockFilePresent = Files.exists(lockedFile);
-            boolean locked = lockFilePresent || !unresolved.isEmpty();
-            String reason = buildLockReason(lockFilePresent, unresolved);
-            return new LoadReport(List.copyOf(loaded), List.copyOf(newlyQuarantined), locked, reason);
+                List<String> unresolved = unresolvedCorruptFiles();
+                boolean lockFilePresent = Files.exists(lockedFile);
+                boolean locked = lockFilePresent || !unresolved.isEmpty();
+                String reason = buildLockReason(lockFilePresent, unresolved);
+                loadSucceeded = true;
+                loadErrorReason = null;
+                return new LoadReport(List.copyOf(loaded), List.copyOf(newlyQuarantined), locked, reason);
+            } catch (IOException e) {
+                loadSucceeded = false;
+                loadErrorReason = "저널 로드 실패: " + e.getMessage();
+                tryWriteLockFile(nowMs, "loadAll", e.getMessage());
+                throw e;
+            }
         }
 
         /**
          * 현재 잠금 상태만 다시 검사합니다(기동·reload·거래 시작 전).
-         * {@code LOCKED} 파일이 있거나 {@code corrupt/} 에 {@code .resolved} 없는 파일이 있으면 잠깁니다.
+         * 전체 저널 로드가 성공하지 않았거나 {@code LOCKED} 파일이 있거나 {@code corrupt/} 에
+         * {@code .resolved} 없는 파일이 있으면 잠깁니다.
          */
         public boolean isLocked() {
+            if (!loadSucceeded) {
+                return true;
+            }
             if (Files.exists(lockedFile)) {
                 return true;
             }
@@ -694,6 +719,9 @@ public final class Journal {
         }
 
         public String lockReason() {
+            if (!loadSucceeded) {
+                return loadErrorReason != null ? loadErrorReason : "저널 초기 로드 미완료";
+            }
             boolean lockFilePresent = Files.exists(lockedFile);
             try {
                 List<String> unresolved = unresolvedCorruptFiles();
@@ -785,6 +813,19 @@ public final class Journal {
             syncDir(corruptDir);
             syncDir(journalDir);
             return targetName;
+        }
+
+        private void tryWriteLockFile(long nowMs, String source, String errorReason) {
+            try {
+                if (Files.isDirectory(journalDir)) {
+                    String lockContent = "lockedAt=" + Instant.ofEpochMilli(nowMs) + "\n"
+                            + "file=" + source + "\n"
+                            + "reason=" + (errorReason == null ? "unknown" : errorReason) + "\n";
+                    AtomicFiles.write(lockedFile, lockContent);
+                }
+            } catch (IOException ignored) {
+                // 디스크·디렉터리 자체가 쓰기 불가이면 메모리 loadSucceeded=false 잠금으로 유지
+            }
         }
 
         private static String buildLockReason(boolean lockFilePresent, List<String> unresolved) {

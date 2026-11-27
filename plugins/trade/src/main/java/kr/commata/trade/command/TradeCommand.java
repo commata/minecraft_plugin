@@ -166,18 +166,13 @@ public final class TradeCommand implements BasicCommand {
         }
         String target = args[1];
         if (target.equalsIgnoreCase("unlock")) {
-            try {
-                Journal.UnlockResult result = service.journalStore().unlock(sender.getName(), System.currentTimeMillis());
-                if (result.unlocked()) {
-                    logger.info("관리자(" + sender.getName() + ") /trade resolve unlock 실행: " + result.message());
-                    Msg.success(sender, result.message());
-                    service.reconcileAllOpenJournals(true);
-                } else {
-                    Msg.error(sender, result.message());
-                }
-            } catch (IOException e) {
-                logger.severe("Trade 잠금 해제 중 I/O 오류: " + e.getMessage());
-                Msg.error(sender, "잠금 해제 중 오류가 발생했습니다: " + e.getMessage());
+            Journal.UnlockResult result = service.unlockByAdmin(sender.getName());
+            if (result.unlocked()) {
+                logger.info("관리자(" + sender.getName() + ") /trade resolve unlock 실행: " + result.message());
+                Msg.success(sender, result.message());
+            } else {
+                logger.warning("관리자(" + sender.getName() + ") /trade resolve unlock 실패: " + result.message());
+                Msg.error(sender, result.message());
             }
             return;
         }

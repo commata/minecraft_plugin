@@ -88,7 +88,7 @@
 | 금액 있는 `TAKING`→`COMMITTED` 사이에서 멈춤 | `findByExtRef` | 있음·일치 → `COMMITTED`, 없음 → 4번 다시(양쪽 take FOUND 면 정산 재시도) 또는 7번, 모름 → 잠금 |
 
 - 정산 중이거나 대기(`PENDING`)가 남은 플레이어는 Trade 새 거래 불가(다른 기능은 막지 않음).
-- **저널 손상**(읽기·역직렬화 실패): **먼저 `journal/LOCKED` 표시 파일을 fsync 로 만든 뒤** 손상 파일을 `journal/corrupt/` 로 옮긴다(v4 재검증 High — 순서가 반대면 그 사이 종료 때 잠금이 사라짐). **`LOCKED` 가 있거나 `journal/corrupt/` 에 해결 표시 없는 파일이 있으면 기동·reload 때도 Trade 전체 잠금**(누가 관련됐는지 모르므로). 관리자가 파일을 확인하고 `/trade resolve unlock` 을 실행하면: 격리 파일마다 **해결 표시(`<파일>.resolved`, 관리자·시각·조치)를 fsync 로 먼저 남기고**, 해결 표시가 없는 격리 파일이 하나도 없을 때만 `LOCKED` 를 지운다.
+- **저널 손상·로드 실패**(목록 읽기·역직렬화·`LOCKED` 쓰기 실패): **먼저 `journal/LOCKED` 표시 파일을 fsync 로 만든 뒤** 손상 파일을 `journal/corrupt/` 로 옮긴다(v4 재검증 High — 순서가 반대면 그 사이 종료 때 잠금이 사라짐). **`LOCKED` 가 있거나 `journal/corrupt/` 에 해결 표시 없는 파일이 있거나, 전체 저널 로드가 아직 성공하지 않았으면 기동·reload 때도 Trade 전체 잠금**(누가 관련됐는지 모르므로). 관리자가 문제를 해결한 뒤 `/trade reload` 또는 `/trade resolve unlock` 으로 전체 저널 재로딩·검증을 통과해야 잠금이 해제된다. `/trade resolve unlock` 은 격리 파일마다 **해결 표시(`<파일>.resolved`, 관리자·시각·조치)를 fsync 로 먼저 남기고**, 해결 표시가 없는 격리 파일이 하나도 없을 때만 `LOCKED` 를 지운 뒤 재로딩·검증을 수행한다.
 - 남는 위험(문서로 인정, v4 재검증): ① 디스크가 계속 저장에 실패하거나 `.dat` 을 못 읽는 상태는 잠금 + 관리자 개입으로만 막는다. ② 서버 밖에서 `.dat` 하나만 예전 백업으로 되돌리는 경우는 Trade 가 감지하지 못한다 → **복원은 ECONOMY.md 2.3대로 서버 정지 상태의 같은 시점 전체 백업으로만**(경제 데이터·플레이어 파일·Trade 저널을 같이) 한다. Market `PlayerDataGuard` 의 `seq` 대조를 Trade 에도 쓸지는 구현 단계에서 판단(공통으로 옮길 수 있으면 `common`).
 
 ## 7. 클릭·이벤트

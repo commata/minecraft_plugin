@@ -171,4 +171,63 @@ final class JournalTest {
         assertEquals(7, decoded.itemsFromA().size());
         assertEquals(Journal.MAX_ITEM_BYTES, decoded.itemsFromA().get(0).length);
     }
+
+    @Test
+    void storeRemainsLockedUntilLoadAllSucceedsAndDirectoryFailureKeepsLocked(@TempDir Path tempDir) throws IOException {
+        Journal.Store store = new Journal.Store(tempDir);
+        // 기동 전(미로드)은 fail-closed 잠금
+        assertFalse(store.isLoadSucceeded());
+        assertTrue(store.isLocked());
+
+        // journal 경로가 일반 파일이면 목록 읽기 실패 → 잠금 유지
+        Files.writeString(store.journalDir(), "not-a-directory");
+        assertThrows(IOException.class, () -> store.loadAll(1_000L));
+        assertFalse(store.isLoadSucceeded());
+        assertTrue(store.isLocked());
+
+        // 문제 해결 후 재로딩 성공해야 비로소 잠금 해제
+        Files.delete(store.journalDir());
+        Journal.LoadReport report = store.loadAll(2_000L);
+        assertTrue(store.isLoadSucceeded());
+        assertFalse(report.locked());
+        assertFalse(store.isLocked());
+    }
+
+    @Test
+    void lockedWriteFailureDoesNotMoveCorruptFileAndKeepsStoreLocked(@TempDir Path tempDir) throws IOException {
+        Journal.Store store = new Journal.Store(tempDir);
+        Files.createDirectories(store.journalDir());
+
+        // 손상 저널 배치
+        Path corruptFile = store.journalDir().resolve("11111111-1111-1111-1111-111111111111.bin");
+        Files.write(corruptFile, new byte[]{1, 2, 3});
+
+        // LOCKED 경로를 디렉터리로 막아 LOCKED 선기록이 반드시 실패하게 유도
+        Files.createDirectory(store.lockedFile());
+
+        assertThrows(IOException.class, () -> store.loadAll(10_000L));
+        // LOCKED 선기록이 실패했으므로 손상 파일은 corrupt/ 로 이동되지 않고 그대로 남아야 함
+        assertTrue(Files.isRegularFile(corruptFile));
+        assertFalse(Files.exists(store.corruptDir().resolve("11111111-1111-1111-1111-111111111111.bin")));
+        // 로드 실패 플래그로 Trade 전체 잠금 유지
+        assertFalse(store.isLoadSucceeded());
+        assertTrue(store.isLocked());
+
+        // 장애 제거 후 재로딩 → LOCKED 생성 + 손상 파일 격리 + 잠금 유지
+        Files.delete(store.lockedFile());
+        Journal.LoadReport reloaded = store.loadAll(20_000L);
+        assertTrue(store.isLoadSucceeded());
+        assertTrue(reloaded.locked());
+        assertTrue(store.isLocked());
+        assertTrue(Files.isRegularFile(store.lockedFile()));
+        assertFalse(Files.exists(corruptFile));
+        assertTrue(Files.isRegularFile(store.corruptDir().resolve("11111111-1111-1111-1111-111111111111.bin")));
+
+        // 관리자 unlock 후 재로딩 검증 통과 → 잠금 해제
+        Journal.UnlockResult unlock = store.unlock("Admin", 30_000L);
+        assertTrue(unlock.unlocked());
+        Journal.LoadReport verified = store.loadAll(31_000L);
+        assertFalse(verified.locked());
+        assertFalse(store.isLocked());
+    }
 }

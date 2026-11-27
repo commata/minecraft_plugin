@@ -201,7 +201,98 @@ public final class TradeService {
                 reconcileAllOpenJournals(false);
             }
         } catch (IOException e) {
-            logger.severe("Trade 저널 폴더 로드 실패 (안전상 거래가 차단될 수 있음): " + e.getMessage());
+            openJournals.clear();
+            logger.severe("==========================================================");
+            logger.severe("Trade 저널 폴더 로드 실패 — Trade 전체 잠금 모드로 전환합니다: " + e.getMessage());
+            logger.severe("디스크·권한 문제를 해결한 뒤 /trade reload 또는 /trade resolve unlock 으로");
+            logger.severe("저널 재로딩과 검증이 완료되어야 잠금이 해제됩니다.");
+            logger.severe("==========================================================");
+        }
+    }
+
+    /**
+     * {@code /trade reload} 시 저널 미로드 또는 잠금 상태라면 전체 저널 재로딩·검증을 시도합니다 (P1-2).
+     *
+     * @return 재로딩 결과 안내 문구(평문), 이미 정상 로드·비잠금 상태이면 {@code null}
+     */
+    public String reloadJournalsIfLocked() {
+        if (journalStore.isLoadSucceeded() && !journalStore.isLocked()) {
+            return null;
+        }
+        long nowMs = System.currentTimeMillis();
+        try {
+            Journal.LoadReport report = journalStore.loadAll(nowMs);
+            openJournals.clear();
+            for (Journal.Entry entry : report.entries()) {
+                openJournals.put(entry.tradeId(), entry);
+            }
+            if (!report.newlyQuarantined().isEmpty()) {
+                logger.severe("재로딩 중 손상 거래 저널 격리 + LOCKED 생성: " + report.newlyQuarantined());
+            }
+            if (report.locked() || journalStore.isLocked()) {
+                String reason = journalStore.lockReason();
+                logger.warning("Trade 저널 재로딩 완료 (여전히 잠금 모드: " + reason + ")");
+                return "설정을 다시 불러왔으나 저널 잠금 상태가 유지됩니다: " + reason;
+            }
+            logger.info("Trade 저널 재로딩·검증 완료 (잠금 해제, 미완료 저널 " + openJournals.size() + "건).");
+            if (!openJournals.isEmpty()) {
+                reconcileAllOpenJournals(true);
+            }
+            return "Trade 설정 및 저널(" + openJournals.size() + "건)을 다시 불러와 잠금이 해제되었습니다.";
+        } catch (IOException e) {
+            openJournals.clear();
+            logger.severe("Trade 저널 재로딩 실패 (잠금 유지): " + e.getMessage());
+            return "설정은 다시 불러왔으나 저널 재로딩 실패로 잠금이 유지됩니다: " + e.getMessage();
+        }
+    }
+
+    /**
+     * 관리자 {@code /trade resolve unlock}:
+     * 1) 미로드 상태면 먼저 전체 재로딩·검증(새 손상 파일이 발견되면 즉시 해제하지 않고 관리자 확인 요구)
+     * 2) 미해결 격리 파일 {@code .resolved} fsync 후 {@code LOCKED} 삭제
+     * 3) 전체 저널 재로딩·검증이 성공해 {@code isLocked() == false} 일 때만 복구 재개 (P1-2).
+     */
+    public Journal.UnlockResult unlockByAdmin(String adminName) {
+        long nowMs = System.currentTimeMillis();
+        try {
+            if (!journalStore.isLoadSucceeded()) {
+                Journal.LoadReport pre = journalStore.loadAll(nowMs);
+                openJournals.clear();
+                for (Journal.Entry entry : pre.entries()) {
+                    openJournals.put(entry.tradeId(), entry);
+                }
+                if (!pre.newlyQuarantined().isEmpty()) {
+                    logger.severe("unlock 전 재로딩 중 새 손상 저널 격리: " + pre.newlyQuarantined());
+                    return new Journal.UnlockResult(false, 0,
+                            "저널 재로딩 중 새 손상 파일이 격리되었습니다("
+                                    + String.join(", ", pre.newlyQuarantined())
+                                    + "). 확인 후 다시 /trade resolve unlock 을 실행하세요.");
+                }
+            }
+
+            Journal.UnlockResult unlock = journalStore.unlock(adminName, nowMs);
+            if (!unlock.unlocked()) {
+                return unlock;
+            }
+
+            // 잠금 파일 삭제 후 전체 저널 목록을 다시 로드·검증해야만 잠금 해제 확정
+            Journal.LoadReport verified = journalStore.loadAll(nowMs);
+            openJournals.clear();
+            for (Journal.Entry entry : verified.entries()) {
+                openJournals.put(entry.tradeId(), entry);
+            }
+            if (!verified.newlyQuarantined().isEmpty() || verified.locked() || journalStore.isLocked()) {
+                return new Journal.UnlockResult(false, unlock.resolvedFiles(),
+                        "잠금 해제 후 재검증에서 여전히 잠금 상태입니다: " + journalStore.lockReason());
+            }
+            if (!openJournals.isEmpty()) {
+                reconcileAllOpenJournals(true);
+            }
+            return unlock;
+        } catch (IOException e) {
+            logger.severe("Trade 잠금 해제·재검증 중 I/O 오류 (잠금 유지): " + e.getMessage());
+            return new Journal.UnlockResult(false, 0,
+                    "저널 재로딩·검증 실패로 잠금을 해제하지 못했습니다: " + e.getMessage());
         }
     }
 

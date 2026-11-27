@@ -70,15 +70,14 @@ public final class TradePlugin extends JavaPlugin {
         reloadConfig();
         TradeConfig reloaded = TradeConfig.load(getConfig(), getLogger());
         tradeService.updateConfig(reloaded);
-        if (tradeService.journalStore().isLocked()) {
-            String reason = tradeService.journalStore().lockReason();
-            getLogger().warning("Trade 리로드 완료 (여전히 잠금 모드: " + reason + ")");
-            return "<#FFDF6B>설정을 다시 불러왔으나 저널 잠금 상태가 유지됩니다: <#FF5555>" + reason;
+        String journalResult = tradeService.reloadJournalsIfLocked();
+        if (journalResult != null) {
+            return journalResult;
         }
         getLogger().info("Trade 설정 리로드 완료 (요청 " + reloaded.requestTimeoutSeconds() + "초, 카운트다운 "
                 + reloaded.countdownSeconds() + "초, 재요청 금지 " + reloaded.reRequestCooldownSeconds()
                 + "초, 대화창 만료 " + reloaded.dialogTimeoutSeconds() + "초)");
-        return "<#55FF55>Trade 설정을 다시 불러왔습니다.";
+        return "Trade 설정을 다시 불러왔습니다.";
     }
 
     @Override
