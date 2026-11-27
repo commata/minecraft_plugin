@@ -130,10 +130,11 @@ public final class RecoveryPolicy {
     }
 
     /**
-     * {@code TAKING} 거래 전체의 다음 조치를 결정합니다 (TRADE.md 6장, 13-2장).
+     * {@code TAKING} 거래 전체의 다음 조치를 결정합니다 (TRADE.md 6장, 13-2장, P2-5).
      *
-     * <p>한쪽이 확정 {@code FINAL_ABSENT} 여도 다른 쪽이 {@code PENDING_IN_SESSION} 또는 {@code UNREADABLE} 이면
-     * <b>결정 유예({@link TakingDecision#DEFER})</b> 합니다 (v4.1 재검증 Critical).
+     * <p>어느 쪽이든 {@code PENDING_IN_SESSION} 또는 {@code UNREADABLE} 이면 Bank 조회 결과({@code FOUND_MATCH}
+     * 포함)보다 먼저 <b>결정 유예({@link TakingDecision#DEFER})</b> 합니다.
+     * 돈이 이미 이동했더라도 아이템은 저널에 안전하게 보관되므로 양쪽 take 가 최종 확정된 뒤에만 다음 단계로 진행합니다.
      */
     public static TakingDecision decideTaking(
             TakingSideState sideA,
@@ -141,6 +142,12 @@ public final class RecoveryPolicy {
             boolean hasMoney,
             BankLookupState bankLookup
     ) {
+        // 어느 쪽이든 아직 진행 중(PENDING_IN_SESSION)이거나 읽기 불가(UNREADABLE)면
+        // Bank 영수증(FOUND_MATCH)보다 먼저 결정 유예 (TRADE.md 6·13-2장, P2-5)
+        if (isUndecided(sideA) || isUndecided(sideB)) {
+            return TakingDecision.DEFER;
+        }
+
         if (hasMoney) {
             if (bankLookup == BankLookupState.FOUND_MATCH) {
                 return TakingDecision.PROMOTE_TO_COMMITTED;
@@ -157,11 +164,6 @@ public final class RecoveryPolicy {
                 return TakingDecision.QUERY_BANK;
             }
             // bankLookup == NOT_FOUND
-        }
-
-        // 어느 쪽이든 아직 진행 중(PENDING_IN_SESSION)이거나 읽기 불가(UNREADABLE)면 결정 유예
-        if (isUndecided(sideA) || isUndecided(sideB)) {
-            return TakingDecision.DEFER;
         }
 
         // 양쪽 모두 최종 확정(FINAL_FOUND 또는 FINAL_ABSENT)

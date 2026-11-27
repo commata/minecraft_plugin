@@ -82,11 +82,11 @@
 | `TAKING`, 쪽 `take=PENDING` (서버 실행 중, **가져오기를 한 그 접속 세션이 계속되는 동안만** — 플레이어마다 접속할 때 새 `connGen`) | 타이머가 `saveData` 후 확인 | `FOUND` → `take=FOUND`. `ABSENT`(파일을 읽었는데 토큰 없음) → 메모리와 디스크가 다름 = 저장이 안 되고 있음 → 다시 저장 시도, 3회 연속이면 그 플레이어 Trade 잠금 + severe(관리자). `UNREADABLE` → 기다림 |
 | `TAKING`, 그 플레이어가 **퇴장했거나 다시 접속함**(connGen 이 바뀜) | 퇴장 저장 뒤 / 재접속 때 그 플레이어의 디스크 `.dat` | **그 플레이어 쪽만** 메모리 상태를 버리고 디스크로 판정(FOUND / 확정 ABSENT / UNREADABLE). 상대 쪽은 상대의 상태대로 따로 판정한다 |
 | `TAKING` (기동 때, 모두 오프라인) | 각 쪽 `.dat` | `FOUND` → 가져오기 됨. `ABSENT` → 가져오기 안 됨(디스크에 원래 물건). `UNREADABLE` → 기다림(잠금) |
-| `TAKING`, 결정 | 양쪽 take 의 **최종** 상태 | 양쪽 FOUND → 4번부터 계속. 한쪽이라도 확정 ABSENT **이고 다른 쪽이 PENDING(같은 접속에서 저장 중)·UNREADABLE 이 아니면** → 7번 취소. 그 밖(어느 쪽이든 아직 PENDING·UNREADABLE) → **결정 유예**(다른 쪽이 FOUND/ABSENT 로 끝날 때까지 기다림, v4.1 재검증 Critical) |
+| `TAKING`, 결정 | 양쪽 take 의 **최종** 상태 | 어느 쪽이든 아직 `PENDING`(같은 접속에서 저장 중)·`UNREADABLE` 이면 Bank 영수증 여부와 무관하게 **결정 유예**(돈은 이미 이동했더라도 아이템은 저널에 안전 보관 — 다른 쪽이 FOUND/ABSENT 로 끝날 때까지 기다림, v4.1 재검증 Critical). 양쪽 모두 최종 확정된 뒤: 양쪽 FOUND → 4번부터 계속, 한쪽 이상 확정 ABSENT → 7번 취소 |
 | `RETURNING` | 쪽별 `return` 토큰 | 정산은 절대 다시 하지 않음. 돌려받지 못한 쪽만 5번 방식으로 돌려줌 |
 | `COMMITTED`/`RETURNING`, `give`/`return=UNCERTAIN` | 같은 접속이면 `saveData` 뒤 확인, 새 접속(`connGen` 변경)이면 디스크 바로 확인 | `UNREADABLE` → 완료·재지급 모두 보류. `ABSENT` → `UNCERTAIN` 해제 + 시도 번호 `n+1` 로 `PENDING` 전환 뒤 재시도. `FOUND` → 새 접속·오프라인이면 즉시 완료, 같은 접속이면 회수된 메모리에 다시 지급·저장해 디스크 기준으로 수렴 |
 | `COMMITTED`, `give=PENDING` | 접속·타이머·`/trade claim` 때 5번 | 위 5번 그대로 |
-| 금액 있는 `TAKING`→`COMMITTED` 사이에서 멈춤 | `findByExtRef` | 있음·일치 → `COMMITTED`, 없음 → 4번 다시(양쪽 take FOUND 면 정산 재시도) 또는 7번, 모름 → 잠금 |
+| 금액 있는 `TAKING`→`COMMITTED` 사이에서 멈춤 | 양쪽 take 최종 확정 뒤 `findByExtRef` | 있음·일치 → `COMMITTED`, 없음 → 4번 다시(양쪽 take FOUND 면 정산 재시도) 또는 7번, 모름 → 잠금, 불일치 → 봉인 |
 
 - 정산 중이거나 대기(`PENDING`)가 남은 플레이어는 Trade 새 거래 불가(다른 기능은 막지 않음).
 - **저널 손상·로드 실패**(목록 읽기·역직렬화·`LOCKED` 쓰기 실패): **먼저 `journal/LOCKED` 표시 파일을 fsync 로 만든 뒤** 손상 파일을 `journal/corrupt/` 로 옮긴다(v4 재검증 High — 순서가 반대면 그 사이 종료 때 잠금이 사라짐). **`LOCKED` 가 있거나 `journal/corrupt/` 에 해결 표시 없는 파일이 있거나, 전체 저널 로드가 아직 성공하지 않았으면 기동·reload 때도 Trade 전체 잠금**(누가 관련됐는지 모르므로). 관리자가 문제를 해결한 뒤 `/trade reload` 또는 `/trade resolve unlock` 으로 전체 저널 재로딩·검증을 통과해야 잠금이 해제된다. `/trade resolve unlock` 은 격리 파일마다 **해결 표시(`<파일>.resolved`, 관리자·시각·조치)를 fsync 로 먼저 남기고**, 해결 표시가 없는 격리 파일이 하나도 없을 때만 `LOCKED` 를 지운 뒤 재로딩·검증을 수행한다.

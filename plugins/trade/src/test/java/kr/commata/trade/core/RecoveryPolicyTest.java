@@ -85,6 +85,15 @@ final class RecoveryPolicyTest {
                 RecoveryPolicy.TakingSideState.UNREADABLE,
                 RecoveryPolicy.TakingSideState.FINAL_ABSENT,
                 true, RecoveryPolicy.BankLookupState.NOT_FOUND));
+        // P2-5: Bank 영수증(FOUND_MATCH)이 있어도 한쪽이 미결(PENDING_IN_SESSION/UNREADABLE)이면 유예
+        assertEquals(RecoveryPolicy.TakingDecision.DEFER, RecoveryPolicy.decideTaking(
+                RecoveryPolicy.TakingSideState.UNREADABLE,
+                RecoveryPolicy.TakingSideState.FINAL_FOUND,
+                true, RecoveryPolicy.BankLookupState.FOUND_MATCH));
+        assertEquals(RecoveryPolicy.TakingDecision.DEFER, RecoveryPolicy.decideTaking(
+                RecoveryPolicy.TakingSideState.FINAL_FOUND,
+                RecoveryPolicy.TakingSideState.PENDING_IN_SESSION,
+                true, RecoveryPolicy.BankLookupState.FOUND_MATCH));
         // 양쪽 모두 최종 확정(FINAL_ABSENT + FINAL_FOUND)이면 비로소 RETURNING
         assertEquals(RecoveryPolicy.TakingDecision.TRANSITION_TO_RETURNING, RecoveryPolicy.decideTaking(
                 RecoveryPolicy.TakingSideState.FINAL_ABSENT,
@@ -167,6 +176,13 @@ final class RecoveryPolicyTest {
             boolean hasMoney,
             RecoveryPolicy.BankLookupState bank
     ) {
+        boolean aUndecided = a == RecoveryPolicy.TakingSideState.PENDING_IN_SESSION
+                || a == RecoveryPolicy.TakingSideState.UNREADABLE;
+        boolean bUndecided = b == RecoveryPolicy.TakingSideState.PENDING_IN_SESSION
+                || b == RecoveryPolicy.TakingSideState.UNREADABLE;
+        if (aUndecided || bUndecided) {
+            return RecoveryPolicy.TakingDecision.DEFER;
+        }
         if (hasMoney) {
             if (bank == RecoveryPolicy.BankLookupState.FOUND_MATCH) {
                 return RecoveryPolicy.TakingDecision.PROMOTE_TO_COMMITTED;
@@ -180,13 +196,6 @@ final class RecoveryPolicyTest {
             if (bank == RecoveryPolicy.BankLookupState.NOT_CHECKED) {
                 return RecoveryPolicy.TakingDecision.QUERY_BANK;
             }
-        }
-        boolean aUndecided = a == RecoveryPolicy.TakingSideState.PENDING_IN_SESSION
-                || a == RecoveryPolicy.TakingSideState.UNREADABLE;
-        boolean bUndecided = b == RecoveryPolicy.TakingSideState.PENDING_IN_SESSION
-                || b == RecoveryPolicy.TakingSideState.UNREADABLE;
-        if (aUndecided || bUndecided) {
-            return RecoveryPolicy.TakingDecision.DEFER;
         }
         if (a == RecoveryPolicy.TakingSideState.FINAL_FOUND && b == RecoveryPolicy.TakingSideState.FINAL_FOUND) {
             return hasMoney ? RecoveryPolicy.TakingDecision.SETTLE_BANK : RecoveryPolicy.TakingDecision.PROMOTE_TO_COMMITTED;
