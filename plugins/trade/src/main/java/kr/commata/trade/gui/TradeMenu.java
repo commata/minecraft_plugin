@@ -55,6 +55,8 @@ public final class TradeMenu extends Menu {
 
     @Override
     protected void bottomClick(Player player, int slot, ClickType type) {
+        // MenuListener 가 꾸러미 InventoryAction(내용 꺼내기·넣기)과 크리에이티브 클릭을 이미 차단하므로
+        // 여기에는 순수 좌·우클릭 제시 조작만 전달됩니다 (TRADE.md 7장, P2-6).
         ClickRules.Action action = ClickRules.interpret(ClickRules.Area.BOTTOM, slot, toButton(type));
         service.handleTradeClick(player, session, action);
     }
