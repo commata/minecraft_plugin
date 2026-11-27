@@ -213,7 +213,10 @@ public final class BankStore implements AutoCloseable {
         return config.createConnection("jdbc:sqlite:" + dbFile.toAbsolutePath());
     }
 
-    /** 예전 스키마(v1~v3)에 누락된 칸·테이블을 더함. 추가만 하므로 예전 JAR 로 롤백해도 읽을 수 있음. */
+    /**
+     * 예전 스키마(v1~v3)에 누락된 칸·테이블을 더함(추가만). 단 v4 의 원장 {@code TRADE} 행은 v3 이하 JAR 의 {@code /bank log} 가
+     * 읽지 못하므로, v4 이후 JAR 만 되돌리는 롤백은 안 되고 같은 시점 전체 스냅샷 복원으로만 되돌린다 (TRADE.md 4장).
+     */
     private void migrate() throws SQLException {
         write(() -> {
             boolean hasWorldDir = false;
