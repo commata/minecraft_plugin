@@ -938,19 +938,17 @@ public final class BankStore implements AutoCloseable {
         if (extRef == null || extRef.isBlank() || a == null || b == null || source == null || source.isBlank()) {
             return TradeOutcome.rejected(TradeFailure.INVALID_REQUEST, null, "");
         }
-        if (a.equals(b)) {
-            return TradeOutcome.rejected(TradeFailure.SELF_TRADE, a, "");
-        }
-        if (aPays < 0 || aPays > Amounts.MAX || bPays < 0 || bPays > Amounts.MAX || (aPays == 0 && bPays == 0)) {
-            return TradeOutcome.rejected(TradeFailure.INVALID_AMOUNT, null, "");
-        }
+        boolean selfTrade = a.equals(b);
+        boolean invalidAmount = aPays < 0 || aPays > Amounts.MAX || bPays < 0 || bPays > Amounts.MAX
+                || (aPays == 0 && bPays == 0);
         try {
             TradeApplied applied = write(() -> {
                 requireBoot();
+                // 기존 ref 비교를 입력 검사보다 먼저: 이미 쓰인 ref 에 다른 값이 오면 형식이 틀려도 MISMATCH (QA ④-1)
                 Optional<TradeLookup.TradeRecord> existing = findTradeRecord(extRef);
                 if (existing.isPresent()) {
                     TradeLookup.TradeRecord rec = existing.get();
-                    if (rec.matches(a, aPays, b, bPays) && source.equals(rec.source())) {
+                    if (!selfTrade && !invalidAmount && rec.matches(a, aPays, b, bPays) && source.equals(rec.source())) {
                         return new TradeApplied(rec.txAId(), rec.txBId(), true, Map.of());
                     }
                     throw new TradeMismatch("기존=" + rec.a() + ":" + rec.aPays() + "/" + rec.b() + ":" + rec.bPays()
@@ -958,6 +956,12 @@ public final class BankStore implements AutoCloseable {
                 }
                 if (hasTransactionExtRef(extRef)) {
                     throw new TradeMismatch("다른 종류의 거래에 이미 사용된 extRef: " + extRef);
+                }
+                if (selfTrade) {
+                    throw new TradeRejected(TradeFailure.SELF_TRADE, a, "");
+                }
+                if (invalidAmount) {
+                    throw new TradeRejected(TradeFailure.INVALID_AMOUNT, null, "");
                 }
 
                 long aRaw = balanceForUpdate(a, null, false);
