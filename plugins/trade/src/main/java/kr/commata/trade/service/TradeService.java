@@ -343,6 +343,20 @@ public final class TradeService {
         }
     }
 
+    /** {@code PlayerRespawnEvent} (MONITOR, 다음 틱): 사망 중 대기하던 지급·반환을 재개합니다 (TRADE.md 5·6장). */
+    public void onPlayerRespawn(Player player) {
+        if (player == null || !player.isOnline() || player.isDead() || journalStore.isLocked()) {
+            return;
+        }
+        List<UUID> related = relatedJournalIds(player.getUniqueId());
+        for (UUID tradeId : related) {
+            Journal.Entry entry = openJournals.get(tradeId);
+            if (entry != null) {
+                reconcileEntry(entry, true);
+            }
+        }
+    }
+
     /** 강퇴·사망·모드 변경·전투 등 정산 전 즉시 취소 사유 처리 (TRADE.md 2·7장). */
     public void cancelIfActive(UUID playerId, String reason) {
         sessions.sessionOf(playerId).ifPresent(session -> {
@@ -988,6 +1002,10 @@ public final class TradeService {
                 abortSettling(session, "상대방 접속 종료");
                 return;
             }
+            if (pA.isDead() || pB.isDead()) {
+                abortSettling(session, "사망");
+                return;
+            }
             if (isGloballyLocked()) {
                 session.revertSettlingToOpen();
                 notifyBoth(pA, pB, "<#FF5555>거래 기능이 현재 잠겨 있어 정산할 수 없습니다.");
@@ -1322,10 +1340,11 @@ public final class TradeService {
 
         Player online = server.getPlayer(targetUuid);
         boolean isOnline = online != null && online.isOnline();
+        boolean isAlive = isOnline && !online.isDead();
 
         List<ItemStack> items = null;
         int missingSlots = 0;
-        if (preCheck.status() == PlayerDatReader.MarkerStatus.ABSENT && isOnline) {
+        if (preCheck.status() == PlayerDatReader.MarkerStatus.ABSENT && isAlive) {
             try {
                 items = TradeInventoryHelper.deserializeStacks(itemBytes);
             } catch (RuntimeException e) {
@@ -1339,9 +1358,9 @@ public final class TradeService {
 
         RecoveryPolicy.DeliveryDecision decision = isReturn
                 ? RecoveryPolicy.decideReturnSide(!itemBytes.isEmpty(), currentStatus, preCheck.status(),
-                        isOnline, missingSlots == 0)
+                        isOnline, isAlive, missingSlots == 0)
                 : RecoveryPolicy.decideGiveSide(!itemBytes.isEmpty(), currentStatus, preCheck.status(),
-                        isOnline, missingSlots == 0);
+                        isOnline, isAlive, missingSlots == 0);
 
         switch (decision) {
             case ALREADY_DONE -> {
@@ -1359,7 +1378,7 @@ public final class TradeService {
                 }
                 return entry;
             }
-            case WAIT_OFFLINE, WAIT_UNREADABLE -> {
+            case WAIT_DEAD, WAIT_OFFLINE, WAIT_UNREADABLE -> {
                 return entry;
             }
             case DELIVER_NOW -> {
@@ -1641,6 +1660,10 @@ public final class TradeService {
     public void claimPending(Player player) {
         if (journalStore.isLocked()) {
             Msg.error(player, "Trade 가 잠금 모드입니다. 관리자에게 문의해 주세요.");
+            return;
+        }
+        if (player.isDead()) {
+            Msg.warn(player, "사망 중에는 거래 물건을 수령할 수 없습니다. 리스폰 후 다시 시도해 주세요.");
             return;
         }
         UUID uuid = player.getUniqueId();

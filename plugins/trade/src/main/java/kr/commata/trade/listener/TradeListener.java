@@ -17,6 +17,7 @@ import org.bukkit.event.player.PlayerGameModeChangeEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerKickEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.plugin.Plugin;
 
 /**
@@ -31,7 +32,8 @@ import org.bukkit.plugin.Plugin;
  *       따라서 퇴장 이벤트에서는 {@code connGen} 제거와 정산 전 세션 즉시 취소만 수행하고, {@code TAKING} 저널의 디스크 재판정은
  *       다음 틱({@code runTask})으로 미뤄 퇴장 저장 완료 후 `.dat` 를 읽습니다.</li>
  *   <li>사망({@link PlayerDeathEvent}, {@code MONITOR}): 제시 방식은 아이템이 움직이지 않으므로 keepInventory 여부와 무관하게
- *       정산 전 세션만 즉시 취소합니다.</li>
+ *       정산 전 세션만 즉시 취소합니다. 사망 중인 수령자에게는 지급·반환을 보류하고
+ *       {@link PlayerRespawnEvent}(MONITOR, 다음 틱) 뒤 생존 상태에서 재개합니다.</li>
  *   <li>전투({@link EntityDamageByEntityEvent}, {@code MONITOR}): Travel 의 전투 태그 PDC({@code home:combat_until}) 기록이
  *       끝난 다음 틱에 양쪽 플레이어의 전투 상태를 재확인해 거래를 취소합니다.</li>
  *   <li>창 닫기({@code InventoryCloseEvent}): {@code common.gui.MenuListener}(MONITOR) 가 {@code TradeMenu.closed} 를
@@ -71,6 +73,18 @@ public final class TradeListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void onDeath(PlayerDeathEvent event) {
         service.cancelIfActive(event.getEntity().getUniqueId(), "사망");
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onRespawn(PlayerRespawnEvent event) {
+        UUID uuid = event.getPlayer().getUniqueId();
+        // 리스폰 완료 후 다음 틱(생존 상태)에서 사망으로 보류된 지급·반환 재개 (TRADE.md 5·6·7장)
+        server.getScheduler().runTask(plugin, () -> {
+            Player online = server.getPlayer(uuid);
+            if (online != null && online.isOnline() && !online.isDead()) {
+                service.onPlayerRespawn(online);
+            }
+        });
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)

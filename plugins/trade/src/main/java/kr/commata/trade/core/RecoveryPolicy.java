@@ -68,10 +68,12 @@ public final class RecoveryPolicy {
     public enum DeliveryDecision {
         /** 이미 완료(아이템 없음 / 저널 FOUND / NONE / 디스크에 임의 시도 번호 토큰 FOUND) */
         ALREADY_DONE,
-        /** 디스크 확정 ABSENT + 온라인 + 인벤토리 전부 들어감 → 지금 지급/반환 시도 */
+        /** 디스크 확정 ABSENT + 온라인 + 생존 + 인벤토리 전부 들어감 → 지금 지급/반환 시도 */
         DELIVER_NOW,
-        /** 디스크 확정 ABSENT + 온라인 + 빈칸 부족 → 대기 (/trade claim 안내) */
+        /** 디스크 확정 ABSENT + 온라인 + 생존 + 빈칸 부족 → 대기 (/trade claim 안내) */
         WAIT_INVENTORY_FULL,
+        /** 디스크 확정 ABSENT + 온라인 + 사망 중 → 리스폰 대기 (keepInventory=false 유실 방지, TRADE.md 5·6장) */
+        WAIT_DEAD,
         /** 디스크 확정 ABSENT + 오프라인 → 접속 대기 */
         WAIT_OFFLINE,
         /** 디스크 UNREADABLE → 대기 */
@@ -172,12 +174,13 @@ public final class RecoveryPolicy {
             Journal.SideStatus persistedGive,
             PlayerDatReader.MarkerStatus diskStatus,
             boolean online,
+            boolean alive,
             boolean fitsInInventory
     ) {
         if (!hasIncomingItems || persistedGive == Journal.SideStatus.FOUND) {
             return DeliveryDecision.ALREADY_DONE;
         }
-        return decideDiskTransfer(diskStatus, online, fitsInInventory);
+        return decideDiskTransfer(diskStatus, online, alive, fitsInInventory);
     }
 
     /** {@code RETURNING} 단계에서 한쪽의 물건 돌려주기 결정을 내립니다 (TRADE.md 5·6장, 정산 절대 재시도 없음). */
@@ -186,12 +189,13 @@ public final class RecoveryPolicy {
             Journal.SideStatus persistedReturn,
             PlayerDatReader.MarkerStatus diskStatus,
             boolean online,
+            boolean alive,
             boolean fitsInInventory
     ) {
         if (!hasOwnItems || persistedReturn == Journal.SideStatus.NONE || persistedReturn == Journal.SideStatus.FOUND) {
             return DeliveryDecision.ALREADY_DONE;
         }
-        return decideDiskTransfer(diskStatus, online, fitsInInventory);
+        return decideDiskTransfer(diskStatus, online, alive, fitsInInventory);
     }
 
     /** {@code COMMITTED} 거래가 양쪽 지급 완료로 종료(저널 삭제) 가능한지. */
@@ -222,6 +226,7 @@ public final class RecoveryPolicy {
     private static DeliveryDecision decideDiskTransfer(
             PlayerDatReader.MarkerStatus diskStatus,
             boolean online,
+            boolean alive,
             boolean fitsInInventory
     ) {
         if (diskStatus == PlayerDatReader.MarkerStatus.FOUND) {
@@ -233,6 +238,9 @@ public final class RecoveryPolicy {
         // ABSENT
         if (!online) {
             return DeliveryDecision.WAIT_OFFLINE;
+        }
+        if (!alive) {
+            return DeliveryDecision.WAIT_DEAD;
         }
         return fitsInInventory ? DeliveryDecision.DELIVER_NOW : DeliveryDecision.WAIT_INVENTORY_FULL;
     }

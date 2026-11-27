@@ -72,7 +72,7 @@
 | 7 취소(확정 전) | 확정 전에 끝난 경우(`REJECTED`, 금액 있는 거래는 `findByExtRef` 로 **미정산 확인 후**, 확정 ABSENT 로 판명된 가져오기 등): **첫 반환 전에 저널을 `RETURNING` 으로 fsync**(단방향 — 이 상태에서는 다시 정산하지 않음, v4 재검증 Critical). 그 뒤 `take=FOUND` 인 쪽에 **자기 물건을 5번과 같은 방식으로 돌려줌**. `take` 가 확정 `ABSENT` 인 쪽은 디스크에 원래 물건이 그대로이므로 할 일 없음 | 돌려주기도 5번과 같은 실패 처리(`/trade claim`) |
 
 - **토큰 이름은 목적·받는 사람·시도로 구분**: `<tradeId>:take:<uuid>`, `<tradeId>:give:<uuid>:<n>`, `<tradeId>:return:<uuid>:<n>`. 쓰는 곳·읽는 곳 모두 이 한 규격(`TradeTokens` 클래스 하나)만 쓴다. **판정 규칙**: 같은 목적·받는 사람의 토큰이 디스크에 **어느 시도 번호로든** FOUND 면 그 목적은 이미 반영된 것이므로 다시 지급하지 않는다. 회수는 같은 틱 안에서 토큰까지 같이 지우므로, 디스크에 남은 토큰은 실제로 반영된 시도만 가리킨다(Market 시도 번호와 같은 근거).
-- `give/return PENDING` 은 그 플레이어가 접속해 있을 때 1분 타이머, 접속할 때, `/trade claim` 때 새 시도 번호로 5번을 다시 한다(한 번에 전부, 부분 지급 없음 — 배치 토큰 문제 없음).
+- `give/return PENDING` 은 그 플레이어가 접속해 있고 생존(`!isDead`) 상태일 때 1분 타이머, 접속할 때, 리스폰(`PlayerRespawnEvent` MONITOR 다음 틱), `/trade claim` 때 새 시도 번호로 5번을 다시 한다(한 번에 전부, 부분 지급 없음 — 배치 토큰 문제 없음). 수령자가 사망 중(`isDead`)이면 지급·반환하지 않고 대기로 유지한다(`keepInventory=false` 유실 방지).
 - 가져오기가 `PENDING` 인 동안 그 플레이어의 메모리 인벤토리에는 이미 물건이 없다(돌려주지 않았으므로). 디스크에 남은 쪽이 맞는지는 6장이 정한다.
 
 ## 6. 복구 (기동·접속·1분 타이머)
@@ -95,7 +95,7 @@
 
 - 거래 창은 모든 클릭·드래그(`InventoryClickEvent` 전부 — 창 바깥 클릭 `OUTSIDE`, `InventoryCreativeEvent` 포함)를 취소한 뒤 해석만 한다. 창을 열 때 플레이어 커서에 아이템이 있으면 **창을 열지 않고** "손에 든 아이템을 먼저 내려놓아 주세요" 안내(커서를 대신 옮기지 않음): 아래 인벤토리 좌·우클릭(제시 추가), 위 제시 칸 좌·우클릭(빼기), `4` 금액, `40` 준비 토글, `49` 취소. Shift·숫자키·`F`·`Q`(창 안 버리기)·더블클릭·드래그·크리에이티브 중클릭·꾸러미 우클릭(내용 넣고 빼기)은 **아무 동작 없음**(QA Medium #6). 커서에 아이템이 올라갈 일이 없으므로 "창 밖 커서 버리기"도 생기지 않음.
 - 금액 대화창(Paper Dialog): 열 때 `(tradeId, gen)` 과 함께 **일회성 콜백** 등록, 본인 준비 자동 해제 + 정산 불가, 60초 만료(제안). 응답 때 세대가 다르거나 세션이 끝났으면 무시. 대화창이 떠 있는 동안 거래 창은 닫힌 상태지만 **그 대화창을 여느라 닫힌 한 번만** 취소로 보지 않음(10장 1) — 대화창 종료(확인·취소·ESC·만료) 때 거래 창을 다시 연다. 대화창 중 로그아웃·사망은 그대로 취소.
-- 이벤트: `PlayerQuitEvent`·`PlayerKickEvent`(MONITOR), `PlayerDeathEvent`(MONITOR, keepInventory 와 무관하게 취소 — 아이템이 안 움직이므로 반환 불필요), `InventoryCloseEvent`(대화창 전환 표시가 없으면 취소), `PlayerGameModeChangeEvent`, 전투(`EntityDamageByEntityEvent` MONITOR 뒤 다음 틱에 Travel PDC 재확인). Paper 26.3-258 에서 Dialog 를 열 때 `InventoryCloseEvent` 가 어떤 순서로 오는지 구현 때 확인해 주석으로 남긴다.
+- 이벤트: `PlayerQuitEvent`·`PlayerKickEvent`(MONITOR), `PlayerDeathEvent`(MONITOR, keepInventory 와 무관하게 취소 — 아이템이 안 움직이므로 반환 불필요), `PlayerRespawnEvent`(MONITOR, 다음 틱에 사망으로 보류된 지급·반환 재개), `InventoryCloseEvent`(대화창 전환 표시가 없으면 취소), `PlayerGameModeChangeEvent`, 전투(`EntityDamageByEntityEvent` MONITOR 뒤 다음 틱에 Travel PDC 재확인). Paper 26.3-258 에서 Dialog 를 열 때 `InventoryCloseEvent` 가 어떤 순서로 오는지 구현 때 확인해 주석으로 남긴다.
 - 요청 타임아웃 30초, 카운트다운 3초(7.3), `ClickLock` 250ms.
 
 ## 8. 받을 물건 대기(`/trade claim`)
