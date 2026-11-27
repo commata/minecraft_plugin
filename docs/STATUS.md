@@ -60,6 +60,10 @@
 | 2026-11-26 | **마지막 QA 통과 기준: `a2b483b`** (origin/feat/market-stage-1-7) | — | `.\gradlew build` PASS, 실패 0. 로컬 서버 반영, `/market status` 블록 집계 켜짐 | → f4837a0 |
 | 2026-11-26 | Shift+좌클릭 판매 `a2b483b..f4837a0` | antigravity `claude-sonnet-5-5` high (Codex 한도로 Level 2 대체 ②) | 문제 없음, common·market·economy-hub 테스트 PASS | 없음 |
 | 2026-11-26 | **마지막 QA 통과 기준: `716ee4a`** (= main `9f88540` 의 Market) | — (`716ee4a`는 문구만, Level 0) | `.\gradlew build` PASS, CI PASS | 이후 재검증은 이 커밋 이후 diff만 |
+| 2026-11-27 | /trade 로직 설계 v1→v4.2 (4e70587→fbd2716) | codex `gpt-6.2-sol` high | 설계 QA 5회: Critical·High 반복 → 제시 방식(사용자 결정) + Market 흐름 재사용(v4)로 수렴 | 남은 3건은 구현 QA 로 이관 |
+| 2026-11-27 | ③-1 Bank settleTrade·common 공용화 `a42e599..af0f508` | codex `gpt-6.2-sol` high | P2 2(멱등 비교 순서, v3 다운그레이드) → 수정·문서화, 재검증 PASS | 없음 |
+| 2026-11-27 | ③-2 Trade 본체 `d7a9071..83fc8d7` | codex `gpt-6.2-sol` high | P1 4·P2 5·P3 2 → ⑤ 수정 bf02183 → 재검증 P1 1 → 0838be5 → P2·P3 관리자 경계 → 108e91c | 재검증 3 **통과**(311 테스트) |
+| 2026-11-27 | **마지막 QA 통과 기준(Trade): `108e91c`** (commata/trade-fix-1) | — | 코드 QA 통과. 인게임 A1–A8·장애 주입 F1–F4 는 Antigravity 한도 소진으로 **NOT RUN**(18:13 재개 예정) | 인게임 |
 
 ## 6. 미해결·기술 부채
 
@@ -76,7 +80,7 @@
 | 순서 | 단계 | 내용 | 상태 |
 | --- | --- | --- | --- |
 | 1 | 테스트 서버 검증 (ECONOMY.md 9.1) — **2026-11-27 완료**(시간 측정 항목 제외) | 8장 악용 방지 체크리스트, 2인 테스트, 벌목꾼 실측(시간당 원목 1,500개 넘으면 보상 하향), 겸업 합산 수입, Travel·Pets·CustomItems 동시 기동, 운영과 같은 Paper 258로 기동 확인, 2.5a 편의 스킬 수입 +15% 이내 실측 | 진행 중 |
-| 2 | `/trade` 1:1 교환 (7.3, 7.4.6, [TRADE.md](TRADE.md)) | 단계마다 worktree를 나눠 차례로: ① 로직 설계 ② GUI 설계 ③ 코드 구현(DEV) ④ QA ⑤ 피드백 수정 → 테스트 서버 검증 | ① 확정(2026-11-27), ② 진행 |
+| 2 | `/trade` 1:1 교환 (7.3, 7.4.6, [TRADE.md](TRADE.md)) | 단계마다 worktree를 나눠 차례로: ① 로직 설계 ② GUI 설계 ③ 코드 구현(DEV) ④ QA ⑤ 피드백 수정 → 테스트 서버 검증 | ①·② 확정, ③ 구현·④ 코드 QA 통과(108e91c), ④ 인게임·장애 주입 대기 |
 | 3 | 운영 첫 배포 (9.2) | Bank + 외부 JAR 4개 + EconomyHub + Market + **Trade** 한 번에. 설정 선배치, 판매 권한 잠금, LuckPerms 권한, 오프라인 기준 백업, 일반 권한 검증. **배포는 사용자가 `deploy.ps1`로** | 2 완료 후 |
 | 4 | 정책 조정 | 운영 1–2주 데이터(10장 모니터링)로 보상·가격·한도·확률 조정 → ECONOMY.md v1.0 | 배포 후 |
 | 5 | 2.5b 편의 스킬 2차 | Lv.30·50 연쇄 파괴(광맥·일괄 벌목·3×3 수확) + Lv.50 칭호. 설치 블록 기록(규격 v1)은 이미 있음 | 사용자 승인 후 |
