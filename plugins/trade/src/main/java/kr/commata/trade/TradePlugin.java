@@ -50,7 +50,7 @@ public final class TradePlugin extends JavaPlugin {
         getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event -> {
             var r = event.registrar();
             r.register("trade", "1:1 안전 거래 (/trade [닉네임|accept|deny|cancel|claim])", List.of("거래"),
-                    new TradeCommand());
+                    new TradeCommand(getServer(), getLogger(), tradeService, uiManager, this::reloadTrade));
         });
 
         if (!bank.available()) {
@@ -64,6 +64,21 @@ public final class TradePlugin extends JavaPlugin {
                 + ", Travel " + travel.statusText()
                 + ", 저널 " + (tradeService.journalStore().isLocked() ? "잠김" : "정상")
                 + ", 미완료 저널 " + tradeService.openJournals().size() + "건)");
+    }
+
+    private String reloadTrade() {
+        reloadConfig();
+        TradeConfig reloaded = TradeConfig.load(getConfig(), getLogger());
+        tradeService.updateConfig(reloaded);
+        if (tradeService.journalStore().isLocked()) {
+            String reason = tradeService.journalStore().lockReason();
+            getLogger().warning("Trade 리로드 완료 (여전히 잠금 모드: " + reason + ")");
+            return "<#FFDF6B>설정을 다시 불러왔으나 저널 잠금 상태가 유지됩니다: <#FF5555>" + reason;
+        }
+        getLogger().info("Trade 설정 리로드 완료 (요청 " + reloaded.requestTimeoutSeconds() + "초, 카운트다운 "
+                + reloaded.countdownSeconds() + "초, 재요청 금지 " + reloaded.reRequestCooldownSeconds()
+                + "초, 대화창 만료 " + reloaded.dialogTimeoutSeconds() + "초)");
+        return "<#55FF55>Trade 설정을 다시 불러왔습니다.";
     }
 
     @Override

@@ -21,6 +21,7 @@ AI 에이전트와 사람 모두 따르는 개발 규칙(구조·도메인 분�
 | `plugins/bank/` | 서버 화폐(원). VaultUnlocked 경제 제공자 + `/money` `/pay` `/baltop` `/bank` ([ECONOMY.md 2.1](docs/ECONOMY.md)) |
 | `plugins/economy-hub/` | VJobs 보호(탈퇴 쿨타임·XP 유지·비자연 블록 제외), `/economy`·`/직업` 메뉴, 직업 편의 스킬 ([ECONOMY.md 7.2, 15장](docs/ECONOMY.md)) |
 | `plugins/market/` | 희귀 상점(주간 한도), 인첸트 책 뽑기(확률 공개·천장), 직업별 서버 매입 `/희귀상점` `/뽑기` `/판매` ([ECONOMY.md 13·14장](docs/ECONOMY.md)) |
+| `plugins/trade/` | 1:1 안전 거래(제시 방식·Paper Dialog 금액 입력·저널 복구) `/trade` (`/거래`) ([TRADE.md](docs/TRADE.md), [ECONOMY.md 7.3·7.4.6](docs/ECONOMY.md)) |
 | `gradle.properties` | MC / Paper API / Java 버전 (여기서만 관리) |
 
 ## 자주 쓰는 명령 (Windows PowerShell)
@@ -35,6 +36,7 @@ AI 에이전트와 사람 모두 따르는 개발 규칙(구조·도메인 분�
 .\gradlew :plugins:pets:runServer
 .\gradlew :plugins:bank:runServer   # VaultUnlocked JAR 을 plugins/bank/run/plugins/ 에 먼저 넣어야 켜짐
 .\gradlew :plugins:market:runServer # VaultUnlocked·Bank JAR 을 plugins/market/run/plugins/ 에 넣어야 거래 가능
+.\gradlew :plugins:trade:runServer  # VaultUnlocked·Bank JAR 을 plugins/trade/run/plugins/ 에 넣어야 거래 가능
 ```
 
 - 테스트 서버 파일은 `plugins/custom-items/run/`에 생기며 Git에는 올라가지 않습니다.
@@ -70,6 +72,9 @@ AI 에이전트와 사람 모두 따르는 개발 규칙(구조·도메인 분�
 | `/판매` (`/sell`) | 모두 | 직접 채집·획득한 아이템 서버 매입 GUI (기본가 + 내 직업 보너스, 하루 5,000원, [ECONOMY.md 14장](docs/ECONOMY.md)) |
 | `/market claim` | 모두 | 저장 지연·인벤토리 부족으로 보류된 미수령 구매품 받기 |
 | `/market status·reload·log·reset·pending·resolve` | `market.admin` (기본 OP) | 마켓 상태·설정 리로드·거래 로그·한도 초기화·보류 목록·수동 환불/격리 해제 |
+| `/trade` (`/거래`) `[닉네임]` | `trade.use` (기본 모두) | 접속자 선택 GUI 열기 또는 지정 플레이어에게 1:1 거래 요청 ([TRADE.md](docs/TRADE.md)) |
+| `/trade accept·deny·cancel·claim` (`/거래 수락·거절·취소·수령`) | `trade.use` (기본 모두) | 거래 요청 수락·거절, 요청/진행 중 거래 취소, 대기 중인 거래 물건 일괄 수령 |
+| `/trade status·reload·resolve <unlock\|tradeId> [dismiss]` | `trade.admin` (기본 OP) | 거래 상태·미완료 저널 조회, 설정 리로드, 손상 저널 잠금 해제·봉인/복구 수동 정리 |
 | `/callpet` | 모두 | 내가 길들인 늑대·고양이·앵무새·말·당나귀·노새·라마를 내 옆으로 순간이동 (쿨타임 없음, 다른 차원에서도 가능, 앉은 펫은 앉은 채로). 멀리 두고 온 펫도 마지막 위치의 청크를 불러와서 데려옴 |
 
 ### `/home` 규칙 (시간은 `plugins/travel/src/main/resources/config.yml`에서 변경)
