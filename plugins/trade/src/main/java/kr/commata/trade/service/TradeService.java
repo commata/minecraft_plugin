@@ -1698,20 +1698,28 @@ public final class TradeService {
                 + ", return=" + after.returnA() + "/" + after.returnB() + ").";
     }
 
-    /** 관리자 수동 정리: 봉인된 저널 삭제 및 플레이어 저장 실패 잠금 해제. */
-    public String dismissSealedJournal(UUID tradeId, String adminName) {
+    public record DismissResult(boolean dismissed, String message) {
+    }
+
+    /** 관리자 수동 정리: 봉인된 저널 삭제 성공 시에만 플레이어 저장 실패 잠금을 해제합니다 (P2-9). */
+    public DismissResult dismissSealedJournal(UUID tradeId, String adminName) {
         Journal.Entry entry = openJournals.get(tradeId);
         if (entry == null) {
-            return "열려 있는 거래 저널을 찾을 수 없습니다: " + tradeId;
+            return new DismissResult(false, "열려 있는 거래 저널을 찾을 수 없습니다: " + tradeId);
         }
         if (!entry.isSealed() && !saveFailedLockedPlayers.contains(entry.playerA())
                 && !saveFailedLockedPlayers.contains(entry.playerB())) {
-            return "봉인·잠금 상태의 거래가 아닙니다. 먼저 /trade resolve " + tradeId + " 로 자동 복구를 시도하세요.";
+            return new DismissResult(false,
+                    "봉인·잠금 상태의 거래가 아닙니다. 먼저 /trade resolve " + tradeId + " 로 자동 복구를 시도하세요.");
         }
-        finishAndDeleteJournal(entry, "ADMIN_RESOLVED", "admin=" + adminName + " " + entry.sealedReason());
-        saveFailedLockedPlayers.remove(entry.playerA());
-        saveFailedLockedPlayers.remove(entry.playerB());
-        return "거래 " + tradeId + " 저널을 관리자(" + adminName + ")가 수동 정리하고 잠금을 해제했습니다.";
+        boolean deleted = finishAndDeleteJournal(
+                entry, "ADMIN_RESOLVED", "admin=" + adminName + " " + entry.sealedReason());
+        if (!deleted) {
+            return new DismissResult(false,
+                    "거래 " + tradeId + " 저널 삭제에 실패해 잠금을 해제하지 못했습니다. 서버 로그를 확인하세요.");
+        }
+        return new DismissResult(true,
+                "거래 " + tradeId + " 저널을 관리자(" + adminName + ")가 수동 정리하고 잠금을 해제했습니다.");
     }
 
     private void reconcileEntry(Journal.Entry entry, boolean notifyOnline) {
@@ -1956,14 +1964,14 @@ public final class TradeService {
 
     // ------------------------------------------------------------------ 내부 헬퍼
 
-    private void finishAndDeleteJournal(Journal.Entry entry, String result, String reason) {
+    private boolean finishAndDeleteJournal(Journal.Entry entry, String result, String reason) {
         UUID tradeId = entry.tradeId();
         long nowMs = System.currentTimeMillis();
         try {
             journalStore.delete(tradeId);
         } catch (IOException e) {
             logger.severe("완료된 거래 저널 삭제 실패 (" + tradeId + "): " + e.getMessage());
-            return;
+            return false;
         }
         openJournals.remove(tradeId);
         takingConnGenA.remove(tradeId);
@@ -1972,6 +1980,13 @@ public final class TradeService {
         giveUncertainConnGenB.remove(tradeId);
         returnUncertainConnGenA.remove(tradeId);
         returnUncertainConnGenB.remove(tradeId);
+        // 저널 삭제가 실제로 완료된 경우에만 해당 플레이어의 저장 실패 잠금을 정리 (P2-9: ABSENT 취소 경로 포함)
+        if (!hasOpenJournal(entry.playerA())) {
+            saveFailedLockedPlayers.remove(entry.playerA());
+        }
+        if (!hasOpenJournal(entry.playerB())) {
+            saveFailedLockedPlayers.remove(entry.playerB());
+        }
         tradeLogger.log(entry, result, reason, nowMs, config.zone());
 
         Player pA = server.getPlayer(entry.playerA());
@@ -2000,6 +2015,7 @@ public final class TradeService {
                 Msg.raw(pB, "<#FF5555>[거래] 취소됨 (<reason>)", Placeholder.unparsed("reason", displayReason));
             }
         }
+        return true;
     }
 
     private static String formatSideSummary(List<String> items, long money) {

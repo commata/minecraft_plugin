@@ -208,9 +208,14 @@ public final class TradeCommand implements BasicCommand {
         }
 
         if (args.length >= 3 && args[2].equalsIgnoreCase("dismiss")) {
-            String result = service.dismissSealedJournal(tradeId, sender.getName());
-            logger.info("관리자(" + sender.getName() + ") /trade resolve " + tradeId + " dismiss: " + result);
-            Msg.infoPlain(sender, result);
+            TradeService.DismissResult result = service.dismissSealedJournal(tradeId, sender.getName());
+            if (result.dismissed()) {
+                logger.info("관리자(" + sender.getName() + ") /trade resolve " + tradeId + " dismiss: " + result.message());
+                Msg.successPlain(sender, result.message());
+            } else {
+                logger.warning("관리자(" + sender.getName() + ") /trade resolve " + tradeId + " dismiss 실패: " + result.message());
+                Msg.errorPlain(sender, result.message());
+            }
             return;
         }
 
