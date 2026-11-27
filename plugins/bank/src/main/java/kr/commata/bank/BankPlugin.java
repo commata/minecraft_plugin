@@ -158,6 +158,23 @@ public final class BankPlugin extends JavaPlugin {
                 : store.refundByExtRef(extRef, source, context);
     }
 
+    /** Trade 1:1 교환의 한 트랜잭션 양방향 멱등 정산 API (TRADE.md 4장). 잠금 모드이면 LOCKED 로 거부합니다. */
+    public kr.commata.bank.core.TradeOutcome settleTrade(String extRef, UUID a, long aPays, UUID b, long bPays,
+                                                         String source, String context) {
+        if (bank == null) {
+            return kr.commata.bank.core.TradeOutcome.rejected(kr.commata.bank.core.TradeFailure.LOCKED, null, "");
+        }
+        return bank.settleTrade(extRef, a, aPays, b, bPays, source, context);
+    }
+
+    /** Trade 1:1 교환 정산 원장 조회 API (TRADE.md 4장). 잠금 모드이면 ERROR 를 반환합니다. */
+    public kr.commata.bank.core.TradeLookup findTradeByExtRef(String extRef) {
+        if (bank == null) {
+            return kr.commata.bank.core.TradeLookup.error(kr.commata.bank.core.TradeFailure.LOCKED.message());
+        }
+        return bank.findTradeByExtRef(extRef);
+    }
+
     /** Bank 가 잠금 모드인지 여부. */
     public boolean isLocked() {
         return store == null || store.isClosed();

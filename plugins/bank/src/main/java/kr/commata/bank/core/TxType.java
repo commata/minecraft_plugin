@@ -15,7 +15,9 @@ public enum TxType {
     /** /bank set. 증가면 to, 감소면 from 에 대상이 들어가고 amount 는 변화량 */
     ADMIN_SET,
     /** /bank refund. ref = 환불한 출금 거래번호 */
-    REFUND;
+    REFUND,
+    /** /trade 1:1 교환 정산. from → to */
+    TRADE;
 
     public String label() {
         return switch (this) {
@@ -26,6 +28,7 @@ public enum TxType {
             case ADMIN_TAKE -> "관리자 회수";
             case ADMIN_SET -> "관리자 설정";
             case REFUND -> "환불";
+            case TRADE -> "교환";
         };
     }
 }
