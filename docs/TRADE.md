@@ -63,13 +63,13 @@
 | --- | --- | --- |
 | 1 재검증 | 둘 다 온라인·같은 `(tradeId, gen)`·서바이벌/모험·전투 아님·대화창 닫힘, 제시가 3장 조건 충족, 양쪽 잔액 ≥ 자기 지급액·받는 쪽 최종 잔액 ≤ `Amounts.MAX` | 준비 해제 + 이유 안내(잔액 부족은 취소) |
 | 2 의도 기록 `TAKING` | 양쪽 제시를 **그 순간 그 칸의 실제 스택에서 직렬화**(`ItemStack#serializeAsBytes`)해 저널에 기록, fsync | 쓰기 실패 → 아무것도 안 바뀜, 준비 해제 + severe |
-| 3 가져오기 (양쪽 같은 틱) | 각자 제시 칸에서 제시 개수 제거 + PDC `trade:applied`에 `<tradeId>:take` → `saveData()` → 디스크 확인 | `FOUND` 아닌 쪽: **빼낸 아이템을 돌려주지 않는다**(Market `/판매` 14.3 5번과 같음). 그 쪽 `take=PENDING`, 1분 타이머가 다시 `saveData`·디스크 확인(아래 6장) |
+| 3 가져오기 (양쪽 같은 틱) | 각자 제시 칸에서 제시 개수 제거 + PDC `trade:applied`에 `<tradeId>:take:<uuid>` → `saveData()` → 디스크 확인 | `FOUND` 아닌 쪽: **빼낸 아이템을 돌려주지 않는다**(Market `/판매` 14.3 5번과 같음). 그 쪽 `take=PENDING`, 1분 타이머가 다시 `saveData`·디스크 확인(아래 6장) |
 | 4 돈·확정 `COMMITTED` | 양쪽 `take=FOUND` 일 때만. 금액이 있으면 `settleTrade`(4장): `OK` → 저널 `COMMITTED`. `REJECTED` → 취소(7번). `UNKNOWN/MISMATCH` → 저널 유지 + 두 사람 거래 잠금, 타이머가 `findByExtRef`(있음 → COMMITTED, 없음 → 취소, 계속 모름 → 관리자). 금액이 둘 다 0원이면 바로 `COMMITTED` | — |
-| 5 지급 (양쪽, 시도 번호 `n`) | 받을 물건 **전부**가 빈칸에 들어가면 지급 + PDC `<tradeId>:give<n>` → `saveData()` → 디스크 확인 | `FOUND` 아님 → **같은 틱에 지급한 물건과 토큰을 회수**(Market 13.6) 하고 `give=PENDING`. 빈칸이 모자라면 지급하지 않고 `give=PENDING` + `/trade claim` 안내 |
+| 5 지급 (양쪽, 시도 번호 `n`) | 받을 물건 **전부**가 빈칸에 들어가면 지급 + PDC `trade:applied`에 `<tradeId>:give:<uuid>:<n>` → `saveData()` → 디스크 확인 | `FOUND` 아님 → **같은 틱에 지급한 물건과 토큰을 회수**(Market 13.6) 하고 `give=PENDING`. 빈칸이 모자라면 지급하지 않고 `give=PENDING` + `/trade claim` 안내 |
 | 6 완료 | 양쪽 `give=FOUND` → 저널 삭제, 거래 로그, 안내 | — |
 | 7 취소(확정 전) | 확정 전에 끝난 경우(`REJECTED`, 금액 있는 거래는 `findByExtRef` 로 **미정산 확인 후**, 확정 ABSENT 로 판명된 가져오기 등): **첫 반환 전에 저널을 `RETURNING` 으로 fsync**(단방향 — 이 상태에서는 다시 정산하지 않음, v4 재검증 Critical). 그 뒤 `take=FOUND` 인 쪽에 **자기 물건을 5번과 같은 방식으로 돌려줌**. `take` 가 확정 `ABSENT` 인 쪽은 디스크에 원래 물건이 그대로이므로 할 일 없음 | 돌려주기도 5번과 같은 실패 처리(`/trade claim`) |
 
-- **토큰 이름은 목적·받는 사람·시도로 구분**: `<tradeId>:take:<uuid>`, `<tradeId>:give:<uuid>:<n>`, `<tradeId>:return:<uuid>:<n>`. 판정할 때 이번 목적의 토큰만 보고, 과거 시도 번호의 토큰은 "그 시도가 반영됐다"로만 쓴다(회수 뒤 남은 예전 토큰을 이번 성공으로 오인하지 않음, Market 시도 번호와 같음).
+- **토큰 이름은 목적·받는 사람·시도로 구분**: `<tradeId>:take:<uuid>`, `<tradeId>:give:<uuid>:<n>`, `<tradeId>:return:<uuid>:<n>`. 쓰는 곳·읽는 곳 모두 이 한 규격(`TradeTokens` 클래스 하나)만 쓴다. **판정 규칙**: 같은 목적·받는 사람의 토큰이 디스크에 **어느 시도 번호로든** FOUND 면 그 목적은 이미 반영된 것이므로 다시 지급하지 않는다. 회수는 같은 틱 안에서 토큰까지 같이 지우므로, 디스크에 남은 토큰은 실제로 반영된 시도만 가리킨다(Market 시도 번호와 같은 근거).
 - `give/return PENDING` 은 그 플레이어가 접속해 있을 때 1분 타이머, 접속할 때, `/trade claim` 때 새 시도 번호로 5번을 다시 한다(한 번에 전부, 부분 지급 없음 — 배치 토큰 문제 없음).
 - 가져오기가 `PENDING` 인 동안 그 플레이어의 메모리 인벤토리에는 이미 물건이 없다(돌려주지 않았으므로). 디스크에 남은 쪽이 맞는지는 6장이 정한다.
 
@@ -78,14 +78,15 @@
 | 저널 상태·쪽 상태 | 디스크 확인 | 처리 |
 | --- | --- | --- |
 | `TAKING`, 쪽 `take=PENDING` (서버 실행 중, **가져오기를 한 그 접속 세션이 계속되는 동안만** — 플레이어마다 접속할 때 새 `connGen`) | 타이머가 `saveData` 후 확인 | `FOUND` → `take=FOUND`. `ABSENT`(파일을 읽었는데 토큰 없음) → 메모리와 디스크가 다름 = 저장이 안 되고 있음 → 다시 저장 시도, 3회 연속이면 그 플레이어 Trade 잠금 + severe(관리자). `UNREADABLE` → 기다림 |
-| `TAKING`, 그 플레이어가 **퇴장했거나 다시 접속함**(connGen 이 바뀜) | 퇴장 저장 뒤 / 재접속 때 디스크 `.dat` | 메모리 상태는 버리고 디스크로 다시 판정(아래 기동 때 줄과 같음). 재접속한 플레이어는 디스크에서 읽힌 상태이므로 원래 물건을 다시 가졌으면 그것이 ABSENT 의 결과(가져오기 안 됨) |
-| `TAKING` (기동 때, 모두 오프라인) | 각 쪽 `.dat` | `FOUND` → 가져오기 됨. `ABSENT` → 가져오기 안 됨(디스크에 원래 물건). 한쪽이라도 `UNREADABLE` → 기다림(잠금). 양쪽 `FOUND` 면 4번부터 계속, 아니면 7번 취소 |
+| `TAKING`, 그 플레이어가 **퇴장했거나 다시 접속함**(connGen 이 바뀜) | 퇴장 저장 뒤 / 재접속 때 그 플레이어의 디스크 `.dat` | **그 플레이어 쪽만** 메모리 상태를 버리고 디스크로 판정(FOUND / 확정 ABSENT / UNREADABLE). 상대 쪽은 상대의 상태대로 따로 판정한다 |
+| `TAKING` (기동 때, 모두 오프라인) | 각 쪽 `.dat` | `FOUND` → 가져오기 됨. `ABSENT` → 가져오기 안 됨(디스크에 원래 물건). `UNREADABLE` → 기다림(잠금) |
+| `TAKING`, 결정 | 양쪽 take 의 **최종** 상태 | 양쪽 FOUND → 4번부터 계속. 한쪽이라도 확정 ABSENT **이고 다른 쪽이 PENDING(같은 접속에서 저장 중)·UNREADABLE 이 아니면** → 7번 취소. 그 밖(어느 쪽이든 아직 PENDING·UNREADABLE) → **결정 유예**(다른 쪽이 FOUND/ABSENT 로 끝날 때까지 기다림, v4.1 재검증 Critical) |
 | `RETURNING` | 쪽별 `return` 토큰 | 정산은 절대 다시 하지 않음. 돌려받지 못한 쪽만 5번 방식으로 돌려줌 |
 | `COMMITTED`, `give=PENDING` | 접속·타이머·`/trade claim` 때 5번 | 위 5번 그대로 |
 | 금액 있는 `TAKING`→`COMMITTED` 사이에서 멈춤 | `findByExtRef` | 있음·일치 → `COMMITTED`, 없음 → 4번 다시(양쪽 take FOUND 면 정산 재시도) 또는 7번, 모름 → 잠금 |
 
 - 정산 중이거나 대기(`PENDING`)가 남은 플레이어는 Trade 새 거래 불가(다른 기능은 막지 않음).
-- **저널 손상**(읽기·역직렬화 실패): **먼저 `journal/LOCKED` 표시 파일을 fsync 로 만든 뒤** 손상 파일을 `journal/corrupt/` 로 옮긴다(v4 재검증 High — 순서가 반대면 그 사이 종료 때 잠금이 사라짐). **`LOCKED` 가 있거나 `journal/corrupt/` 에 해결 표시 없는 파일이 있으면 기동·reload 때도 Trade 전체 잠금**(누가 관련됐는지 모르므로). 관리자가 파일을 확인하고 `/trade resolve unlock` 으로 표시 파일을 지운다.
+- **저널 손상**(읽기·역직렬화 실패): **먼저 `journal/LOCKED` 표시 파일을 fsync 로 만든 뒤** 손상 파일을 `journal/corrupt/` 로 옮긴다(v4 재검증 High — 순서가 반대면 그 사이 종료 때 잠금이 사라짐). **`LOCKED` 가 있거나 `journal/corrupt/` 에 해결 표시 없는 파일이 있으면 기동·reload 때도 Trade 전체 잠금**(누가 관련됐는지 모르므로). 관리자가 파일을 확인하고 `/trade resolve unlock` 을 실행하면: 격리 파일마다 **해결 표시(`<파일>.resolved`, 관리자·시각·조치)를 fsync 로 먼저 남기고**, 해결 표시가 없는 격리 파일이 하나도 없을 때만 `LOCKED` 를 지운다.
 - 남는 위험(문서로 인정, v4 재검증): ① 디스크가 계속 저장에 실패하거나 `.dat` 을 못 읽는 상태는 잠금 + 관리자 개입으로만 막는다. ② 서버 밖에서 `.dat` 하나만 예전 백업으로 되돌리는 경우는 Trade 가 감지하지 못한다 → **복원은 ECONOMY.md 2.3대로 서버 정지 상태의 같은 시점 전체 백업으로만**(경제 데이터·플레이어 파일·Trade 저널을 같이) 한다. Market `PlayerDataGuard` 의 `seq` 대조를 Trade 에도 쓸지는 구현 단계에서 판단(공통으로 옮길 수 있으면 `common`).
 
 ## 7. 클릭·이벤트
@@ -159,6 +160,14 @@
 | Critical | 취소 결정이 영속화되지 않아 반환 직후 종료 시 재정산·이중 지급 | 첫 반환 전 `RETURNING` fsync(단방향), 목적·받는 사람·시도별 토큰(5장) |
 | High | 접속 여부만으로 저장 재시도 → 재접속한 정상 플레이어를 미저장으로 오인 | 같은 접속 세션(`connGen`) 안에서만 재시도, 퇴장·재접속은 디스크로 재판정(6장) |
 | High | 손상 파일 이동 후 LOCKED 전 종료 시 잠금 소실 | LOCKED 먼저 fsync, 해결 안 된 격리 파일도 기동 잠금 조건(6장) |
+
+## 13-2. v4.1 재검증(bdde9fb) 필수 수정 반영 — 구현 QA 에서 코드로 확인할 항목
+
+| QA | 문제 | 반영 |
+| --- | --- | --- |
+| Critical | 한쪽 재접속 때 기동 규칙을 거래 전체에 적용 → 상대의 진행 중 저장을 확정 ABSENT 로 오판 | 쪽별 판정 + 한쪽이라도 PENDING·UNREADABLE 이면 결정 유예(6장) |
+| High | 토큰 표기 불일치, 예전 시도 토큰의 의미 | `TradeTokens` 단일 규격, 같은 목적의 어떤 시도든 FOUND 면 재지급 안 함(5장) |
+| Medium | unlock 이 LOCKED 만 지움 | 격리 파일별 해결 표시 fsync 뒤에만 해제(6장) |
 
 ## 14. 테스트 (순수 로직, JUnit)
 
