@@ -3,6 +3,7 @@ package kr.commata.trade.gui;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import kr.commata.common.gui.Items;
 import kr.commata.common.gui.Menu;
 import kr.commata.trade.core.ClickRules;
@@ -27,6 +28,7 @@ import org.bukkit.inventory.meta.ItemMeta;
  */
 public final class TradeMenu extends Menu {
 
+    private final UUID menuId = UUID.randomUUID();
     private final Server server;
     private final TradeService service;
     private final TradeUiManager uiManager;
@@ -42,6 +44,10 @@ public final class TradeMenu extends Menu {
         this.uiManager = uiManager;
         this.session = session;
         this.mySide = mySide;
+    }
+
+    public UUID menuId() {
+        return menuId;
     }
 
     public TradeSession session() {
@@ -64,8 +70,8 @@ public final class TradeMenu extends Menu {
     @Override
     protected void closed(Player viewer) {
         uiManager.unregisterMenu(viewer.getUniqueId(), this);
-        // 정산 전 창 닫기는 대화창 전환 1회 예외 외에는 즉시 취소 (TRADE.md 7장)
-        service.onTradeMenuClosed(viewer, session);
+        // 정산 전 창 닫기는 대화창 전환 대상 창의 단일 닫기 1회 예외 외에는 즉시 취소 (TRADE.md 7장, P3-10)
+        service.onTradeMenuClosed(viewer, session, menuId);
     }
 
     @Override

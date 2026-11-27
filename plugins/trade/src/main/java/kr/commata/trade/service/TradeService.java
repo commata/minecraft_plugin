@@ -378,8 +378,8 @@ public final class TradeService {
         });
     }
 
-    /** {@code InventoryCloseEvent} (TradeMenu.closed 에서 동기 호출): 대화창 전환 1회 예외 외에는 즉시 취소. */
-    public void onTradeMenuClosed(Player player, TradeSession session) {
+    /** {@code InventoryCloseEvent} (TradeMenu.closed 에서 동기 호출): 전환 대상 창의 단일 닫기 1회 예외 외에는 즉시 취소 (P3-10). */
+    public void onTradeMenuClosed(Player player, TradeSession session, UUID closedMenuId) {
         if (session == null || !session.isPreSettlement()) {
             return;
         }
@@ -387,12 +387,8 @@ public final class TradeService {
         if (side == null) {
             return;
         }
-        if (session.consumeExpectedDialogClose(side)) {
-            // 금액 입력 대화창을 여느라 닫힌 1회만 취소로 보지 않음 (TRADE.md 7장)
-            return;
-        }
-        if (session.participant(side).inDialog()) {
-            // 이미 대화창이 떠 있는 상태의 중복 닫기 이벤트는 무시
+        if (session.consumeExpectedDialogClose(side, closedMenuId)) {
+            // 금액 입력 대화창 전환 대상 창의 단일 닫기 1회만 취소로 보지 않음 (TRADE.md 7장, P3-10)
             return;
         }
         cancelPreSettlement(session, player.getName() + "님이 창을 닫음");
@@ -891,18 +887,23 @@ public final class TradeService {
             if (session.gen() != clickedGen || session.participant(side).inDialog()) {
                 return;
             }
+            UUID targetMenuId = uiHooks.activeTradeMenuId(player, session);
+            if (targetMenuId == null) {
+                return;
+            }
             long balance = bank.balance(player);
             if (balance < 0L) {
                 Msg.error(player, "잔액을 확인할 수 없어 금액을 입력할 수 없습니다.");
                 return;
             }
-            UUID token = session.beginDialog(side, UUID.randomUUID(), System.currentTimeMillis(), config.dialogTimeoutMs());
+            UUID token = session.beginDialog(side, UUID.randomUUID(), targetMenuId,
+                    System.currentTimeMillis(), config.dialogTimeoutMs());
             if (token == null) {
                 return;
             }
             countdownTicks.remove(tradeId);
             uiHooks.refreshSessionMenus(session);
-            // 먼저 서버에서 거래 창을 닫아 InventoryCloseEvent(Reason.PLUGIN) 를 여기서 즉시 소비(1회 예외)한 뒤 Dialog 를 연다.
+            // 먼저 서버에서 거래 창을 닫아 전환 대상 창의 InventoryCloseEvent(Reason.PLUGIN) 1회만 예외로 소비한 뒤 Dialog 를 연다.
             player.closeInventory();
             try {
                 uiHooks.openMoneyDialog(player, session, token, balance);
@@ -931,9 +932,19 @@ public final class TradeService {
             return;
         }
 
+        // P3-10: 틱 만료 전에 도착한 콜백이라도 절대 만료 시각을 직접 검사
+        long nowMs = System.currentTimeMillis();
+        if (session.isDialogExpired(side, nowMs)) {
+            session.cancelDialog(side, dialogToken);
+            Msg.warn(player, "금액 입력 시간이 만료되어 거래 창으로 돌아갑니다.");
+            reopenTradeMenuOrCancel(player, session);
+            uiHooks.refreshSessionMenus(session);
+            return;
+        }
+
         // 세대가 바뀌었으면 응답 무시 (TRADE.md 2·7장)
         if (session.gen() != capturedGen) {
-            session.submitDialogMoney(side, dialogToken, 0L);
+            session.submitDialogMoney(side, dialogToken, 0L, nowMs);
             Msg.warn(player, "거래 내용이 바뀌어 금액 입력이 무시되었습니다.");
             reopenTradeMenuOrCancel(player, session);
             uiHooks.refreshSessionMenus(session);
@@ -950,8 +961,10 @@ public final class TradeService {
             return;
         }
 
-        TradeSession.DialogSubmitResult result = session.submitDialogMoney(side, dialogToken, parsed.amount());
-        if (result == TradeSession.DialogSubmitResult.APPLIED) {
+        TradeSession.DialogSubmitResult result = session.submitDialogMoney(side, dialogToken, parsed.amount(), nowMs);
+        if (result == TradeSession.DialogSubmitResult.EXPIRED) {
+            Msg.warn(player, "금액 입력 시간이 만료되어 거래 창으로 돌아갑니다.");
+        } else if (result == TradeSession.DialogSubmitResult.APPLIED) {
             countdownTicks.remove(tradeId);
             Msg.info(player, "제시 금액을 <#FFDF6B>" + OfferValidation.formatWon(parsed.amount()) + "<#AAAAAA>으로 설정했습니다.");
         }
@@ -970,7 +983,12 @@ public final class TradeService {
         if (side == null || !session.isInteractive()) {
             return;
         }
+        long nowMs = System.currentTimeMillis();
+        boolean expired = session.isDialogExpired(side, nowMs);
         if (session.cancelDialog(side, dialogToken)) {
+            if (expired) {
+                Msg.warn(player, "금액 입력 시간이 만료되어 거래 창으로 돌아갑니다.");
+            }
             reopenTradeMenuOrCancel(player, session);
             uiHooks.refreshSessionMenus(session);
         }

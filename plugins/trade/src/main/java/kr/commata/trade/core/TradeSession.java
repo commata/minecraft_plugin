@@ -49,7 +49,7 @@ public final class TradeSession {
         private long money;
         private boolean ready;
         private boolean inDialog;
-        private boolean expectDialogClose;
+        private UUID expectedDialogCloseMenuId;
         private UUID dialogToken;
         private long dialogGen;
         private long dialogExpiresAtMs;
@@ -96,7 +96,11 @@ public final class TradeSession {
         }
 
         public boolean expectDialogClose() {
-            return expectDialogClose;
+            return expectedDialogCloseMenuId != null;
+        }
+
+        public UUID expectedDialogCloseMenuId() {
+            return expectedDialogCloseMenuId;
         }
 
         public UUID dialogToken() {
@@ -124,6 +128,7 @@ public final class TradeSession {
         APPLIED,
         NO_CHANGE,
         STALE_GEN,
+        EXPIRED,
         IGNORED_NOT_ACTIVE
     }
 
@@ -379,12 +384,14 @@ public final class TradeSession {
     }
 
     /**
-     * 금액 입력 대화창 열기 준비 (TRADE.md 7장):
-     * 본인 준비 해제 + 카운트다운 취소 + {@code (dialogToken, dialogGen)} 등록. {@code gen} 은 유지합니다.
+     * 금액 입력 대화창 열기 준비 (TRADE.md 7장, P3-10):
+     * 본인 준비 해제 + 카운트다운 취소 + {@code (dialogToken, targetMenuId, dialogGen, dialogExpiresAtMs)} 등록.
+     * {@code gen} 은 유지합니다.
      *
+     * @param targetMenuId 대화창으로 전환되며 닫힐 거래 창의 고유 ID (이 창의 단일 닫기만 예외)
      * @return 등록된 일회성 {@code dialogToken}, 열 수 없는 상태면 {@code null}
      */
-    public UUID beginDialog(Side side, UUID dialogToken, long nowMs, long timeoutMs) {
+    public UUID beginDialog(Side side, UUID dialogToken, UUID targetMenuId, long nowMs, long timeoutMs) {
         if (!isInteractive()) {
             return null;
         }
@@ -399,7 +406,7 @@ public final class TradeSession {
             countdownGen = -1L;
         }
         p.inDialog = true;
-        p.expectDialogClose = true;
+        p.expectedDialogCloseMenuId = Objects.requireNonNull(targetMenuId, "targetMenuId");
         p.dialogToken = Objects.requireNonNull(dialogToken, "dialogToken");
         p.dialogGen = gen;
         p.dialogExpiresAtMs = nowMs + Math.max(1000L, timeoutMs);
@@ -407,26 +414,33 @@ public final class TradeSession {
     }
 
     /**
-     * 대화창 전환으로 인한 창 닫기 예외 1회를 소비합니다 (TRADE.md 7장).
-     * {@code true} 를 반환하면 이번 {@code InventoryCloseEvent} 는 거래 취소로 보지 않습니다.
+     * 대화창 전환 대상 창({@code closedMenuId})의 닫기 예외 1회를 소비합니다 (TRADE.md 7장, P3-10).
+     * 전환 대상 창이 일치할 때만 딱 1회 {@code true} 를 반환하고 예외를 소진합니다.
      */
-    public boolean consumeExpectedDialogClose(Side side) {
+    public boolean consumeExpectedDialogClose(Side side, UUID closedMenuId) {
         Participant p = participant(side);
-        if (p.expectDialogClose) {
-            p.expectDialogClose = false;
+        if (closedMenuId != null && closedMenuId.equals(p.expectedDialogCloseMenuId)) {
+            p.expectedDialogCloseMenuId = null;
             return true;
         }
         return false;
     }
 
-    /** 대화창 응답 처리: {@code (dialogToken, dialogGen)} 이 모두 일치할 때만 금액을 반영합니다 (TRADE.md 2·7장). */
-    public DialogSubmitResult submitDialogMoney(Side side, UUID token, long newMoney) {
+    /**
+     * 대화창 응답 처리: 절대 만료 시각({@code nowMs < dialogExpiresAtMs})과
+     * {@code (dialogToken, dialogGen)} 이 모두 유효할 때만 금액을 반영합니다 (TRADE.md 2·7장, P3-10).
+     */
+    public DialogSubmitResult submitDialogMoney(Side side, UUID token, long newMoney, long nowMs) {
         Participant p = participant(side);
         if (!isInteractive() || !p.inDialog || !Objects.equals(p.dialogToken, token)) {
             return DialogSubmitResult.IGNORED_NOT_ACTIVE;
         }
         long capturedGen = p.dialogGen;
+        long expiresAt = p.dialogExpiresAtMs;
         clearDialogFields(p);
+        if (nowMs >= expiresAt) {
+            return DialogSubmitResult.EXPIRED;
+        }
         if (capturedGen != gen) {
             return DialogSubmitResult.STALE_GEN;
         }
@@ -559,7 +573,7 @@ public final class TradeSession {
 
     private static void clearDialogFields(Participant p) {
         p.inDialog = false;
-        p.expectDialogClose = false;
+        p.expectedDialogCloseMenuId = null;
         p.dialogToken = null;
         p.dialogGen = -1L;
         p.dialogExpiresAtMs = 0L;

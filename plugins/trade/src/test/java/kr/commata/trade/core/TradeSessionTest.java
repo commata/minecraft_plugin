@@ -87,15 +87,17 @@ final class TradeSessionTest {
     }
 
     @Test
-    void dialogFlowCapturesGenAndConsumesCloseExceptionOnce() {
+    void dialogFlowCapturesGenAndConsumesTargetMenuCloseExceptionOnce() {
         TradeSession s = newOpenSession();
         s.toggleReady(TradeSession.Side.A);
         s.toggleReady(TradeSession.Side.B);
         assertEquals(TradeSession.State.COUNTDOWN, s.state());
 
         UUID token = UUID.randomUUID();
+        UUID targetMenuId = UUID.randomUUID();
+        UUID otherMenuId = UUID.randomUUID();
         long genAtOpen = s.gen();
-        assertNotNull(s.beginDialog(TradeSession.Side.A, token, 5_000L, 60_000L));
+        assertNotNull(s.beginDialog(TradeSession.Side.A, token, targetMenuId, 5_000L, 60_000L));
         // 대화창 열림 → 본인 준비 해제 + 카운트다운 취소 + gen 유지
         assertFalse(s.sideA().ready());
         assertTrue(s.sideB().ready());
@@ -104,33 +106,52 @@ final class TradeSessionTest {
         // 대화창 중에는 본인 준비 토글 불가
         assertFalse(s.toggleReady(TradeSession.Side.A));
 
-        // 대화창 전환 창 닫기 예외는 딱 1회만 소비됨 (TRADE.md 7장)
-        assertTrue(s.consumeExpectedDialogClose(TradeSession.Side.A));
-        assertFalse(s.consumeExpectedDialogClose(TradeSession.Side.A));
+        // P3-10: 다른 창 ID 의 닫기는 예외로 허용하지 않고 예외권도 소진하지 않음
+        assertFalse(s.consumeExpectedDialogClose(TradeSession.Side.A, null));
+        assertFalse(s.consumeExpectedDialogClose(TradeSession.Side.A, otherMenuId));
+        assertTrue(s.sideA().expectDialogClose());
 
-        // 정상 응답 적용 → gen 증가 + 양쪽 준비 해제
-        assertEquals(TradeSession.DialogSubmitResult.APPLIED, s.submitDialogMoney(TradeSession.Side.A, token, 5_000L));
+        // 전환 대상 창의 단일 닫기만 딱 1회 소비됨 (두 번째 닫기는 불허)
+        assertTrue(s.consumeExpectedDialogClose(TradeSession.Side.A, targetMenuId));
+        assertFalse(s.sideA().expectDialogClose());
+        assertFalse(s.consumeExpectedDialogClose(TradeSession.Side.A, targetMenuId));
+
+        // 만료 전 정상 응답 적용 → gen 증가 + 양쪽 준비 해제
+        assertEquals(TradeSession.DialogSubmitResult.APPLIED,
+                s.submitDialogMoney(TradeSession.Side.A, token, 5_000L, 64_999L));
         assertEquals(5_000L, s.sideA().money());
         assertEquals(genAtOpen + 1, s.gen());
         assertFalse(s.sideB().ready());
         // 같은 일회성 토큰 재전송 무시
         assertEquals(TradeSession.DialogSubmitResult.IGNORED_NOT_ACTIVE,
-                s.submitDialogMoney(TradeSession.Side.A, token, 9_000L));
+                s.submitDialogMoney(TradeSession.Side.A, token, 9_000L, 64_999L));
     }
 
     @Test
-    void dialogResponseWithStaleGenIsIgnored() {
+    void dialogResponseWithStaleGenOrExpiredTimestampIsRejected() {
         TradeSession s = newOpenSession();
         UUID token = UUID.randomUUID();
-        assertNotNull(s.beginDialog(TradeSession.Side.A, token, 5_000L, 60_000L));
+        UUID menuId = UUID.randomUUID();
+        assertNotNull(s.beginDialog(TradeSession.Side.A, token, menuId, 5_000L, 60_000L));
 
         // 상대 B가 아이템을 변경해 세대가 올라감
         assertEquals(TradeSession.OfferChangeResult.CHANGED, s.setOfferAmount(TradeSession.Side.B, 2, 10, 10));
 
         // A의 예전 세대 응답은 무시되어야 함 (TRADE.md 2·7장)
         assertEquals(TradeSession.DialogSubmitResult.STALE_GEN,
-                s.submitDialogMoney(TradeSession.Side.A, token, 1_000L));
+                s.submitDialogMoney(TradeSession.Side.A, token, 1_000L, 10_000L));
         assertEquals(0L, s.sideA().money());
+        assertFalse(s.sideA().inDialog());
+
+        // P3-10: 절대 만료 시각(nowMs >= dialogExpiresAtMs) 경과 후 도착한 콜백은 EXPIRED 로 거부
+        UUID token2 = UUID.randomUUID();
+        UUID menuId2 = UUID.randomUUID();
+        long genBefore = s.gen();
+        assertNotNull(s.beginDialog(TradeSession.Side.A, token2, menuId2, 20_000L, 60_000L));
+        assertEquals(TradeSession.DialogSubmitResult.EXPIRED,
+                s.submitDialogMoney(TradeSession.Side.A, token2, 7_000L, 80_000L));
+        assertEquals(0L, s.sideA().money());
+        assertEquals(genBefore, s.gen());
         assertFalse(s.sideA().inDialog());
     }
 

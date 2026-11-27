@@ -48,6 +48,18 @@ public final class TradeUiManager implements TradeUiHooks {
     }
 
     @Override
+    public UUID activeTradeMenuId(Player player, TradeSession session) {
+        if (player == null || !player.isOnline()) {
+            return null;
+        }
+        TradeMenu menu = openMenus.get(player.getUniqueId());
+        if (menu == null || menu.session() != session || !menu.isViewing(player)) {
+            return null;
+        }
+        return menu.menuId();
+    }
+
+    @Override
     public void refreshSessionMenus(TradeSession session) {
         refreshSide(session.sideA().uuid(), session);
         refreshSide(session.sideB().uuid(), session);

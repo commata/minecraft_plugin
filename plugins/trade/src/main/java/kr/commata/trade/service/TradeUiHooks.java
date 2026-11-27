@@ -17,6 +17,11 @@ public interface TradeUiHooks {
     default void openTradeMenu(Player player, TradeSession session) {
     }
 
+    /** 플레이어가 현재 보고 있는 이 세션의 거래 창 고유 ID. 보고 있지 않으면 {@code null}. */
+    default UUID activeTradeMenuId(Player player, TradeSession session) {
+        return null;
+    }
+
     /** 양쪽 중 거래 창을 보고 있는 플레이어의 화면을 제자리 갱신합니다. */
     default void refreshSessionMenus(TradeSession session) {
     }
