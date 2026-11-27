@@ -140,7 +140,13 @@ public final class TradeService {
         return Set.copyOf(saveFailedLockedPlayers);
     }
 
-    /** 손상 저널 잠금 또는 Bank 불가 여부 (TRADE.md 6·10장 5). */
+    /**
+     * 새 거래 요청·수락·정산(돈 이동) 불가 여부 (TRADE.md 1·6·10장 5, P2-7).
+     *
+     * <p>저널 잠금은 복구·지급·반환까지 전체를 막지만, Bank 불가·잠금은 새 요청·수락·정산과 금액 있는
+     * {@code TAKING} 의 Bank 확인만 막고, 이미 확정된({@code COMMITTED}·{@code RETURNING}) 아이템 지급·반환과
+     * 0원 {@code TAKING} 복구는 Bank 없이도 계속합니다.
+     */
     public boolean isGloballyLocked() {
         return journalStore.isLocked() || !bank.available();
     }

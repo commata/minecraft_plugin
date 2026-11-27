@@ -17,7 +17,9 @@ import org.bukkit.plugin.RegisteredServiceProvider;
 /**
  * Bank Java API({@code settleTrade}·{@code findTradeByExtRef})와 Vault 잔액 조회 어댑터 (TRADE.md 4·10장).
  *
- * <p>Bank 는 {@code softdepend} 이므로 없거나 잠금 모드이면 Trade 전체를 잠급니다(fail-closed, TRADE.md 1·10장 5).
+ * <p>Bank 는 {@code softdepend} 이므로 없거나 잠금 모드이면 새 요청·수락·정산(돈 이동)·금액 있는 {@code TAKING}
+ * 의 Bank 확인을 잠급니다(fail-closed, TRADE.md 1·10장 5). 이미 확정된({@code COMMITTED}·{@code RETURNING})
+ * 아이템 지급·반환과 0원 {@code TAKING} 복구는 돈 이동이 없으므로 Bank 없이도 계속합니다.
  * {@link Direct} 내부 클래스로 Bank 클래스 로딩을 격리해 Bank 미설치 서버에서도 플러그인 로드는 안전하게 진행됩니다.
  */
 public final class BankBridge {
@@ -80,9 +82,9 @@ public final class BankBridge {
         }
     }
 
-    /** Vault API 를 통한 잔액 조회. 조회 불가면 {@code -1L}. */
+    /** Vault API 를 통한 잔액 조회. Bank 불가·잠금이거나 조회 불가면 {@code -1L}. */
     public long balance(Player player) {
-        if (player == null || !server.getPluginManager().isPluginEnabled("Vault")) {
+        if (player == null || !available() || !server.getPluginManager().isPluginEnabled("Vault")) {
             return -1L;
         }
         try {

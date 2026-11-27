@@ -13,7 +13,7 @@
 ## 1. 범위
 
 - 새 플러그인 `plugins/trade`, `plugin.yml` 이름 **`Trade`**, 패키지 `kr.commata.trade`.
-- 의존: `depend: [Vault]`, `softdepend: [Bank, Travel, EconomyHub]`. Bank가 없거나 잠기면 **거래 기능 전체 잠금**(10장 5).
+- 의존: `depend: [Vault]`, `softdepend: [Bank, Travel, EconomyHub]`. Bank가 없거나 잠기면 **새 요청·수락·정산(돈 이동)·금액 있는 `TAKING` 의 Bank 확인을 잠근다**. 이미 확정된(`COMMITTED`·`RETURNING`) 아이템 지급·반환과 0원 `TAKING` 복구는 돈 이동이 없으므로 Bank 없이도 계속한다(10장 5).
 - 명령: `/trade` (`/거래`) 접속자 선택 창, `/trade <닉네임>` 요청, `/trade accept|deny [닉네임]`, `/trade claim`(받지 못한 물건 수령, 8장), `/trade status`·`/trade reload`·`/trade resolve <tradeId>|unlock`(관리자). 권한 `trade.use`(기본 모두), `trade.admin`(op).
 - **크리에이티브·관전 모드에서는 요청·수락·정산 불가**(크리에이티브 아이템이 서바이벌 경제로 들어오는 것 방지, ECONOMY.md 8장 "크리에이티브 보상"과 같은 원칙).
 
@@ -115,7 +115,7 @@
 2. 거래 가능 아이템: **바닐라 아이템 전부**(셜커 상자·꾸러미 포함).
 3. 수수료·한도: **없음**.
 4. 같은 상대에게 거절·만료 뒤 **10초 재요청 금지**.
-5. Bank 가 없거나 잠기면 **거래 기능 전체 잠금**.
+5. Bank 가 없거나 잠기면 **새 요청·수락·정산(돈 이동)·금액 있는 `TAKING` 의 Bank 확인만 잠금**. 이미 확정된(`COMMITTED`·`RETURNING`) 아이템 지급·반환과 0원 `TAKING` 복구는 돈 이동이 없으므로 Bank 없이도 계속한다.
 6. (v1 "오프라인 반환·발밑 드롭"은 제시 방식으로 필요 없어짐)
 7. 거래 로그는 **하루 단위 파일**.
 8. **제시 방식**: 아이템은 정산 순간까지 인벤토리에 그대로(11장).

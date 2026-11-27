@@ -54,7 +54,8 @@ public final class TradePlugin extends JavaPlugin {
         });
 
         if (!bank.available()) {
-            getLogger().warning("Bank 가 없거나 잠금 모드여서 Trade 거래 기능이 잠겼습니다 (" + bank.statusText() + ").");
+            getLogger().warning("Bank 가 없거나 잠금 모드여서 새 거래·정산과 금액 있는 TAKING 복구가 잠겼습니다 ("
+                    + bank.statusText() + "). 이미 확정된 아이템 지급·반환과 0원 TAKING 복구는 계속합니다.");
         }
         if (!travel.available()) {
             getLogger().info("Travel 플러그인이 없어 전투 태그 검사를 생략합니다.");
