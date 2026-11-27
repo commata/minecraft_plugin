@@ -8,6 +8,8 @@ import kr.commata.common.playerdata.PlayerDatReader;
 import kr.commata.trade.bridge.BankBridge;
 import kr.commata.trade.bridge.TravelBridge;
 import kr.commata.trade.command.TradeCommand;
+import kr.commata.trade.gui.TradeUiManager;
+import kr.commata.trade.listener.TradeListener;
 import kr.commata.trade.service.TradeService;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -32,9 +34,12 @@ public final class TradePlugin extends JavaPlugin {
         TravelBridge travel = new TravelBridge(getServer());
 
         tradeService = new TradeService(this, dataDir, worldRoot, bank, travel, config);
+        TradeUiManager uiManager = new TradeUiManager(this, tradeService);
+        tradeService.setUiHooks(uiManager);
         tradeService.startupLoadAndReconcile();
 
         getServer().getPluginManager().registerEvents(new MenuListener(), this);
+        getServer().getPluginManager().registerEvents(new TradeListener(this, tradeService, travel), this);
 
         // 매 틱: 요청·대화창 만료, 제시 슬롯 실시간 검증, 카운트다운 진행
         getServer().getScheduler().runTaskTimer(this, tradeService::tickPerTick, 1L, 1L);
