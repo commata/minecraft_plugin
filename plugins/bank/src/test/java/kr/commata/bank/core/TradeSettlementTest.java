@@ -216,6 +216,12 @@ class TradeSettlementTest {
         TradeOutcome diffSource = s.settleTrade("trade:m-1", alice, 100, bob, 100, Sources.MARKET, null);
         assertEquals(TradeOutcome.Status.MISMATCH, diffSource.status());
 
+        // 이미 쓰인 ref 에 형식이 틀린 값(같은 사람끼리, 0/0)이 와도 REJECTED 가 아니라 MISMATCH (QA ④-1)
+        TradeOutcome sameParty = s.settleTrade("trade:m-1", alice, 100, alice, 100, Sources.TRADE, null);
+        assertEquals(TradeOutcome.Status.MISMATCH, sameParty.status());
+        TradeOutcome zeroZero = s.settleTrade("trade:m-1", alice, 0, bob, 0, Sources.TRADE, null);
+        assertEquals(TradeOutcome.Status.MISMATCH, zeroZero.status());
+
         // Market external() 가 이미 쓴 extRef 를 trade 로 재사용하면 MISMATCH, findTradeByExtRef 는 ERROR
         var marketTx = s.external(alice, 50, Sources.MARKET, "shared-ref", TxType.WITHDRAW);
         assertEquals(BankStore.ExternalStatus.OK, marketTx.status());

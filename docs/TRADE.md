@@ -53,6 +53,7 @@
 - 양쪽 다 금액 제시 가능. 정수 원, 0 이상, 제시 시점 잔액 이하(`Amounts.check`). 잔액은 잡아 두지 않고 정산 때 다시 확인.
 - Bank 새 API **`BankPlugin#settleTrade(extRef, a, aPays, b, bPays, source, context)`** (`source = Sources.TRADE`, 결과 `TradeOutcome`): 한 SQLite 트랜잭션(`BEGIN IMMEDIATE`) 안에서 양쪽 계좌 잠금 → 각자 `잔액 ≥ 자기 지급액` 확인 → 두 방향 이동 → 기록(스키마 v4 `trade_settlements` + `transactions` `TxType.TRADE`). `extRef = "trade:<tradeId>"` 로 멱등(같은 ref 재호출은 기존 결과 반환). **기록에 두 UUID와 양쪽 금액·출처를 같이 저장**하고, 재호출 때 요청 값과 다르면 `MISMATCH`(=UNKNOWN 취급, 봉인)(QA Medium #5). 결과 `OK / REJECTED(TradeFailure, affectedPlayer) / MISMATCH / UNKNOWN`.
 - 정산 조회 API **`BankPlugin#findTradeByExtRef(extRef)`** (결과 `TradeLookup`: `FOUND(TradeRecord) / NOT_FOUND / ERROR`, `TradeRecord#matches(a, aPays, b, bPays)`로 일치 검증).
+- **Bank 스키마 v4(`trade_settlements`, 원장 `TRADE` 행)는 v3 이전 Bank JAR 이 `/bank log` 에서 읽지 못한다**(QA ④-1 재현). 운영은 Bank 첫 배포가 v4라 해당 없음. 이후 Bank 를 v3 이하로 되돌려야 하면 JAR 만 되돌리는 `rollback.sh` 로는 안 되고 **같은 시점 전체 스냅샷 복원**(ECONOMY.md 2.3)으로만.
 - 받는 쪽 최종 잔액이 `Amounts.MAX`(2^53−1)를 넘으면 `REJECTED(BALANCE_LIMIT)`(같은 트랜잭션 안에서 확인).
 - 수수료·한도 없음(10장 3). 정산 때 잔액 부족이면 **거래 취소**(7.3 "잔액 부족 시 거래 취소", v1의 OPEN 복귀를 바꿈).
 
