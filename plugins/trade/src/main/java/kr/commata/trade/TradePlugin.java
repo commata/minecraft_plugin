@@ -1,9 +1,14 @@
 package kr.commata.trade;
 
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
+import java.nio.file.Path;
 import java.util.List;
 import kr.commata.common.gui.MenuListener;
+import kr.commata.common.playerdata.PlayerDatReader;
+import kr.commata.trade.bridge.BankBridge;
+import kr.commata.trade.bridge.TravelBridge;
 import kr.commata.trade.command.TradeCommand;
+import kr.commata.trade.service.TradeService;
 import org.bukkit.plugin.java.JavaPlugin;
 
 /**
@@ -11,14 +16,31 @@ import org.bukkit.plugin.java.JavaPlugin;
  */
 public final class TradePlugin extends JavaPlugin {
 
-    private TradeConfig tradeConfig;
+    /** 미완료 저널 재확인·재지급·재반환 주기: 1분 (TRADE.md 5·6장). */
+    private static final long RECOVERY_PERIOD_TICKS = 20L * 60;
+
+    private TradeService tradeService;
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
-        tradeConfig = TradeConfig.load(getConfig(), getLogger());
+        TradeConfig config = TradeConfig.load(getConfig(), getLogger());
+
+        Path dataDir = getDataFolder().toPath();
+        Path worldRoot = resolveWorldRoot();
+        BankBridge bank = new BankBridge(getServer(), getLogger());
+        TravelBridge travel = new TravelBridge(getServer());
+
+        tradeService = new TradeService(this, dataDir, worldRoot, bank, travel, config);
+        tradeService.startupLoadAndReconcile();
 
         getServer().getPluginManager().registerEvents(new MenuListener(), this);
+
+        // 매 틱: 요청·대화창 만료, 제시 슬롯 실시간 검증, 카운트다운 진행
+        getServer().getScheduler().runTaskTimer(this, tradeService::tickPerTick, 1L, 1L);
+        // 1분마다: 미완료 저널 복구·자동 지급·자동 반환
+        getServer().getScheduler().runTaskTimer(this, tradeService::tickRecovery,
+                RECOVERY_PERIOD_TICKS, RECOVERY_PERIOD_TICKS);
 
         getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event -> {
             var r = event.registrar();
@@ -26,16 +48,32 @@ public final class TradePlugin extends JavaPlugin {
                     new TradeCommand());
         });
 
-        getLogger().info("Trade " + getPluginMeta().getVersion() + " 활성화 (요청 "
-                + tradeConfig.requestTimeoutSeconds() + "초, 카운트다운 "
-                + tradeConfig.countdownSeconds() + "초, 재요청 금지 "
-                + tradeConfig.reRequestCooldownSeconds() + "초, 대화창 만료 "
-                + tradeConfig.dialogTimeoutSeconds() + "초)");
+        if (!bank.available()) {
+            getLogger().warning("Bank 가 없거나 잠금 모드여서 Trade 거래 기능이 잠겼습니다 (" + bank.statusText() + ").");
+        }
+        if (!travel.available()) {
+            getLogger().info("Travel 플러그인이 없어 전투 태그 검사를 생략합니다.");
+        }
+
+        getLogger().info("Trade " + getPluginMeta().getVersion() + " 활성화 (Bank " + bank.statusText()
+                + ", Travel " + travel.statusText()
+                + ", 저널 " + (tradeService.journalStore().isLocked() ? "잠김" : "정상")
+                + ", 미완료 저널 " + tradeService.openJournals().size() + "건)");
     }
 
     @Override
     public void onDisable() {
         MenuListener.closeAll(getServer());
         getServer().getScheduler().cancelTasks(this);
+        if (tradeService != null) {
+            tradeService.shutdown();
+        }
+    }
+
+    private Path resolveWorldRoot() {
+        if (!getServer().getWorlds().isEmpty()) {
+            return PlayerDatReader.worldRoot(getServer().getWorlds().get(0).getWorldFolder().toPath());
+        }
+        return getServer().getWorldContainer().toPath().resolve("world").toAbsolutePath().normalize();
     }
 }
