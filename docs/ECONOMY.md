@@ -642,15 +642,17 @@ Bank는 다른 자체 플러그인처럼 `deploy.ps1 -Plugin bank`로, 외부 �
 ```powershell
 # Windows: 1) Bank 먼저 업로드만 (설치는 외부 플러그인과 한 번에)
 .\scripts\deploy.ps1 -Plugin bank -SshHost minipc-lan -UploadOnly
-.\scripts\deploy.ps1 -Plugin economy-hub -SshHost minipc-lan -UploadOnly   # 직업 보호 기능 (7.2)
+.\scripts\deploy.ps1 -Plugin economy-hub -SshHost minipc-lan -UploadOnly   # 직업 보호 기능 (7.2), 설치 블록 기록 규격 v1
+.\scripts\deploy.ps1 -Plugin market -SshHost minipc-lan -UploadOnly        # 희귀 상점·뽑기·매입 (13·14장)
+.\scripts\deploy.ps1 -Plugin trade -SshHost minipc-lan -UploadOnly         # /trade (7.3, TRADE.md) — 2026-11-27 결정으로 첫 배포에 포함
 # 2) 외부 JAR 업로드
 ssh minipc-lan "mkdir -p ~/plugin-staging/economy"
 scp .\external\*.jar minipc-lan:~/plugin-staging/economy/
 ```
 ```bash
 # 미니PC
-~/mc-scripts/install-plugin.sh --dry-run ~/plugin-staging/bank-*.jar ~/plugin-staging/economy-hub-*.jar ~/plugin-staging/economy/*.jar   # 새 플러그인 6개만 나오는지 확인
-~/mc-scripts/install-plugin.sh ~/plugin-staging/bank-*.jar ~/plugin-staging/economy-hub-*.jar ~/plugin-staging/economy/*.jar   # 백업 + 설치 + 재시작
+~/mc-scripts/install-plugin.sh --dry-run ~/plugin-staging/bank-*.jar ~/plugin-staging/economy-hub-*.jar ~/plugin-staging/market-*.jar ~/plugin-staging/trade-*.jar ~/plugin-staging/economy/*.jar   # 새 플러그인 8개(Bank·EconomyHub·Market·Trade + 외부 4)만 나오는지 확인
+~/mc-scripts/install-plugin.sh ~/plugin-staging/bank-*.jar ~/plugin-staging/economy-hub-*.jar ~/plugin-staging/market-*.jar ~/plugin-staging/trade-*.jar ~/plugin-staging/economy/*.jar   # 백업 + 설치 + 재시작
 ```
 
 **운영 첫 기동부터 검증된 설정으로 뜨게 한다.** 기본 설정으로 한 번 열면 그 사이 접속한 사람이 기본 상품을 팔 수 있다.
